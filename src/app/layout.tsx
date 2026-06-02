@@ -4,11 +4,11 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: {
-    default: '新应用 | 扣子编程',
-    template: '%s | 扣子编程',
+    default: '跨模态 RAG 知识检索系统',
+    template: '%s | RAG',
   },
   description:
-    '扣子编程是一款一站式云端 Vibe Coding 开发平台。通过对话轻松构建智能体、工作流和网站，实现从创意到上线的无缝衔接。',
+    '支持 Excel、Doc、Markdown、JSON、图片、航迹等多种数据格式的智能检索与问答系统',
   keywords: [
     '扣子编程',
     'Coze Code',
