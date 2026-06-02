@@ -52,14 +52,20 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        // 调用 Embedding SDK 生成向量
-        const embedding = await embeddingClient.embedText(item.content);
+        // 截断内容防止超过 token 限制（最大 8000 字符约 2000 tokens）
+        const maxContentLength = 8000;
+        const truncatedContent = item.content.length > maxContentLength 
+          ? item.content.substring(0, maxContentLength) + '...'
+          : item.content;
         
-        // 更新数据库
-        const { error: updateError } = await supabase
-          .from('knowledge_items')
-          .update({ embedding })
-          .eq('id', item.id);
+        // 调用 Embedding SDK 生成向量
+        const embedding = await embeddingClient.embedText(truncatedContent);
+        
+        // 使用原生 SQL 更新向量（绕过 Drizzle schema 验证）
+        const { error: updateError } = await supabase.rpc('update_embedding', {
+          item_id: item.id,
+          embedding_vector: embedding,
+        });
 
         if (updateError) {
           failed++;
@@ -119,14 +125,20 @@ async function embedSingleItem(
   }
 
   try {
-    // 生成向量
-    const embedding = await embeddingClient.embedText(item.content);
+    // 截断内容防止超过 token 限制
+    const maxContentLength = 8000;
+    const truncatedContent = item.content.length > maxContentLength 
+      ? item.content.substring(0, maxContentLength) + '...'
+      : item.content;
     
-    // 更新数据库
-    const { error: updateError } = await supabase
-      .from('knowledge_items')
-      .update({ embedding })
-      .eq('id', item.id);
+    // 生成向量
+    const embedding = await embeddingClient.embedText(truncatedContent);
+    
+    // 使用原生 SQL 更新向量
+    const { error: updateError } = await supabase.rpc('update_embedding', {
+      item_id: item.id,
+      embedding_vector: embedding,
+    });
 
     if (updateError) {
       return NextResponse.json({ error: `更新失败: ${updateError.message}` }, { status: 500 });
