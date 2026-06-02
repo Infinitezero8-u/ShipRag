@@ -30,7 +30,7 @@ function generateId(): string {
 }
 
 /**
- * 解析 Excel 文件
+ * 解析 Excel 文件 - 每行作为独立条目存储，便于单独检索
  */
 export async function parseExcel(buffer: Buffer, filename: string): Promise<ParseResult> {
   try {
@@ -40,24 +40,30 @@ export async function parseExcel(buffer: Buffer, filename: string): Promise<Pars
     for (const sheetName of workbook.SheetNames) {
       const sheet = workbook.Sheets[sheetName];
       const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      const columns = Object.keys(jsonData[0] || {});
 
-      // 将每个 Sheet 转换为文本内容
-      const content = jsonData.map(row => {
-        return Object.entries(row)
+      // 每行数据单独存储为一条记录
+      jsonData.forEach((row, index) => {
+        const content = Object.entries(row)
           .map(([key, value]) => `${key}: ${value}`)
           .join(', ');
-      }).join('\n');
+        
+        // 提取标题：优先使用名称/标题字段，否则使用第一列值
+        const titleField = row['名称'] || row['标题'] || row['name'] || row['title'] || row[columns[0]];
+        const title = titleField ? String(titleField) : `${filename} - ${sheetName} - 行${index + 1}`;
 
-      items.push({
-        id: generateId(),
-        modality: 'excel',
-        title: `${filename} - ${sheetName}`,
-        content,
-        metadata: {
-          sheetName,
-          rowCount: jsonData.length,
-          columns: Object.keys(jsonData[0] || {}),
-        },
+        items.push({
+          id: generateId(),
+          modality: 'excel',
+          title,
+          content,
+          metadata: {
+            sheetName,
+            rowIndex: index + 1,
+            columns,
+            source: filename,
+          },
+        });
       });
     }
 
