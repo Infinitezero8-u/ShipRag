@@ -117,6 +117,7 @@ function getSupabaseClient(token?: string): SupabaseClient {
     global: globalOptions,
     db: {
       timeout: 60000,
+      schema: 'public',
     },
     auth: {
       autoRefreshToken: false,

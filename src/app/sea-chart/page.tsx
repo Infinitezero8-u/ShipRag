@@ -68,6 +68,24 @@ interface Port {
   type: string;
 }
 
+// 航迹数据类型（从数据库加载）
+interface Trajectory {
+  id: string;
+  segment_id: string;
+  start_port: string;
+  end_port: string;
+  wkt_route: string;
+  sea_area: string;
+  segment_attrs: Record<string, unknown>;
+  ai_description: string;
+  bounds_min_lng: number;
+  bounds_max_lng: number;
+  bounds_min_lat: number;
+  bounds_max_lat: number;
+  source_file: string;
+  coordinates: [number, number][]; // 解析后的坐标数组
+}
+
 // 模拟港口数据
 const mockPorts: Port[] = [
   { id: 'CNSHA', name: '上海港', lat: 31.2304, lng: 121.4737, country: '中国', type: '集装箱' },
@@ -128,6 +146,19 @@ export default function SeaChartPage() {
   const [dbPorts, setDbPorts] = useState<Port[]>([]);
   const [loadingPorts, setLoadingPorts] = useState(false);
   
+  // 航迹数据
+  const [trajectories, setTrajectories] = useState<Trajectory[]>([]);
+  const [loadingTrajectories, setLoadingTrajectories] = useState(false);
+  const [selectedTrajectory, setSelectedTrajectory] = useState<Trajectory | null>(null);
+  
+  // 航迹筛选条件
+  const [trajectoryFilter, setTrajectoryFilter] = useState({
+    startPort: '',
+    endPort: '',
+    seaArea: '',
+  });
+  const [showTrajectories, setShowTrajectories] = useState(true);
+  
   // 从数据库获取港口数据
   useEffect(() => {
     const fetchPorts = async () => {
@@ -183,6 +214,57 @@ export default function SeaChartPage() {
     
     fetchPorts();
   }, []);
+  
+  // 解析 WKT LINESTRING 格式
+  const parseWKT = (wkt: string): [number, number][] => {
+    try {
+      // LINESTRING(lng1 lat1, lng2 lat2, ...)
+      const match = wkt.match(/LINESTRING\s*\((.*)\)/i);
+      if (!match) return [];
+      
+      const coords = match[1].split(',').map(pair => {
+        const parts = pair.trim().split(/\s+/);
+        const lng = parseFloat(parts[0]);
+        const lat = parseFloat(parts[1]);
+        return [lng, lat] as [number, number];
+      });
+      
+      return coords.filter(([lng, lat]) => 
+        !isNaN(lng) && !isNaN(lat) && 
+        lat >= -90 && lat <= 90 && 
+        lng >= -180 && lng <= 180
+      );
+    } catch {
+      return [];
+    }
+  };
+  
+  // 加载航迹数据
+  const loadTrajectories = useCallback(async () => {
+    setLoadingTrajectories(true);
+    try {
+      const res = await fetch('/api/trajectory/search?limit=1000');
+      const data = await res.json();
+      const items = data.trajectories || [];
+      
+      const parsedTrajectories: Trajectory[] = items.map((item: any) => ({
+        ...item,
+        coordinates: parseWKT(item.wkt_route || ''),
+      })).filter((t: Trajectory) => t.coordinates.length >= 2);
+      
+      setTrajectories(parsedTrajectories);
+      console.log(`加载了 ${parsedTrajectories.length} 条航迹`);
+    } catch (error) {
+      console.error('加载航迹数据失败:', error);
+    } finally {
+      setLoadingTrajectories(false);
+    }
+  }, []);
+  
+  // 初始加载航迹
+  useEffect(() => {
+    loadTrajectories();
+  }, [loadTrajectories]);
   
   // 合并模拟港口和数据库港口
   const allPorts = [...mockPorts, ...dbPorts];
@@ -405,6 +487,67 @@ export default function SeaChartPage() {
                     pathOptions={{ color: '#ef4444', weight: 2, opacity: 0.8, dashArray: '5, 10' }}
                   />
                 )}
+                
+                {/* 数据库航迹可视化 */}
+                {showTrajectories && trajectories.map((trajectory) => {
+                  const isSelected = selectedTrajectory?.id === trajectory.id;
+                  return (
+                    <Polyline
+                      key={trajectory.id}
+                      positions={trajectory.coordinates.map(([lng, lat]) => [lat, lng])}
+                      pathOptions={{ 
+                        color: isSelected ? '#ef4444' : '#3b82f6', 
+                        weight: isSelected ? 4 : 2, 
+                        opacity: 0.8 
+                      }}
+                      eventHandlers={{
+                        click: () => {
+                          setSelectedTrajectory(trajectory);
+                        },
+                      }}
+                    />
+                  );
+                })}
+                
+                {/* 选中航迹的起止点标记 */}
+                {selectedTrajectory && (
+                  <>
+                    {/* 起点 */}
+                    <Marker 
+                      position={[selectedTrajectory.coordinates[0][1], selectedTrajectory.coordinates[0][0]]}
+                      icon={new L.DivIcon({
+                        className: 'trajectory-start-marker',
+                        html: '<div style="width:12px;height:12px;background:#ef4444;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,0.3);"></div>',
+                        iconSize: [12, 12],
+                        iconAnchor: [6, 6],
+                      })}
+                    >
+                      <Popup>
+                        <div className="min-w-[120px] text-xs">
+                          <h4 className="font-bold">起点</h4>
+                          <p>港口: {selectedTrajectory.start_port || '未知'}</p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                    {/* 终点 */}
+                    <Marker 
+                      position={[selectedTrajectory.coordinates[selectedTrajectory.coordinates.length - 1][1], selectedTrajectory.coordinates[selectedTrajectory.coordinates.length - 1][0]]}
+                      icon={new L.DivIcon({
+                        className: 'trajectory-end-marker',
+                        html: '<div style="width:12px;height:12px;background:#10b981;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,0.3);"></div>',
+                        iconSize: [12, 12],
+                        iconAnchor: [6, 6],
+                      })}
+                    >
+                      <Popup>
+                        <div className="min-w-[120px] text-xs">
+                          <h4 className="font-bold">终点</h4>
+                          <p>港口: {selectedTrajectory.end_port || '未知'}</p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  </>
+                )}
               </MapContainer>
             </div>
 
@@ -448,6 +591,16 @@ export default function SeaChartPage() {
                       />
                       <span className="text-sm text-gray-700">航迹线</span>
                     </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showTrajectories}
+                        onChange={(e) => setShowTrajectories(e.target.checked)}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="text-sm text-gray-700">航迹数据 ({trajectories.length}条)</span>
+                    </label>
+                    {loadingTrajectories && <p className="text-xs text-gray-400">加载航迹数据中...</p>}
                     {loadingPorts && <p className="text-xs text-gray-400">加载港口数据中...</p>}
                   </div>
                 )}
@@ -517,6 +670,100 @@ export default function SeaChartPage() {
                   </div>
                 )}
               </div>
+              
+              {/* 航迹筛选面板 */}
+              {trajectories.length > 0 && (
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  <button 
+                    onClick={() => setSelectedTrajectory(null)}
+                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50"
+                  >
+                    <h3 className="font-semibold text-gray-900">🧭 航迹筛选</h3>
+                    <span className="text-xs text-gray-400">{trajectories.length} 条航迹</span>
+                  </button>
+                  <div className="px-4 pb-4 space-y-2">
+                    <div>
+                      <label className="text-xs text-gray-500">起港口</label>
+                      <input
+                        type="text"
+                        value={trajectoryFilter.startPort}
+                        onChange={(e) => setTrajectoryFilter({ ...trajectoryFilter, startPort: e.target.value })}
+                        placeholder="输入港口名称"
+                        className="w-full mt-1 px-2 py-1 border rounded text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">止港口</label>
+                      <input
+                        type="text"
+                        value={trajectoryFilter.endPort}
+                        onChange={(e) => setTrajectoryFilter({ ...trajectoryFilter, endPort: e.target.value })}
+                        placeholder="输入港口名称"
+                        className="w-full mt-1 px-2 py-1 border rounded text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">海域</label>
+                      <input
+                        type="text"
+                        value={trajectoryFilter.seaArea}
+                        onChange={(e) => setTrajectoryFilter({ ...trajectoryFilter, seaArea: e.target.value })}
+                        placeholder="输入海域名称"
+                        className="w-full mt-1 px-2 py-1 border rounded text-xs"
+                      />
+                    </div>
+                    <button
+                      onClick={loadTrajectories}
+                      className="w-full px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100"
+                    >
+                      刷新航迹数据
+                    </button>
+                  </div>
+                </div>
+              )}
+              
+              {/* 选中航迹详情 */}
+              {selectedTrajectory && (
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  <div className="px-4 py-3 flex items-center justify-between bg-blue-50">
+                    <h3 className="font-semibold text-blue-700">📍 航迹详情</h3>
+                    <button 
+                      onClick={() => setSelectedTrajectory(null)}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="px-4 py-3 space-y-2 text-xs">
+                    <div>
+                      <span className="text-gray-500">航段编号：</span>
+                      <span className="font-medium">{selectedTrajectory.segment_id}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">起港口：</span>
+                      <span className="font-medium">{selectedTrajectory.start_port || '未知'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">止港口：</span>
+                      <span className="font-medium">{selectedTrajectory.end_port || '未知'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">途经海域：</span>
+                      <span className="font-medium">{selectedTrajectory.sea_area || '未知'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">坐标点数：</span>
+                      <span className="font-medium">{selectedTrajectory.coordinates.length}</span>
+                    </div>
+                    {selectedTrajectory.ai_description && (
+                      <div className="pt-2 border-t">
+                        <p className="text-gray-500 mb-1">AI 描述：</p>
+                        <p className="text-gray-700 bg-gray-50 p-2 rounded">{selectedTrajectory.ai_description}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* 航迹绘制控制 */}
               {activeTab === 'track' && (
