@@ -153,6 +153,7 @@ export async function POST(request: NextRequest) {
       for (let i = 0; i < itemsToInsert.length; i += BATCH_SIZE) {
         const batch = itemsToInsert.slice(i, i + BATCH_SIZE);
         console.log(`[上传] 插入批次 ${Math.floor(i/BATCH_SIZE) + 1}: ${batch.length} 条`);
+        console.log(`[上传] 批次数据:`, JSON.stringify(batch.map(b => ({ title: b.title, modality: b.modality, tags: b.tags })), null, 2));
         
         const { data: batchData, error: batchError } = await supabase
           .from('knowledge_items')
@@ -160,6 +161,7 @@ export async function POST(request: NextRequest) {
           .select('id, title');
         
         console.log(`[上传] 批次结果: 插入=${batchData?.length || 0}, 错误=${batchError?.message || '无'}`);
+        console.log(`[上传] 批次返回数据:`, batchData?.map(d => ({ id: d.id?.substring(0,20), title: d.title?.substring(0,20) })));
         
         if (batchData && batchData.length > 0) {
           totalInserted += batchData.length;
