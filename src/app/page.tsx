@@ -101,6 +101,8 @@ export default function RagPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchModality, setSearchModality] = useState<string>('');
   const [searchMode, setSearchMode] = useState<'fuzzy' | 'exact'>('fuzzy');
+  const [searchTag, setSearchTag] = useState<string>(''); // 标签过滤
+  const [availableTags, setAvailableTags] = useState<{name: string, count: number}[]>([]); // 可用标签列表
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<KnowledgeItem[]>([]);
   const [searchPagination, setSearchPagination] = useState<Pagination | null>(null);
@@ -133,9 +135,23 @@ export default function RagPage() {
 
   useEffect(() => {
     fetchEmbedStatus();
+    fetchAvailableTags();
     const interval = setInterval(fetchEmbedStatus, 5000);
     return () => clearInterval(interval);
   }, [fetchEmbedStatus]);
+  
+  // 获取可用标签列表
+  const fetchAvailableTags = async () => {
+    try {
+      const res = await fetch('/api/search?action=tags');
+      const data = await res.json();
+      if (data.success) {
+        setAvailableTags(data.tags || []);
+      }
+    } catch (error) {
+      console.error('获取标签列表失败:', error);
+    }
+  };
 
   // 文件上传
   const handleUpload = async () => {
@@ -294,19 +310,24 @@ export default function RagPage() {
 
   // 搜索
   const handleSearch = async (page: number = 1) => {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() && !searchTag) return;
     setSearching(true);
     setSearchPage(page);
     try {
+      // 构建过滤条件
+      const filter: Record<string, string> = {};
+      if (searchModality) filter.modality = searchModality;
+      if (searchTag) filter.tags = searchTag;
+      
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: searchQuery,
+          query: searchQuery || searchTag, // 如果没有查询词，用标签作为查询词
           topK: 500, // 获取更多结果用于分页
           threshold: 0.3,
           mode: searchMode,
-          filter: searchModality ? { modality: searchModality } : undefined,
+          filter: Object.keys(filter).length > 0 ? filter : undefined,
           page,
           pageSize: 10,
         }),
@@ -593,6 +614,18 @@ export default function RagPage() {
                       <option value="image">图片</option>
                     </select>
                   </div>
+                  
+                  {/* 标签过滤 */}
+                  <select
+                    className="h-10 px-3 border rounded-md text-sm w-full"
+                    value={searchTag}
+                    onChange={(e) => { setSearchTag(e.target.value); if (e.target.value) handleSearch(1); }}
+                  >
+                    <option value="">全部标签</option>
+                    {availableTags.slice(0, 20).map(t => (
+                      <option key={t.name} value={t.name}>🏷️ {t.name} ({t.count})</option>
+                    ))}
+                  </select>
                   
                   <Button onClick={() => handleSearch(1)} disabled={searching} className="w-full h-11">
                     {searching ? (

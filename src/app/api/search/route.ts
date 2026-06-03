@@ -34,6 +34,11 @@ export async function POST(request: NextRequest) {
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
 
+    // 如果指定了标签过滤，使用标签优先搜索
+    if (filter?.tags) {
+      return await tagBasedSearch(supabase, query, filter.tags, modality, topK, threshold, page, pageSize);
+    }
+
     // 精确搜索模式：使用关键词匹配
     if (mode === 'exact') {
       return await exactSearch(supabase, query, modality, topK, filter, page, pageSize);
@@ -395,6 +400,90 @@ async function exactSearch(
       hasMore: page < totalPages,
     },
   });
+}
+
+// 基于标签的搜索
+async function tagBasedSearch(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  query: string,
+  tag: string,
+  modality?: string,
+  topK: number = 100,
+  threshold: number = 0.3,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<NextResponse> {
+  try {
+    const embeddingClient = new EmbeddingClient();
+    const queryEmbedding = await embeddingClient.embedText(query);
+    
+    // 先查询带有该标签的条目
+    let tagQuery = supabase
+      .from('knowledge_items')
+      .select('id, title, content, source, metadata, created_at, tags, embedding')
+      .contains('tags', [tag])
+      .limit(topK * 3); // 多获取一些用于排序
+    
+    if (modality) {
+      tagQuery = tagQuery.eq('modality', modality);
+    }
+    
+    const { data: tagItems, error: tagError } = await tagQuery;
+    
+    if (tagError) {
+      return NextResponse.json({ error: `标签查询失败: ${tagError.message}` }, { status: 500 });
+    }
+    
+    // 如果没有 embedding 的条目，直接返回
+    const itemsWithEmbedding = (tagItems || []).filter((item: { embedding: number[] | null }) => item.embedding);
+    const itemsWithoutEmbedding = (tagItems || []).filter((item: { embedding: number[] | null }) => !item.embedding);
+    
+    // 计算相似度并排序
+    const resultsWithSimilarity = itemsWithEmbedding
+      .map((item: { id: string; title: string; content: string; source: string; metadata: Record<string, unknown>; created_at: string; tags: string[]; embedding: number[] }) => {
+        const similarity = cosineSimilarity(queryEmbedding, item.embedding);
+        return { ...item, similarity, status: 'embedded' };
+      })
+      .filter((item: { similarity: number }) => item.similarity >= threshold)
+      .sort((a: { similarity: number }, b: { similarity: number }) => b.similarity - a.similarity)
+      .slice(0, topK);
+    
+    // 如果没有相似度匹配的结果，返回标签匹配的结果（无 embedding 的）
+    const finalResults = resultsWithSimilarity.length > 0 
+      ? resultsWithSimilarity 
+      : itemsWithoutEmbedding.map((item: { id: string; title: string; content: string; source: string; metadata: Record<string, unknown>; created_at: string; tags: string[] }) => ({
+          ...item,
+          similarity: 0.5,
+          status: 'pending'
+        })).slice(0, topK);
+    
+    // 分页处理
+    const totalCount = finalResults.length;
+    const totalPages = Math.ceil(totalCount / pageSize);
+    const startIndex = (page - 1) * pageSize;
+    const paginatedResults = finalResults.slice(startIndex, startIndex + pageSize);
+    
+    return NextResponse.json({
+      success: true,
+      query,
+      tagFilter: tag,
+      tagMatchCount: tagItems?.length || 0,
+      embeddedCount: itemsWithEmbedding.length,
+      results: paginatedResults,
+      count: paginatedResults.length,
+      pagination: {
+        page,
+        pageSize,
+        totalCount,
+        totalPages,
+        hasMore: page < totalPages,
+      },
+    });
+  } catch (error) {
+    return NextResponse.json({ 
+      error: `标签搜索失败: ${error instanceof Error ? error.message : String(error)}` 
+    }, { status: 500 });
+  }
 }
 
 export {}; // 模块声明
