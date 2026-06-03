@@ -22,7 +22,7 @@ const SYSTEM_PROMPT = `你是一个智能问答助手，基于知识库进行回
 export async function POST(request: NextRequest) {
   try {
     const body: RagRequest = await request.json();
-    const { query, modality, topK = 20, stream = true } = body;
+    const { query, modality, topK = 100, stream = true } = body;
 
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: '问题不能为空' }, { status: 400 });
