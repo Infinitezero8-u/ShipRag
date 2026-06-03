@@ -64,6 +64,7 @@ interface Port {
   lat: number;
   lng: number;
   country: string;
+  ctryCode?: string; // 国家代码
   type: string;
 }
 
@@ -152,6 +153,7 @@ export default function SeaChartPage() {
           const latMatch = content.match(/lat:\s*([\d.-]+)/);
           const lonMatch = content.match(/lon:\s*([\d.-]+)/);
           const ctryNameCnMatch = content.match(/ctryNameCn:\s*([^,]+)/);
+          const ctryCodeMatch = content.match(/ctryCode:\s*([^,]+)/);
           
           if (portCodeMatch && latMatch && lonMatch) {
             const lat = parseFloat(latMatch[1]);
@@ -163,6 +165,7 @@ export default function SeaChartPage() {
                 lat,
                 lng,
                 country: ctryNameCnMatch ? ctryNameCnMatch[1].trim() : '',
+                ctryCode: ctryCodeMatch ? ctryCodeMatch[1].trim() : '',
                 type: '港口',
               });
             }
