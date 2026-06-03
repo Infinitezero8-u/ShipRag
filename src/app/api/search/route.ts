@@ -7,12 +7,13 @@ interface SearchParams {
   modality?: string; // 可选：限定模态类型
   topK?: number; // 返回结果数量
   threshold?: number; // 相似度阈值
+  filter?: { [key: string]: string }; // 可选：按字段过滤，如 { ctryNameCn: '日本' }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: SearchParams = await request.json();
-    const { query, modality, topK = 20, threshold = 0.3 } = body;
+    const { query, modality, topK = 20, threshold = 0.3, filter } = body;
 
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: '查询内容不能为空' }, { status: 400 });
@@ -37,16 +38,34 @@ export async function POST(request: NextRequest) {
     if (searchError) {
       // 如果 RPC 不存在，使用备用方法
       if (searchError.message.includes('function') || searchError.message.includes('does not exist')) {
-        return await fallbackSearch(supabase, queryEmbedding, modality, topK, threshold);
+        return await fallbackSearch(supabase, queryEmbedding, modality, topK, threshold, filter);
       }
       return NextResponse.json({ error: `搜索失败: ${searchError.message}` }, { status: 500 });
+    }
+
+    // 应用过滤器
+    let filteredResults = results || [];
+    if (filter && filteredResults.length > 0) {
+      filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown> }) => {
+        return Object.entries(filter).every(([key, value]) => {
+          // 从 content 中提取字段值
+          if (item.content) {
+            const regex = new RegExp(`${key}:\\s*([^,]+)`, 'i');
+            const match = item.content.match(regex);
+            if (match && match[1].trim() === value) return true;
+          }
+          // 从 metadata 中查找
+          if (item.metadata && item.metadata[key] === value) return true;
+          return false;
+        });
+      });
     }
 
     return NextResponse.json({
       success: true,
       query,
-      results: results || [],
-      count: results?.length || 0,
+      results: filteredResults,
+      count: filteredResults.length,
     });
   } catch (error) {
     console.error('检索失败:', error);
@@ -62,7 +81,8 @@ async function fallbackSearch(
   queryEmbedding: number[],
   modality: string | undefined,
   topK: number,
-  threshold: number
+  threshold: number,
+  filter?: { [key: string]: string }
 ) {
   // 查询所有已向量化的条目
   let query = supabase
@@ -103,11 +123,29 @@ async function fallbackSearch(
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, topK);
 
+  // 应用过滤器
+  let filteredResults = results;
+  if (filter && filteredResults.length > 0) {
+    filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown> }) => {
+      return Object.entries(filter).every(([key, value]) => {
+        // 从 content 中提取字段值
+        if (item.content) {
+          const regex = new RegExp(`${key}:\\s*([^,]+)`, 'i');
+          const match = item.content.match(regex);
+          if (match && match[1].trim() === value) return true;
+        }
+        // 从 metadata 中查找
+        if (item.metadata && item.metadata[key] === value) return true;
+        return false;
+      });
+    });
+  }
+
   return NextResponse.json({
     success: true,
     query: '',
-    results,
-    count: results.length,
+    results: filteredResults,
+    count: filteredResults.length,
     note: '使用备用搜索方法',
   });
 }

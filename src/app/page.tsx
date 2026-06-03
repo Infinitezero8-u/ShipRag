@@ -96,6 +96,7 @@ export default function RagPage() {
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState('');
   const [searchModality, setSearchModality] = useState<string>('');
+  const [searchCountry, setSearchCountry] = useState<string>('');
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<KnowledgeItem[]>([]);
   
@@ -338,13 +339,19 @@ export default function RagPage() {
 
     setSearching(true);
     try {
+      const filter: Record<string, string> = {};
+      if (searchCountry) {
+        filter.ctryNameCn = searchCountry;
+      }
+      
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: searchQuery,
           modality: searchModality || undefined,
-          topK: 20,
+          filter: Object.keys(filter).length > 0 ? filter : undefined,
+          topK: 50,
           threshold: 0.3,
         }),
       });
@@ -654,6 +661,13 @@ export default function RagPage() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    className="flex-1"
+                  />
+                  <Input
+                    placeholder="国家（可选）"
+                    value={searchCountry}
+                    onChange={(e) => setSearchCountry(e.target.value)}
+                    className="w-32"
                   />
                   <select
                     className="px-3 py-2 border rounded-md"
