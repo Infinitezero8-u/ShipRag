@@ -18,6 +18,59 @@ const llmConfig = new Config();
 // 内容哈希缓存，用于判重
 const contentHashCache = new Set<string>();
 
+// 自动标签生成函数
+function generateAutoTags(content: string, title: string, modality: string, source: string): string[] {
+  const tags: string[] = [];
+  const text = `${content} ${title} ${source}`.toLowerCase();
+  
+  // 模态标签
+  if (modality === 'image') tags.push('图片');
+  if (modality === 'excel' || modality === 'csv') tags.push('表格数据');
+  if (modality === 'text') tags.push('文本');
+  if (modality === 'pdf') tags.push('PDF');
+  if (modality === 'ppt') tags.push('PPT');
+  if (modality === 'audio') tags.push('音频');
+  if (modality === 'webpage') tags.push('网页');
+  
+  // 内容关键词标签
+  const keywordTags: [RegExp, string][] = [
+    [/港口|port|harbor/i, '港口'],
+    [/日本|japan|jp/i, '日本'],
+    [/中国|china|cn/i, '中国'],
+    [/美国|usa|us/i, '美国'],
+    [/韩国|korea|kr/i, '韩国'],
+    [/英国|uk|gb/i, '英国'],
+    [/德国|germany|de/i, '德国'],
+    [/法国|france|fr/i, '法国'],
+    [/俄罗斯|russia|ru/i, '俄罗斯'],
+    [/澳大利亚|australia|au/i, '澳大利亚'],
+    [/印度|india|in/i, '印度'],
+    [/巴西|brazil|br/i, '巴西'],
+    [/加拿大|canada|ca/i, '加拿大'],
+    [/意大利|italy|it/i, '意大利'],
+    [/西班牙|spain|es/i, '西班牙'],
+    [/东南亚|southeast asia/i, '东南亚'],
+    [/欧洲|europe/i, '欧洲'],
+    [/亚洲|asia/i, '亚洲'],
+    [/非洲|africa/i, '非洲'],
+    [/大洋洲|oceania/i, '大洋洲'],
+    [/集装箱|container/i, '集装箱'],
+    [/码头|terminal|wharf/i, '码头'],
+    [/海关|customs/i, '海关'],
+    [/物流|logistics/i, '物流'],
+    [/贸易|trade/i, '贸易'],
+  ];
+  
+  for (const [pattern, tag] of keywordTags) {
+    if (pattern.test(text) && !tags.includes(tag)) {
+      tags.push(tag);
+    }
+  }
+  
+  return tags;
+}
+
+
 // 计算内容哈希（简单版本：使用前100字符 + 长度）
 function getContentHash(content: string): string {
   const normalized = content.trim().toLowerCase();
@@ -329,6 +382,104 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({
       success: false,
       error: error instanceof Error ? error.message : '取消失败'
+    }, { status: 500 });
+  }
+}
+
+// 重新向量化和重新打标签
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { action, ids, all } = body;
+    
+    const supabase = getSupabaseClient();
+    
+    if (action === 'reembed') {
+      // 重新向量化
+      let targetIds = ids;
+      
+      if (all) {
+        // 获取所有已向量化的条目
+        const { data, error } = await supabase
+          .from('knowledge_items')
+          .select('id')
+          .not('embedding', 'is', null);
+        
+        if (error) throw error;
+        targetIds = data?.map((item: { id: string }) => item.id) || [];
+      }
+      
+      if (!targetIds || targetIds.length === 0) {
+        return NextResponse.json({ success: true, processed: 0, message: '没有需要重新向量化的条目' });
+      }
+      
+      // 清除向量，让它们重新被向量化
+      const { error: clearError } = await supabase
+        .from('knowledge_items')
+        .update({ embedding: null })
+        .in('id', targetIds);
+      
+      if (clearError) throw clearError;
+      
+      return NextResponse.json({
+        success: true,
+        processed: targetIds.length,
+        message: `已清除 ${targetIds.length} 条条目的向量，请执行向量化`
+      });
+    }
+    
+    if (action === 'retag') {
+      // 重新打标签
+      let query = supabase.from('knowledge_items').select('id, content, title, modality, source');
+      
+      if (ids && ids.length > 0) {
+        query = query.in('id', ids) as typeof query;
+      }
+      
+      const { data: items, error: queryError } = await query;
+      
+      if (queryError) throw queryError;
+      
+      if (!items || items.length === 0) {
+        return NextResponse.json({ success: true, processed: 0, message: '没有需要打标签的条目' });
+      }
+      
+      let processed = 0;
+      const errors: string[] = [];
+      
+      for (const item of items) {
+        try {
+          const tags = generateAutoTags(item.content || '', item.title || '', item.modality, item.source || '');
+          
+          const { error: updateError } = await supabase
+            .from('knowledge_items')
+            .update({ tags })
+            .eq('id', item.id);
+          
+          if (updateError) {
+            errors.push(`更新 ${item.id} 失败: ${updateError.message}`);
+          } else {
+            processed++;
+          }
+        } catch (e) {
+          errors.push(`处理 ${item.id} 失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      
+      return NextResponse.json({
+        success: true,
+        processed,
+        total: items.length,
+        errors: errors.length > 0 ? errors : undefined
+      });
+    }
+    
+    return NextResponse.json({ error: '未知操作' }, { status: 400 });
+  } catch (error) {
+    console.error('重新处理失败:', error);
+    return NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : '操作失败'
     }, { status: 500 });
   }
 }

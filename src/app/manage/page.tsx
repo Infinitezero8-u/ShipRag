@@ -295,6 +295,76 @@ export default function ManagePage() {
     }
   };
 
+  // 重新向量化选中的条目
+  const reEmbedSelected = async () => {
+    if (!confirm(`确定要重新向量化 ${selectedItems.size} 个条目吗？`)) return;
+    try {
+      const res = await fetch('/api/embed', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedItems), action: 're-embed' })
+      });
+      const data = await res.json();
+      alert(`向量化完成: 处理 ${data.processed} 条`);
+      fetchItems();
+    } catch (err) {
+      console.error('重新向量化失败:', err);
+    }
+  };
+
+  // 重新向量化全部
+  const reEmbedAll = async () => {
+    if (!confirm('确定要重新向量化全部条目吗？这可能需要较长时间。')) return;
+    try {
+      const res = await fetch('/api/embed', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 're-embed-all' })
+      });
+      const data = await res.json();
+      alert(`向量化完成: 处理 ${data.processed} 条`);
+      fetchItems();
+    } catch (err) {
+      console.error('重新向量化失败:', err);
+    }
+  };
+
+  // 重新打标签选中的条目
+  const reTagSelected = async () => {
+    if (!confirm(`确定要重新打标签 ${selectedItems.size} 个条目吗？`)) return;
+    try {
+      const res = await fetch('/api/embed', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedItems), action: 're-tag' })
+      });
+      const data = await res.json();
+      alert(`打标签完成: 处理 ${data.processed} 条`);
+      fetchTags();
+      fetchItems();
+    } catch (err) {
+      console.error('重新打标签失败:', err);
+    }
+  };
+
+  // 重新打标签全部
+  const reTagAll = async () => {
+    if (!confirm('确定要重新打标签全部条目吗？')) return;
+    try {
+      const res = await fetch('/api/embed', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 're-tag-all' })
+      });
+      const data = await res.json();
+      alert(`打标签完成: 处理 ${data.processed} 条`);
+      fetchTags();
+      fetchItems();
+    } catch (err) {
+      console.error('重新打标签失败:', err);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-2xl mx-auto">
@@ -447,13 +517,39 @@ export default function ManagePage() {
                   ))}
                 </select>
                 {selectedItems.size > 0 && (
-                  <button
-                    onClick={deleteItems}
-                    className="px-3 py-1 bg-red-600 text-white rounded text-sm"
-                  >
-                    删除选中 ({selectedItems.size})
-                  </button>
+                  <>
+                    <button
+                      onClick={deleteItems}
+                      className="px-3 py-1 bg-red-600 text-white rounded text-sm"
+                    >
+                      删除 ({selectedItems.size})
+                    </button>
+                    <button
+                      onClick={reEmbedSelected}
+                      className="px-3 py-1 bg-purple-600 text-white rounded text-sm"
+                    >
+                      重新向量化 ({selectedItems.size})
+                    </button>
+                    <button
+                      onClick={reTagSelected}
+                      className="px-3 py-1 bg-green-600 text-white rounded text-sm"
+                    >
+                      重新打标签 ({selectedItems.size})
+                    </button>
+                  </>
                 )}
+                <button
+                  onClick={reEmbedAll}
+                  className="px-3 py-1 bg-purple-100 text-purple-700 rounded text-sm"
+                >
+                  全部重新向量化
+                </button>
+                <button
+                  onClick={reTagAll}
+                  className="px-3 py-1 bg-green-100 text-green-700 rounded text-sm"
+                >
+                  全部重新打标签
+                </button>
               </div>
             </div>
 
