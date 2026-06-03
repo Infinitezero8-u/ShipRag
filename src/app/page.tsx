@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { ConversationFlowPanel } from '@/components/conversation-flow-panel';
+import { DataMaintainPanel } from '@/components/data-maintain-panel';
 import { 
   Upload, 
   Search, 
@@ -572,11 +573,12 @@ export default function RagPage() {
               <ChevronLeft className="w-4 h-4 mr-1" />
               返回
             </Button>
-            <TabsList className="grid grid-cols-4">
-              <TabsTrigger value="rag" className="text-sm">💬 问答</TabsTrigger>
-              <TabsTrigger value="search" className="text-sm">🔍 检索</TabsTrigger>
-              <TabsTrigger value="upload" className="text-sm">📤 上传</TabsTrigger>
-              <TabsTrigger value="flow" className="text-sm">🔀 对话流</TabsTrigger>
+            <TabsList className="grid grid-cols-5">
+              <TabsTrigger value="rag" className="text-xs">💬 问答</TabsTrigger>
+              <TabsTrigger value="search" className="text-xs">🔍 检索</TabsTrigger>
+              <TabsTrigger value="upload" className="text-xs">📤 上传</TabsTrigger>
+              <TabsTrigger value="maintain" className="text-xs">🗄️ 数据维护</TabsTrigger>
+              <TabsTrigger value="flow" className="text-xs">🔀 对话流</TabsTrigger>
             </TabsList>
             <div className="w-16" /> {/* 占位 */}
           </div>
@@ -1085,6 +1087,18 @@ export default function RagPage() {
                     </div>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* 数据维护 */}
+          <TabsContent value="maintain">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">数据维护</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <DataMaintainPanel />
               </CardContent>
             </Card>
           </TabsContent>
