@@ -91,6 +91,7 @@ export default function RagPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailPage, setDetailPage] = useState(1);
   const [detailTotal, setDetailTotal] = useState(0);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState('');
@@ -264,6 +265,65 @@ export default function RagPage() {
       setAutoEmbedding(true);
       setEmbedProgress({ processed: 0, failed: 0 });
     }
+  };
+
+  // 全部取消向量化
+  const handleCancelAll = async () => {
+    if (!confirm('确定要取消所有待向量化的条目吗？此操作不可恢复。')) return;
+    
+    try {
+      const res = await fetch('/api/embed', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clearAll: true }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message);
+        fetchEmbedStatus();
+        if (expandedSection === 'pending') {
+          fetchDetailItems('pending', 1);
+        }
+      }
+    } catch (error) {
+      console.error('取消失败:', error);
+    }
+  };
+
+  // 取消选中的条目
+  const handleCancelSelected = async () => {
+    if (selectedItems.size === 0) return;
+    if (!confirm(`确定要取消选中的 ${selectedItems.size} 条目吗？此操作不可恢复。`)) return;
+    
+    try {
+      const res = await fetch('/api/embed', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedItems) }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message);
+        setSelectedItems(new Set());
+        fetchEmbedStatus();
+        if (expandedSection === 'pending') {
+          fetchDetailItems('pending', detailPage);
+        }
+      }
+    } catch (error) {
+      console.error('取消失败:', error);
+    }
+  };
+
+  // 切换选中状态
+  const toggleItemSelection = (id: string) => {
+    const newSelected = new Set(selectedItems);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedItems(newSelected);
   };
 
   useEffect(() => {
@@ -525,7 +585,7 @@ export default function RagPage() {
                       </div>
                     )}
                     
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <Button 
                         onClick={toggleAutoEmbed} 
                         variant={autoEmbedding ? "destructive" : "default"}
@@ -553,6 +613,24 @@ export default function RagPage() {
                           '单次处理 (50条)'
                         )}
                       </Button>
+                      {/* 取消按钮 */}
+                      <Button 
+                        onClick={handleCancelAll} 
+                        variant="destructive" 
+                        disabled={autoEmbedding}
+                        className="flex-1"
+                      >
+                        全部取消
+                      </Button>
+                      {detailItems.length > 0 && expandedSection === 'pending' && (
+                        <Button 
+                          onClick={handleCancelSelected} 
+                          variant="outline" 
+                          disabled={autoEmbedding || selectedItems.size === 0}
+                        >
+                          取消选中 ({selectedItems.size})
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}

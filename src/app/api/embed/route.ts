@@ -231,3 +231,47 @@ export async function GET(request: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// 删除待向量化条目（取消向量化）
+export async function DELETE(request: NextRequest) {
+  try {
+    const body = await request.json().catch(() => ({}));
+    const { ids, clearAll } = body;
+
+    const supabase = getSupabaseClient();
+
+    let deletedCount = 0;
+
+    if (clearAll) {
+      // 删除所有待向量化的条目
+      const { count, error } = await supabase
+        .from('knowledge_items')
+        .delete({ count: 'exact' })
+        .is('embedding', null);
+
+      if (error) throw error;
+      deletedCount = count || 0;
+    } else if (ids && Array.isArray(ids) && ids.length > 0) {
+      // 删除指定的条目
+      const { count, error } = await supabase
+        .from('knowledge_items')
+        .delete({ count: 'exact' })
+        .in('id', ids);
+
+      if (error) throw error;
+      deletedCount = count || 0;
+    }
+
+    return NextResponse.json({
+      success: true,
+      deleted: deletedCount,
+      message: `已删除 ${deletedCount} 条待向量化条目`
+    });
+  } catch (error) {
+    console.error('取消向量化失败:', error);
+    return NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : '取消失败'
+    }, { status: 500 });
+  }
+}
