@@ -168,8 +168,24 @@ const UNDELETABLE_TYPES = ['chatInput', 'mergeOutput'];
 
 // ==================== 节点组件 ====================
 function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
-  const config = NODE_TYPE_CONFIG[data.type];
-  if (!config) return null;
+  const config = NODE_TYPE_CONFIG[data?.type];
+  
+  // 如果 config 不存在，显示一个默认的占位节点
+  if (!config) {
+    return (
+      <div
+        className={`px-2 py-1.5 rounded-lg shadow-md border-2 text-xs ${selected ? 'border-blue-500' : 'border-gray-300'}`}
+        style={{ backgroundColor: '#f3f4f6' }}
+      >
+        <Handle type="target" position={Position.Left} className="w-2 h-2 bg-gray-400" />
+        <Handle type="source" position={Position.Right} className="w-2 h-2 bg-gray-400" />
+        <div className="flex items-center gap-1">
+          <span>❓</span>
+          <span className="text-gray-500">{data?.type || '未知节点'}</span>
+        </div>
+      </div>
+    );
+  }
   
   const canDelete = !UNDELETABLE_TYPES.includes(data.type);
   
@@ -268,8 +284,26 @@ function NodeEditPanel({
 }) {
   if (!selectedNode) return null;
   
-  const config = NODE_TYPE_CONFIG[selectedNode.data.type];
-  if (!config) return null;
+  const config = NODE_TYPE_CONFIG[selectedNode.data?.type];
+  
+  // 如果 config 不存在，显示简化面板
+  if (!config) {
+    return (
+      <div className="p-3">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-medium text-sm text-gray-500">未知节点类型</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        <p className="text-xs text-gray-400 mb-2">类型: {selectedNode.data?.type || 'undefined'}</p>
+        <button
+          onClick={onDelete}
+          className="w-full px-2 py-1 bg-red-100 text-red-600 rounded text-xs"
+        >
+          删除节点
+        </button>
+      </div>
+    );
+  }
   
   const canDelete = !UNDELETABLE_TYPES.includes(selectedNode.data.type);
   
@@ -373,13 +407,43 @@ function WorkflowEditor() {
     try {
       const res = await fetch(`/api/workflow?id=${id}`);
       const data = await res.json();
-      if (data.nodes && data.edges) {
-        setNodes(data.nodes);
-        setEdges(data.edges);
-        setWorkflowName(data.name);
+      
+      // 转换节点格式为 ReactFlow 格式
+      let loadedNodes: Node[] = [];
+      let loadedEdges: Edge[] = [];
+      
+      if (data.nodes && Array.isArray(data.nodes) && data.nodes.length > 0) {
+        // 检查节点格式，如果是旧格式则转换
+        loadedNodes = data.nodes.map((node: any, index: number) => {
+          // 如果节点已经是 ReactFlow 格式（有 id 和 position）
+          if (node.id && node.position) {
+            return node;
+          }
+          // 否则转换旧格式到新格式
+          return {
+            id: node.id || `node_${index}_${Date.now()}`,
+            type: 'custom',
+            position: { x: 100 + (index % 3) * 250, y: 100 + Math.floor(index / 3) * 100 },
+            data: { type: node.type, ...node },
+          };
+        });
+      } else {
+        // 如果没有节点，使用默认节点
+        loadedNodes = createDefaultNodes();
       }
+      
+      if (data.edges && Array.isArray(data.edges)) {
+        loadedEdges = data.edges;
+      }
+      
+      setNodes(loadedNodes);
+      setEdges(loadedEdges);
+      setWorkflowName(data.name || '未命名工作流');
     } catch (error) {
       console.error('加载工作流失败:', error);
+      // 加载失败时使用默认节点
+      setNodes(createDefaultNodes());
+      setEdges([]);
     }
   };
   
