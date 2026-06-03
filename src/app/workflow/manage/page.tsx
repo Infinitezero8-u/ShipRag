@@ -172,7 +172,7 @@ export default function WorkflowManagePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `${wf.name} (副本)`,
+          name: `${wf.name}-副本`,
           description: wf.description,
           nodes: wf.nodes,
           edges: wf.edges,
