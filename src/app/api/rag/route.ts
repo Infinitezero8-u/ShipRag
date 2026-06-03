@@ -10,6 +10,10 @@ interface RagRequest {
   noLimit?: boolean; // 取消检索数量限制
   sessionId?: string; // 会话ID，用于多轮上下文管理
   history?: Array<{ role: 'user' | 'assistant'; content: string }>; // 前端传递的历史消息
+  lockContext?: boolean; // 锁定当前上下文（海域、海图范围）
+  clearContext?: boolean; // 清空历史上下文
+  responseMode?: 'brief' | 'detailed'; // 回答模式：精简/详细
+  commandType?: string; // 指令类型：chart_annotation/channel_regulation
 }
 
 // 更新上下文（在AI回复后调用）
@@ -180,31 +184,94 @@ async function executeStatsQuery(supabase: ReturnType<typeof getSupabaseClient>,
   }
 }
 
-// 系统提示词
-const SYSTEM_PROMPT = `你是一个智能问答助手，基于知识库进行回答。
+// 海图专属系统提示词
+const SYSTEM_PROMPT = `你是一个专业的海图智能问答助手，基于海图知识库进行专业回答。
 
-## 核心规则
-1. **相关性判断**：先判断上下文信息是否真的与用户问题相关
-   - 如果相关度低于 0.5 或内容明显不相关，请说明"知识库中没有找到与该问题相关的信息"
-   - 不要强行使用不相关的信息回答问题
+## 专业术语标准化
+- 使用标准海事术语：航道(channel)、锚地(anchorage)、等深线(depth contour)、航标(navigation aid)、碍航物(obstruction)
+- 港口代码统一使用UN/LOCODE格式（如CNSHA=上海港）
+- 坐标统一使用WGS84坐标系，格式为"经度,纬度"
+
+## 回答规则
+1. **相关性判断**：先判断上下文信息是否与用户问题相关
+   - 相关度低于0.5或明显不相关，说明"海图知识库中没有找到与该问题相关的信息"
+   - 不要强行使用不相关信息回答
 
 2. **诚实回答**：
    - 只使用确实相关的上下文信息回答
-   - 如果无法从上下文中找到答案，请诚实说明
+   - 无法从上下文中找到答案时诚实说明
 
-3. **回答格式**：
-   - 回答要简洁、准确、有条理
-   - 如果有多个相关信息，请综合整理
-   - 在回答末尾标注信息来源
+3. **自适应回答**：
+   - 精简模式：仅输出关键参数与结论，适用于快速查询
+   - 详答模式：补充规范原文、完整参数细则，适用于深度查阅
+   - 根据问题复杂度自动选择合适模式
 
-4. **特别注意**：
-   - 如果上下文是数据记录（如港口编码、名称等），而问题是询问功能、定义、说明等，说明这些数据不能回答该问题
-   - 数据记录 ≠ 功能说明，不要混淆`;
+4. **强制溯源**：
+   - 所有输出内容必须标注数据来源
+   - 格式：【来源】文档名称 | 海图图号 | 片段位置
+   - 示例：【来源】中国沿海航路指南 | 图号12345 | 第3章第2节
+
+## Token上限处理
+- 临近Token上限时，自动剔除冗余文本，保留核心参数与来源标注
+- 优先保留：安全相关参数、数值数据、来源信息
+
+## 特别注意
+- 海图数据具有时效性，回答时提示用户核实最新版海图
+- 安全相关参数（水深、吃水限制等）需特别标注并提示谨慎使用`;
+
+// Query预处理：海事术语矫正 + 隐含问题拓展
+function preprocessQuery(query: string): { correctedQuery: string; expandedQueries: string[] } {
+  // 海事术语映射表
+  const termCorrections: Record<string, string> = {
+    '锚地': '锚地 anchorage',
+    '航道': '航道 channel',
+    '等深线': '等深线 depth contour',
+    '航标': '航标 navigation aid',
+    '浮标': '浮标 buoy',
+    '灯塔': '灯塔 lighthouse',
+    '碍航物': '碍航物 obstruction',
+    '吃水': '吃水 draft',
+    '水深': '水深 depth',
+    '泊位': '泊位 berth',
+    '港池': '港池 harbor basin',
+    '防波堤': '防波堤 breakwater',
+  };
+  
+  let correctedQuery = query;
+  for (const [term, correction] of Object.entries(termCorrections)) {
+    if (query.includes(term) && !query.includes(correction)) {
+      correctedQuery = correctedQuery.replace(new RegExp(term, 'g'), correction);
+    }
+  }
+  
+  // 隐含问题拓展（用于辅助检索，不对外输出）
+  const expandedQueries: string[] = [];
+  
+  // 如果问港口，隐含查询港口代码、位置、设施
+  if (/港口|港/.test(query)) {
+    expandedQueries.push('港口代码 UN/LOCODE');
+    expandedQueries.push('港口位置 坐标');
+  }
+  
+  // 如果问航道，隐含查询水深、宽度、限高
+  if (/航道/.test(query)) {
+    expandedQueries.push('航道水深 设计吃水');
+    expandedQueries.push('航道宽度 通航尺度');
+  }
+  
+  // 如果问锚地，隐含查询水深、底质、范围
+  if (/锚地/.test(query)) {
+    expandedQueries.push('锚地水深 底质');
+    expandedQueries.push('锚地范围 坐标');
+  }
+  
+  return { correctedQuery, expandedQueries };
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body: RagRequest = await request.json();
-    const { query, modality, topK, stream = true, noLimit = false, sessionId, history } = body;
+    const { query, modality, topK, stream = true, noLimit = false, sessionId, history, lockContext, clearContext, responseMode, commandType } = body;
     // 如果 noLimit 为 true，则不限制检索数量（最多返回 500 条）
     const actualTopK = noLimit ? 500 : (topK || 100);
 
@@ -215,55 +282,126 @@ export async function POST(request: NextRequest) {
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
     
+    // ========== Query预处理 ==========
+    const { correctedQuery, expandedQueries } = preprocessQuery(query);
+    
     // ========== 上下文管理（Coze 对话流架构）==========
     let contextMessages: Array<{ role: 'user' | 'assistant'; content: string }> = history || [];
     let contextSummary = '';
-    let effectiveQuery = query;
+    let effectiveQuery = correctedQuery;
+    let lockedContext: { region?: string; chartIds?: string[]; sources?: string[] } | null = null;
     
     if (sessionId) {
       try {
-        // 1. 拼接新问题到历史对话
-        const newMessage = { role: 'user' as const, content: query };
-        contextMessages = [...contextMessages, newMessage];
-        
-        // 2. 计算上下文大小（估算 token 数，中文约 1.5 字符/token）
-        const contextText = contextMessages.map(m => m.content).join('');
-        const estimatedTokens = Math.ceil(contextText.length / 1.5);
-        const MAX_TOKENS = 128 * 1024; // 128k
-        
-        // 3. 如果超过 128k，调用大模型总结压缩
-        if (estimatedTokens > MAX_TOKENS) {
-          const llmClient = new LLMClient(new Config(), customHeaders);
-          const summaryPrompt = `请将以下历史对话压缩为原来的1/3长度，保留关键信息、用户意图和功能状态：
+        // 处理清空上下文指令
+        if (clearContext) {
+          await supabase.from('conversation_contexts').update({
+            messages: [],
+            summary: null,
+            total_tokens: 0,
+            is_compressed: false,
+            locked_context: null,
+            updated_at: new Date().toISOString(),
+          }).eq('session_id', sessionId);
+          contextMessages = [];
+          effectiveQuery = correctedQuery;
+        } else {
+          // 获取当前上下文（包含锁定状态）
+          const { data: existingContext } = await supabase
+            .from('conversation_contexts')
+            .select('messages, locked_context')
+            .eq('session_id', sessionId)
+            .single();
+          
+          lockedContext = existingContext?.locked_context as typeof lockedContext;
+          
+          // 处理锁定上下文指令
+          if (lockContext && existingContext) {
+            // 从历史消息中提取海域和海图信息
+            const historyText = contextMessages.map(m => m.content).join(' ');
+            const chartIdMatch = historyText.match(/图号[：:]\s*(\d+)/g);
+            const portMatch = historyText.match(/[A-Z]{2}[A-Z]{3}/g);
+            
+            lockedContext = {
+              region: portMatch?.[0] || undefined,
+              chartIds: chartIdMatch?.map(m => m.replace(/图号[：:]\s*/, '')) || undefined,
+              sources: [],
+            };
+            
+            await supabase.from('conversation_contexts').update({
+              locked_context: lockedContext,
+            }).eq('session_id', sessionId);
+          }
+          
+          // 如果上下文已锁定，复用锁定的海域和海图范围
+          if (lockedContext) {
+            if (lockedContext.region) {
+              effectiveQuery = `[锁定海域: ${lockedContext.region}] ${correctedQuery}`;
+            }
+            if (lockedContext.chartIds?.length) {
+              effectiveQuery += ` [限定海图: ${lockedContext.chartIds.join(', ')}]`;
+            }
+          }
+          
+          // 1. 拼接新问题到历史对话
+          const newMessage = { role: 'user' as const, content: query };
+          contextMessages = [...contextMessages, newMessage];
+          
+          // 2. 计算上下文大小（估算 token 数，中文约 1.5 字符/token）
+          const contextText = contextMessages.map(m => m.content).join('');
+          const estimatedTokens = Math.ceil(contextText.length / 1.5);
+          const MAX_TOKENS = 128 * 1024; // 128k
+          
+          // 3. 如果超过 128k，调用大模型总结压缩
+          if (estimatedTokens > MAX_TOKENS) {
+            const llmClient = new LLMClient(new Config(), customHeaders);
+            const summaryPrompt = `请将以下历史对话压缩为原来的1/3长度，保留关键信息、用户意图、锁定海域和功能状态：
 
 ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}`).join('\n')}
 
 压缩后的摘要：`;
 
-          const summaryResult = await llmClient.invoke([
-            { role: 'user', content: summaryPrompt }
-          ]);
-          contextSummary = summaryResult.content || '';
+            const summaryResult = await llmClient.invoke([
+              { role: 'user', content: summaryPrompt }
+            ]);
+            contextSummary = summaryResult.content || '';
+            
+            // 压缩后的摘要作为上下文
+            effectiveQuery = `[历史摘要]${contextSummary}\n\n[当前问题]${correctedQuery}`;
+          }
           
-          // 压缩后的摘要作为上下文
-          effectiveQuery = `[历史摘要]${contextSummary}\n\n[当前问题]${query}`;
+          // 保存上下文到数据库
+          await supabase.from('conversation_contexts').upsert({
+            session_id: sessionId,
+            messages: JSON.parse(JSON.stringify(contextMessages)),
+            summary: contextSummary || null,
+            total_tokens: estimatedTokens,
+            is_compressed: estimatedTokens > MAX_TOKENS,
+            locked_context: lockedContext,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'session_id' });
         }
-        
-        // 保存上下文到数据库
-        await supabase.from('conversation_contexts').upsert({
-          session_id: sessionId,
-          messages: JSON.parse(JSON.stringify(contextMessages)),
-          summary: contextSummary || null,
-          total_tokens: estimatedTokens,
-          is_compressed: estimatedTokens > MAX_TOKENS,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'session_id' });
         
       } catch (ctxError) {
         console.error('上下文管理失败:', ctxError);
         // 失败时继续使用原始查询
       }
     }
+    
+    // ========== 指令处理 ==========
+    let instructionPrompt = '';
+    if (commandType === 'chart_annotation') {
+      instructionPrompt = '\n\n[指令]提取海图锚地、等深线、航标、碍航物参数，必须附带来源标注。';
+    } else if (commandType === 'channel_regulation') {
+      instructionPrompt = '\n\n[指令]汇总航道水深、限吃水、通航管制、约束条件，必须附带来源标注。';
+    }
+    
+    // 根据回答模式调整提示
+    const modeInstruction = responseMode === 'brief' 
+      ? '\n\n[回答模式]精简回答：仅输出关键参数与结论，去除冗余描述。'
+      : responseMode === 'detailed'
+        ? '\n\n[回答模式]详细回答：补充规范原文、完整参数细则、安全提示。'
+        : '';
     
     // ========== 原有问答逻辑 ==========
     
@@ -392,15 +530,18 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
       })
       .join('\n\n---\n\n');
 
-    // 4. 构建消息
+    // 4. 构建消息（包含指令和模式提示）
     const messages = [
-      { role: 'system' as const, content: SYSTEM_PROMPT },
+      { role: 'system' as const, content: SYSTEM_PROMPT + modeInstruction + instructionPrompt },
       { 
         role: 'user' as const, 
         content: `上下文信息：
 ${context || '未找到相关信息'}
 
-用户问题：${query}`
+${expandedQueries.length > 0 ? `隐含检索维度：${expandedQueries.join('、')}\n` : ''}
+用户问题：${effectiveQuery}
+
+注意：所有输出内容必须标注来源，格式为【来源】文档名称 | 海图图号 | 片段位置`
       },
     ];
 

@@ -369,8 +369,13 @@ export default function RagPage() {
     }
   };
 
-  // RAG 问答
-  const handleRagQuery = async () => {
+  // RAG 问答（支持指令参数）
+  const handleRagQuery = async (options?: {
+    lockContext?: boolean;
+    clearContext?: boolean;
+    responseMode?: 'brief' | 'detailed';
+    commandType?: string;
+  }) => {
     if (!ragQuery.trim()) return;
     setRagLoading(true);
     setRagAnswer('');
@@ -386,7 +391,11 @@ export default function RagPage() {
           query: ragQuery, 
           topK: calculatedTopK,
           noLimit: true,
-          sessionId: ragSessionId
+          sessionId: ragSessionId,
+          lockContext: options?.lockContext,
+          clearContext: options?.clearContext,
+          responseMode: options?.responseMode,
+          commandType: options?.commandType,
         }),
       });
 
@@ -917,7 +926,66 @@ export default function RagPage() {
                     rows={2}
                     className="text-base"
                   />
-                  <Button onClick={handleRagQuery} disabled={ragLoading} className="w-full h-11">
+                  
+                  {/* 6个快捷按钮 */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ clearContext: true })}
+                      disabled={ragLoading}
+                      className="text-xs h-8"
+                    >
+                      清空上下文
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ lockContext: true })}
+                      disabled={ragLoading}
+                      className="text-xs h-8"
+                    >
+                      锁定上下文
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ responseMode: 'brief' })}
+                      disabled={ragLoading}
+                      className="text-xs h-8"
+                    >
+                      精简回答
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ responseMode: 'detailed' })}
+                      disabled={ragLoading}
+                      className="text-xs h-8"
+                    >
+                      详细回答
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ commandType: 'chart_annotation' })}
+                      disabled={ragLoading}
+                      className="text-xs h-8"
+                    >
+                      查询海图标注
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ commandType: 'channel_regulation' })}
+                      disabled={ragLoading}
+                      className="text-xs h-8"
+                    >
+                      航道通航规范
+                    </Button>
+                  </div>
+                  
+                  <Button onClick={() => handleRagQuery()} disabled={ragLoading} className="w-full h-11">
                     {ragLoading ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
