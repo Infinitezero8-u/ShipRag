@@ -65,8 +65,14 @@ export async function POST(request: NextRequest) {
     // 应用过滤器
     let filteredResults = results || [];
     if (filter && filteredResults.length > 0) {
-      filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown> }) => {
+      filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown>; tags?: string[] }) => {
         return Object.entries(filter).every(([key, value]) => {
+          // 特殊处理标签过滤
+          if (key === 'tags') {
+            const filterTags = Array.isArray(value) ? value : [value];
+            const itemTags = item.tags || [];
+            return filterTags.some((t: string) => itemTags.includes(t));
+          }
           // 从 content 中提取字段值
           if (item.content) {
             const regex = new RegExp(`${key}:\\s*([^,]+)`, 'i');
@@ -284,8 +290,13 @@ async function fallbackSearch(
   // 应用过滤器
   let filteredResults = results;
   if (filter && filteredResults.length > 0) {
-    filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown> }) => {
+    filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown>; tags?: string[] }) => {
       return Object.entries(filter).every(([key, value]) => {
+        // 标签过滤
+        if (key === 'tags' && item.tags) {
+          const tagArray = Array.isArray(value) ? value : [value];
+          return tagArray.some((tag: string) => item.tags!.includes(tag));
+        }
         // 从 content 中提取字段值
         if (item.content) {
           const regex = new RegExp(`${key}:\\s*([^,]+)`, 'i');
@@ -445,6 +456,7 @@ export async function GET(request: NextRequest) {
     const offset = offsetParam ? parseInt(offsetParam, 10) : (page - 1) * limit;
     const source = searchParams.get('source');
     const status = searchParams.get('status');
+    const tag = searchParams.get('tag'); // 标签过滤
 
     const supabase = getSupabaseClient();
     
@@ -468,6 +480,9 @@ export async function GET(request: NextRequest) {
     }
     if (source) {
       countQuery = countQuery.eq('source', source);
+    }
+    if (tag) {
+      countQuery = countQuery.contains('tags', [tag]);
     }
     
     const { count: total } = await countQuery;
@@ -494,6 +509,9 @@ export async function GET(request: NextRequest) {
     }
     if (source) {
       query = query.eq('source', source);
+    }
+    if (tag) {
+      query = query.contains('tags', [tag]);
     }
 
     const { data, error } = await query;

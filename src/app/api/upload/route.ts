@@ -15,6 +15,17 @@ const storage = new S3Storage({
 
 export async function POST(request: NextRequest) {
   try {
+    const contentType = request.headers.get('content-type') || '';
+    
+    // 支持 JSON 格式的 URL 请求
+    if (contentType.includes('application/json')) {
+      const body = await request.json();
+      if (body.url) {
+        return await handleUrlUpload(body.url, request);
+      }
+      return NextResponse.json({ error: 'JSON 请求需要提供 url 字段' }, { status: 400 });
+    }
+    
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
     const url = formData.get('url') as string | null;
