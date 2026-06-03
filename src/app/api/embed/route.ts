@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { EmbeddingClient, HeaderUtils, S3Storage } from 'coze-coding-dev-sdk';
+import { EmbeddingClient, LLMClient, Config, HeaderUtils, S3Storage } from 'coze-coding-dev-sdk';
 
 // 初始化对象存储
 const storage = new S3Storage({
@@ -10,6 +10,9 @@ const storage = new S3Storage({
   bucketName: process.env.COZE_BUCKET_NAME,
   region: "cn-beijing",
 });
+
+// 初始化 LLM 配置
+const llmConfig = new Config();
 
 // 内容哈希缓存，用于判重
 const contentHashCache = new Set<string>();
@@ -90,10 +93,29 @@ export async function POST(request: NextRequest) {
         }
         
         try {
-          // 使用图片嵌入 API
+          // 1. 使用 LLM 生成图片描述
+          let imageDescription = item.content || '';
+          if (!imageDescription || imageDescription.trim().length === 0) {
+            const llmClient = new LLMClient(llmConfig, customHeaders);
+            const messages = [
+              {
+                role: 'user' as const,
+                content: [
+                  { type: 'text' as const, text: '请用中文简要描述这张图片的内容，不超过100字。' },
+                  { type: 'image_url' as const, image_url: { url: imageUrl } }
+                ]
+              }
+            ];
+            const descResponse = await llmClient.invoke(messages, { model: 'doubao-seed-2-0-lite-260215' });
+            imageDescription = descResponse.content || '图片内容';
+            // 更新描述到数据库
+            await supabase.from('knowledge_items').update({ content: imageDescription }).eq('id', item.id);
+          }
+          
+          // 2. 使用图片嵌入 API
           const embedding = await embeddingClient.embedImage(imageUrl);
           
-          // 更新向量
+          // 3. 更新向量
           const { error: updateError } = await supabase.rpc('update_embedding', {
             item_id: item.id,
             embedding_vector: embedding,

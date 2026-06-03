@@ -563,9 +563,9 @@ export default function RagPage() {
                     >
                       <div className="flex gap-2">
                         {/* 图片缩略图 */}
-                        {result.modality === 'image' && result.metadata && 'storageUrl' in result.metadata && (
+                        {result.modality === 'image' && result.metadata && ('imageUrl' in result.metadata || 'storageUrl' in result.metadata) && (
                           <img 
-                            src={result.metadata.storageUrl as string} 
+                            src={(result.metadata.imageUrl || result.metadata.storageUrl) as string} 
                             alt={result.title}
                             className="w-16 h-16 object-cover rounded border shrink-0"
                           />
@@ -718,10 +718,10 @@ export default function RagPage() {
                 {/* 图片附件 */}
                 {previewItem.modality === 'image' && (
                   <div className="space-y-2">
-                    {previewItem.metadata && 'storageUrl' in previewItem.metadata && (
+                    {previewItem.metadata && ('imageUrl' in previewItem.metadata || 'storageUrl' in previewItem.metadata) && (
                       <div className="relative">
                         <img 
-                          src={previewItem.metadata.storageUrl as string} 
+                          src={(previewItem.metadata.imageUrl || previewItem.metadata.storageUrl) as string} 
                           alt={previewItem.title}
                           className="w-full max-h-64 object-contain rounded-lg border"
                         />
