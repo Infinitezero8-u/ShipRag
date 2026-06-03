@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 interface FileUpload {
@@ -51,6 +51,11 @@ export default function ManagePage() {
 
   // 批量操作
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+
+  // 自动向量化状态
+  const [autoEmbedding, setAutoEmbedding] = useState(false);
+  const autoEmbeddingRef = useRef(false);
+  const [embedProgress, setEmbedProgress] = useState({ processed: 0, failed: 0 });
 
   // 编辑条目
   const [editingItem, setEditingItem] = useState<KnowledgeItem | null>(null);
@@ -364,6 +369,55 @@ export default function ManagePage() {
     }
   };
 
+  // 开始/停止自动向量化
+  const toggleAutoEmbed = async () => {
+    if (autoEmbedding) {
+      // 停止
+      autoEmbeddingRef.current = false;
+      setAutoEmbedding(false);
+      return;
+    }
+
+    // 开始
+    autoEmbeddingRef.current = true;
+    setAutoEmbedding(true);
+    setEmbedProgress({ processed: 0, failed: 0 });
+
+    while (autoEmbeddingRef.current) {
+      try {
+        const res = await fetch('/api/embed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchSize: 5 })
+        });
+        const data = await res.json();
+        
+        if (data.processed === 0 || !autoEmbeddingRef.current) {
+          break;
+        }
+        
+        setEmbedProgress(prev => ({
+          processed: prev.processed + data.processed,
+          failed: prev.failed + (data.failed || 0)
+        }));
+        
+        // 更新统计
+        fetchData();
+      } catch (err) {
+        console.error('向量化失败:', err);
+        break;
+      }
+      
+      // 短暂暂停
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    autoEmbeddingRef.current = false;
+    setAutoEmbedding(false);
+    fetchData();
+    fetchItems();
+  };
+
   // 重新打标签全部
   const reTagAll = async () => {
     if (!confirm('确定要重新打标签全部条目吗？')) return;
@@ -560,6 +614,20 @@ export default function ManagePage() {
                   className="px-3 py-1 bg-purple-100 text-purple-700 rounded text-sm"
                 >
                   全部重新向量化
+                </button>
+                <button
+                  onClick={toggleAutoEmbed}
+                  className={`px-3 py-1 rounded text-sm font-medium ${
+                    autoEmbedding
+                      ? 'bg-red-500 text-white'
+                      : 'bg-blue-500 text-white'
+                  }`}
+                >
+                  {autoEmbedding ? (
+                    <span>⏹ 停止向量化 ({embedProgress.processed})</span>
+                  ) : (
+                    <span>▶ 自动向量化 ({stats.pending})</span>
+                  )}
                 </button>
                 <button
                   onClick={reTagAll}
