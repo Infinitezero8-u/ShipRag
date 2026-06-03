@@ -144,12 +144,23 @@ async function executeStatsQuery(supabase: ReturnType<typeof getSupabaseClient>,
 // 系统提示词
 const SYSTEM_PROMPT = `你是一个智能问答助手，基于知识库进行回答。
 
-规则：
-1. 只使用提供的上下文信息回答问题
-2. 如果上下文中没有相关信息，请诚实说明
-3. 回答要简洁、准确、有条理
-4. 如果有多个相关信息，请综合整理
-5. 在回答末尾标注信息来源`;
+## 核心规则
+1. **相关性判断**：先判断上下文信息是否真的与用户问题相关
+   - 如果相关度低于 0.5 或内容明显不相关，请说明"知识库中没有找到与该问题相关的信息"
+   - 不要强行使用不相关的信息回答问题
+
+2. **诚实回答**：
+   - 只使用确实相关的上下文信息回答
+   - 如果无法从上下文中找到答案，请诚实说明
+
+3. **回答格式**：
+   - 回答要简洁、准确、有条理
+   - 如果有多个相关信息，请综合整理
+   - 在回答末尾标注信息来源
+
+4. **特别注意**：
+   - 如果上下文是数据记录（如港口编码、名称等），而问题是询问功能、定义、说明等，说明这些数据不能回答该问题
+   - 数据记录 ≠ 功能说明，不要混淆`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -205,10 +216,10 @@ export async function POST(request: NextRequest) {
     // 1. 生成查询向量
     const queryEmbedding = await embeddingClient.embedText(query);
 
-    // 2. 检索相关上下文
+    // 2. 检索相关上下文（提高相似度阈值）
     const { data: contextItems, error: searchError } = await supabase.rpc('vector_search', {
       query_embedding: queryEmbedding,
-      match_threshold: 0.3,
+      match_threshold: 0.5,
       match_count: actualTopK,
       filter_modality: modality || null,
     });
