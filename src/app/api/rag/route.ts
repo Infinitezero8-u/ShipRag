@@ -7,6 +7,7 @@ interface RagRequest {
   modality?: string;
   topK?: number;
   stream?: boolean;
+  noLimit?: boolean; // 取消检索数量限制
 }
 
 // 系统提示词
@@ -22,7 +23,9 @@ const SYSTEM_PROMPT = `你是一个智能问答助手，基于知识库进行回
 export async function POST(request: NextRequest) {
   try {
     const body: RagRequest = await request.json();
-    const { query, modality, topK = 100, stream = true } = body;
+    const { query, modality, topK, stream = true, noLimit = false } = body;
+    // 如果 noLimit 为 true，则不限制检索数量（最多返回 500 条）
+    const actualTopK = noLimit ? 500 : (topK || 100);
 
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: '问题不能为空' }, { status: 400 });
@@ -40,13 +43,13 @@ export async function POST(request: NextRequest) {
     const { data: contextItems, error: searchError } = await supabase.rpc('vector_search', {
       query_embedding: queryEmbedding,
       match_threshold: 0.3,
-      match_count: topK,
+      match_count: actualTopK,
       filter_modality: modality || null,
     });
 
     if (searchError) {
       // 使用备用搜索
-      const fallbackResult = await fallbackVectorSearch(supabase, queryEmbedding, modality, topK);
+      const fallbackResult = await fallbackVectorSearch(supabase, queryEmbedding, modality, actualTopK);
       if (fallbackResult.error) {
         return NextResponse.json({ error: fallbackResult.error }, { status: 500 });
       }

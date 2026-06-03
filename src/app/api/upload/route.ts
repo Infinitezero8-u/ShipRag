@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { parseFile, getFileType } from '@/lib/parsers';
-import { HeaderUtils, S3Storage } from 'coze-coding-dev-sdk';
+import { HeaderUtils, S3Storage, LLMClient, Config } from 'coze-coding-dev-sdk';
 
 // 初始化对象存储
 const storage = new S3Storage({
@@ -31,9 +31,10 @@ export async function POST(request: NextRequest) {
     // 读取文件内容
     const buffer = Buffer.from(await file.arrayBuffer());
     
-    // 如果是图片，上传到对象存储
+    // 如果是图片，上传到对象存储并生成描述
     let imageUrl: string | undefined;
     let storageKey: string | undefined;
+    let imageDescription: string | undefined;
     if (fileType === 'image') {
       try {
         storageKey = await storage.uploadFile({
@@ -46,6 +47,28 @@ export async function POST(request: NextRequest) {
           key: storageKey,
           expireTime: 604800, // 7 天
         });
+        
+        // 使用 LLM 生成图片描述
+        try {
+          const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+          const llmClient = new LLMClient(new Config(), customHeaders);
+          const descriptionResult = await llmClient.invoke(
+            [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: '请用中文简要描述这张图片的内容，不超过100字。' },
+                  { type: 'image_url', image_url: { url: imageUrl } },
+                ],
+              },
+            ],
+            { model: 'doubao-seed-2-0-lite-260215' }
+          );
+          imageDescription = descriptionResult.content || '';
+        } catch (descError) {
+          console.error('生成图片描述失败:', descError);
+          imageDescription = filename; // 使用文件名作为备用描述
+        }
       } catch (uploadError) {
         console.error('图片上传失败:', uploadError);
         // 继续处理，但记录错误
@@ -85,12 +108,13 @@ export async function POST(request: NextRequest) {
     const itemsToInsert = parseResult.items.map(item => ({
       modality: item.modality,
       title: item.title,
-      content: item.content,
+      content: item.modality === 'image' && imageDescription ? imageDescription : item.content,
       source: filename,
       metadata: {
         ...item.metadata,
         ...(imageUrl && { imageUrl }),
         ...(storageKey && { storageKey }),
+        ...(imageDescription && { imageDescription }),
       },
     }));
 

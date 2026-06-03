@@ -96,6 +96,7 @@ export default function RagPage() {
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState('');
   const [searchModality, setSearchModality] = useState<string>('');
+  const [searchMode, setSearchMode] = useState<'fuzzy' | 'exact'>('fuzzy'); // 搜索模式
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<KnowledgeItem[]>([]);
   
@@ -344,6 +345,7 @@ export default function RagPage() {
         body: JSON.stringify({
           query: searchQuery,
           modality: searchModality || undefined,
+          mode: searchMode, // 搜索模式
           topK: 50,
           threshold: 0.3,
         }),
@@ -642,9 +644,9 @@ export default function RagPage() {
           <TabsContent value="search">
             <Card>
               <CardHeader>
-                <CardTitle>语义检索</CardTitle>
+                <CardTitle>智能检索</CardTitle>
                 <CardDescription>
-                  基于向量相似度的智能检索，支持跨模态搜索
+                  支持精确搜索（关键词匹配）和模糊搜索（语义相似）
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -656,6 +658,14 @@ export default function RagPage() {
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                     className="flex-1"
                   />
+                  <select
+                    className="px-3 py-2 border rounded-md"
+                    value={searchMode}
+                    onChange={(e) => setSearchMode(e.target.value as 'fuzzy' | 'exact')}
+                  >
+                    <option value="fuzzy">模糊搜索</option>
+                    <option value="exact">精确搜索</option>
+                  </select>
                   <select
                     className="px-3 py-2 border rounded-md"
                     value={searchModality}

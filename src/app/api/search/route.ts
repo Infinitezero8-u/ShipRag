@@ -8,12 +8,13 @@ interface SearchParams {
   topK?: number; // 返回结果数量
   threshold?: number; // 相似度阈值
   filter?: { [key: string]: string }; // 可选：按字段过滤，如 { ctryNameCn: '日本' }
+  mode?: 'exact' | 'fuzzy'; // 搜索模式：exact=精确搜索(关键词匹配)，fuzzy=模糊搜索(语义搜索)
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: SearchParams = await request.json();
-    const { query, modality, topK = 20, threshold = 0.3, filter } = body;
+    const { query, modality, topK = 20, threshold = 0.3, filter, mode = 'fuzzy' } = body;
 
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: '查询内容不能为空' }, { status: 400 });
@@ -21,6 +22,13 @@ export async function POST(request: NextRequest) {
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
+
+    // 精确搜索模式：使用关键词匹配
+    if (mode === 'exact') {
+      return await exactSearch(supabase, query, modality, topK, filter);
+    }
+
+    // 模糊搜索模式：使用语义搜索
     const embeddingClient = new EmbeddingClient();
 
     // 生成查询向量
@@ -140,17 +148,82 @@ async function fallbackSearch(
       });
     });
   }
+}
 
+// 精确搜索：使用关键词匹配
+async function exactSearch(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  query: string,
+  modality?: string,
+  topK?: number,
+  filter?: { [key: string]: string }
+) {
+  // 构建搜索查询
+  let searchQuery = supabase
+    .from('knowledge_items')
+    .select('id, modality, title, content, source, metadata, created_at')
+    .not('embedding', 'is', null); // 只搜索已向量化的条目
+  
+  // 添加关键词搜索条件（搜索 title 和 content）
+  searchQuery = searchQuery.or(`title.ilike.%${query}%,content.ilike.%${query}%`);
+  
+  // 限定模态
+  if (modality) {
+    searchQuery = searchQuery.eq('modality', modality);
+  }
+  
+  // 限制返回数量
+  searchQuery = searchQuery.limit(topK || 50);
+  
+  const { data: results, error } = await searchQuery;
+  
+  if (error) {
+    return NextResponse.json({ error: `精确搜索失败: ${error.message}` }, { status: 500 });
+  }
+  
+  // 应用过滤器
+  let filteredResults = results || [];
+  if (filter && filteredResults.length > 0) {
+    filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown> }) => {
+      return Object.entries(filter).every(([key, value]) => {
+        // 从 content 中提取字段值进行匹配
+        const content = item.content || '';
+        const regex = new RegExp(`${key}:\\s*([^,]+)`, 'i');
+        const match = content.match(regex);
+        if (match) {
+          return match[1].trim().toLowerCase() === value.toLowerCase();
+        }
+        // 也检查 metadata
+        if (item.metadata && typeof item.metadata === 'object') {
+          const metadataValue = (item.metadata as Record<string, unknown>)[key];
+          if (metadataValue) {
+            return String(metadataValue).toLowerCase() === value.toLowerCase();
+          }
+        }
+        return false;
+      });
+    });
+  }
+  
+  // 添加状态标识
+  const resultsWithStatus = filteredResults.map((item: { id: string; modality: string; title: string; content: string; source: string; metadata: Record<string, unknown>; created_at: string }) => ({
+    ...item,
+    status: 'embedded',
+    similarity: 1.0, // 精确匹配相似度为 1
+  }));
+  
   return NextResponse.json({
     success: true,
-    query: '',
-    results: filteredResults,
-    count: filteredResults.length,
-    note: '使用备用搜索方法',
+    query,
+    mode: 'exact',
+    results: resultsWithStatus,
+    count: resultsWithStatus.length,
   });
 }
 
-// 计算余弦相似度
+export {}; // 模块声明
+
+// 备用向量搜索函数
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   
