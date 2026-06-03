@@ -134,19 +134,43 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const modality = searchParams.get('modality');
+    const type = searchParams.get('type') || 'all'; // all, embedded, pending
+    const page = parseInt(searchParams.get('page') || '1', 10);
     const limit = parseInt(searchParams.get('limit') || '20', 10);
+    const offset = (page - 1) * limit;
 
     const supabase = getSupabaseClient();
+    
+    // 先获取总数
+    let countQuery = supabase
+      .from('knowledge_items')
+      .select('id', { count: 'exact', head: true });
+    
+    if (modality) {
+      countQuery = countQuery.eq('modality', modality);
+    }
+    if (type === 'embedded') {
+      countQuery = countQuery.not('embedding', 'is', null);
+    } else if (type === 'pending') {
+      countQuery = countQuery.is('embedding', null);
+    }
+    
+    const { count: total } = await countQuery;
     
     // 获取知识条目列表
     let query = supabase
       .from('knowledge_items')
-      .select('id, modality, title, source, created_at')
+      .select('id, modality, title, content, source, metadata, created_at, embedding')
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .range(offset, offset + limit - 1);
 
     if (modality) {
       query = query.eq('modality', modality);
+    }
+    if (type === 'embedded') {
+      query = query.not('embedding', 'is', null);
+    } else if (type === 'pending') {
+      query = query.is('embedding', null);
     }
 
     const { data, error } = await query;
@@ -155,7 +179,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: `查询失败: ${error.message}` }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, items: data });
+    // 格式化返回数据
+    const items = (data || []).map(item => ({
+      id: item.id,
+      modality: item.modality,
+      title: item.title,
+      content: item.content,
+      source: item.source,
+      metadata: item.metadata,
+      status: item.embedding ? 'embedded' : 'pending',
+      created_at: item.created_at,
+    }));
+
+    return NextResponse.json({ success: true, items, total: total || 0, page, limit });
   } catch (error) {
     return NextResponse.json({ 
       error: `查询失败: ${error instanceof Error ? error.message : String(error)}` 
