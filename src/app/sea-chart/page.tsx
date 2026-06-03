@@ -105,6 +105,7 @@ export default function SeaChartPage() {
   const [expandLayer, setExpandLayer] = useState(false);
   const [expandView, setExpandView] = useState(false);
   const [expandTrackInfo, setExpandTrackInfo] = useState(false);
+  const [expandTrackDraw, setExpandTrackDraw] = useState(false);
   
   // 数据库港口数据
   const [dbPorts, setDbPorts] = useState<Port[]>([]);
@@ -407,9 +408,16 @@ export default function SeaChartPage() {
 
               {/* 航迹绘制控制 */}
               {activeTab === 'track' && (
-                <div className="bg-white rounded-xl shadow-sm p-4">
-                  <h3 className="font-semibold text-gray-900 mb-3">✏️ 航迹绘制</h3>
-                  <div className="space-y-3">
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  <button 
+                    onClick={() => setExpandTrackDraw(!expandTrackDraw)}
+                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50"
+                  >
+                    <h3 className="font-semibold text-gray-900">✏️ 航迹绘制</h3>
+                    <span className="text-gray-400">{expandTrackDraw ? '▼' : '▶'}</span>
+                  </button>
+                  {expandTrackDraw && (
+                  <div className="px-4 pb-4 space-y-3">
                     <button
                       onClick={() => setIsDrawing(!isDrawing)}
                       className={`w-full px-3 py-2 rounded-lg text-sm font-medium transition ${
@@ -437,6 +445,7 @@ export default function SeaChartPage() {
                       {customTrack.length > 0 && `已绘制 ${customTrack.length} 个点`}
                     </div>
                   </div>
+                  )}
                 </div>
               )}
 
