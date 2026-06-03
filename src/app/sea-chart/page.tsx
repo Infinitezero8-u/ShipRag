@@ -506,7 +506,7 @@ export default function SeaChartPage() {
                         onChange={(e) => setShowSeaMap(e.target.checked)}
                         className="w-4 h-4 rounded"
                       />
-                      <span className="text-sm text-gray-700">海图叠加 (OpenSeaMap)</span>
+                      <span className="text-sm text-gray-700">海图底图</span>
                     </label>
                     {/* 港口显隐 - 复选框 */}
                     <label className="flex items-center gap-2 cursor-pointer">

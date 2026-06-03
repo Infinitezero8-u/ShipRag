@@ -186,7 +186,7 @@ export default function SeaMap({
           maxZoom={18}
         />
         
-        {/* 海图叠加 - OpenSeaMap */}
+        {/* 海图底图 - OpenSeaMap */}
         {showSeaMap && (
           <TileLayer
             attribution='&copy; <a href="https://www.openseamap.org">OpenSeaMap</a>'
