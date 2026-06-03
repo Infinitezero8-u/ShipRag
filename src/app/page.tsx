@@ -336,8 +336,12 @@ export default function RagPage() {
     <div className="min-h-screen bg-background">
       <div className="max-w-4xl mx-auto p-3 sm:p-4">
         {/* 标题 */}
-        <div className="text-center mb-4">
+        <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl sm:text-2xl font-bold">跨模态 RAG 知识检索</h1>
+          <a href="/manage" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+            <Settings className="w-4 h-4" />
+            管理知识库
+          </a>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">

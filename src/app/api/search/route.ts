@@ -287,7 +287,10 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type') || 'all'; // all, embedded, pending
     const page = parseInt(searchParams.get('page') || '1', 10);
     const limit = parseInt(searchParams.get('limit') || '20', 10);
-    const offset = (page - 1) * limit;
+    const offsetParam = searchParams.get('offset');
+    const offset = offsetParam ? parseInt(offsetParam, 10) : (page - 1) * limit;
+    const source = searchParams.get('source');
+    const status = searchParams.get('status');
 
     const supabase = getSupabaseClient();
     
@@ -303,6 +306,14 @@ export async function GET(request: NextRequest) {
       countQuery = countQuery.not('embedding', 'is', null);
     } else if (type === 'pending') {
       countQuery = countQuery.is('embedding', null);
+    }
+    if (status === 'embedded') {
+      countQuery = countQuery.not('embedding', 'is', null);
+    } else if (status === 'pending') {
+      countQuery = countQuery.is('embedding', null);
+    }
+    if (source) {
+      countQuery = countQuery.eq('source', source);
     }
     
     const { count: total } = await countQuery;
@@ -321,6 +332,14 @@ export async function GET(request: NextRequest) {
       query = query.not('embedding', 'is', null);
     } else if (type === 'pending') {
       query = query.is('embedding', null);
+    }
+    if (status === 'embedded') {
+      query = query.not('embedding', 'is', null);
+    } else if (status === 'pending') {
+      query = query.is('embedding', null);
+    }
+    if (source) {
+      query = query.eq('source', source);
     }
 
     const { data, error } = await query;
