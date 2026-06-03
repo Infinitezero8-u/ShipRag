@@ -10,6 +10,137 @@ interface RagRequest {
   noLimit?: boolean; // 取消检索数量限制
 }
 
+// 统计问题识别
+function isStatsQuery(query: string): { isStats: boolean; statsType: string } {
+  const lowerQuery = query.toLowerCase();
+  
+  // 统计关键词
+  const statsPatterns = [
+    { pattern: /一共|总共|总计|合计/, type: 'total' },
+    { pattern: /多少个|有几个|数量/, type: 'count' },
+    { pattern: /统计/, type: 'stats' },
+    { pattern: /哪些国家|什么国家|多少国家/, type: 'country_list' },
+    { pattern: /按国家|分组统计|各国/, type: 'group_by_country' },
+    { pattern: /最大|最小|最多|最少|第一/, type: 'extreme' },
+  ];
+  
+  for (const { pattern, type } of statsPatterns) {
+    if (pattern.test(query)) {
+      return { isStats: true, statsType: type };
+    }
+  }
+  
+  return { isStats: false, statsType: '' };
+}
+
+// 执行统计查询
+async function executeStatsQuery(supabase: ReturnType<typeof getSupabaseClient>, query: string, statsType: string): Promise<{ result: string; sql: string }> {
+  let result = '';
+  let sql = '';
+  
+  try {
+    // 判断查询类型
+    if (statsType === 'total' || statsType === 'count') {
+      // 总数查询
+      const { data, error } = await supabase
+        .from('knowledge_items')
+        .select('id', { count: 'exact', head: true });
+      
+      if (!error) {
+        result = `知识库中共有 **${data?.length || 0}** 条记录。`;
+        sql = 'SELECT COUNT(*) FROM knowledge_items';
+      }
+    } else if (statsType === 'country_list') {
+      // 国家列表查询
+      const { data, error } = await supabase
+        .rpc('execute_sql', {
+          sql_query: `
+            SELECT DISTINCT 
+              regexp_match(content, 'ctryNameCn:\\s*([^,]+)')?[1] as country
+            FROM knowledge_items
+            WHERE content LIKE '%ctryNameCn:%'
+            ORDER BY country
+          `
+        });
+      
+      // 备用方案：直接查询
+      const { data: items, error: err2 } = await supabase
+        .from('knowledge_items')
+        .select('content')
+        .like('content', '%ctryNameCn:%')
+        .limit(5000);
+      
+      if (!err2 && items) {
+        const countries = new Set<string>();
+        for (const item of items) {
+          const match = item.content?.match(/ctryNameCn:\s*([^,]+)/);
+          if (match && match[1]) {
+            countries.add(match[1].trim());
+          }
+        }
+        result = `知识库中包含 **${countries.size}** 个国家/地区：\n${Array.from(countries).sort().slice(0, 50).join('、')}${countries.size > 50 ? '...' : ''}`;
+        sql = 'SELECT DISTINCT country FROM knowledge_items';
+      }
+    } else if (statsType === 'group_by_country') {
+      // 按国家分组统计
+      const { data: items, error } = await supabase
+        .from('knowledge_items')
+        .select('content')
+        .like('content', '%ctryNameCn:%')
+        .limit(10000);
+      
+      if (!error && items) {
+        const countryCount: Record<string, number> = {};
+        for (const item of items) {
+          const match = item.content?.match(/ctryNameCn:\s*([^,]+)/);
+          if (match && match[1]) {
+            const country = match[1].trim();
+            countryCount[country] = (countryCount[country] || 0) + 1;
+          }
+        }
+        
+        const sorted = Object.entries(countryCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20);
+        
+        result = `按国家/地区统计（前20）：\n${sorted.map(([c, n]) => `- ${c}: ${n} 条`).join('\n')}`;
+        sql = 'SELECT country, COUNT(*) FROM knowledge_items GROUP BY country ORDER BY COUNT(*) DESC';
+      }
+    } else if (statsType === 'extreme') {
+      // 极值查询（最多/最少）
+      if (query.includes('港口') && (query.includes('最多') || query.includes('最大'))) {
+        const { data: items, error } = await supabase
+          .from('knowledge_items')
+          .select('content')
+          .like('content', '%ctryNameCn:%')
+          .limit(10000);
+        
+        if (!error && items) {
+          const countryCount: Record<string, number> = {};
+          for (const item of items) {
+            const match = item.content?.match(/ctryNameCn:\s*([^,]+)/);
+            if (match && match[1]) {
+              const country = match[1].trim();
+              countryCount[country] = (countryCount[country] || 0) + 1;
+            }
+          }
+          
+          const sorted = Object.entries(countryCount).sort((a, b) => b[1] - a[1]);
+          const top = sorted[0];
+          const bottom = sorted[sorted.length - 1];
+          
+          result = `港口数量最多：**${top[0]}**（${top[1]} 个）\n港口数量最少：**${bottom[0]}**（${bottom[1]} 个）`;
+          sql = 'SELECT country, COUNT(*) FROM knowledge_items GROUP BY country ORDER BY COUNT(*) DESC LIMIT 1';
+        }
+      }
+    }
+    
+    return { result: result || '无法解析统计查询', sql };
+  } catch (e) {
+    return { result: '统计查询执行失败', sql };
+  }
+}
+
 // 系统提示词
 const SYSTEM_PROMPT = `你是一个智能问答助手，基于知识库进行回答。
 
@@ -33,6 +164,41 @@ export async function POST(request: NextRequest) {
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
+    
+    // 问题分类：检查是否是统计问题
+    const { isStats, statsType } = isStatsQuery(query);
+    
+    if (isStats) {
+      // 直接执行统计查询
+      const { result, sql } = await executeStatsQuery(supabase, query, statsType);
+      
+      if (stream) {
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(encoder.encode(`📊 **统计查询**\n\n`));
+            controller.enqueue(encoder.encode(result));
+            controller.enqueue(encoder.encode(`\n\n---\n*SQL: ${sql}*`));
+            controller.close();
+          },
+        });
+        
+        return new Response(readable, {
+          headers: {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Transfer-Encoding': 'chunked',
+          },
+        });
+      } else {
+        return NextResponse.json({
+          answer: `📊 **统计查询**\n\n${result}\n\n---\n*SQL: ${sql}*`,
+          queryType: 'stats',
+          sql,
+        });
+      }
+    }
+
+    // 非统计问题，走 RAG 流程
     const embeddingClient = new EmbeddingClient();
     const llmClient = new LLMClient(new Config(), customHeaders);
 
