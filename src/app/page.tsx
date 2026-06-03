@@ -90,6 +90,7 @@ export default function RagPage() {
   } | null>(null);
   const [embedding, setEmbedding] = useState(false);
   const [autoEmbedding, setAutoEmbedding] = useState(false);
+  const autoEmbeddingRef = useRef(false); // 用于在 async 循环中正确检测停止信号
   const [embedProgress, setEmbedProgress] = useState({ processed: 0, failed: 0 });
   
   // 展开/折叠状态
@@ -231,14 +232,18 @@ export default function RagPage() {
   // 自动向量化
   const toggleAutoEmbed = async () => {
     if (autoEmbedding) {
+      // 停止向量化
+      autoEmbeddingRef.current = false;
       setAutoEmbedding(false);
       return;
     }
 
+    // 开始向量化
+    autoEmbeddingRef.current = true;
     setAutoEmbedding(true);
     setEmbedProgress({ processed: 0, failed: 0 });
 
-    while (autoEmbedding || embedStatus?.pending === 0) {
+    while (autoEmbeddingRef.current) {
       try {
         const res = await fetch('/api/embed', {
           method: 'POST',
@@ -252,7 +257,9 @@ export default function RagPage() {
           failed: prev.failed + (data.failed || 0),
         }));
 
+        // 如果没有处理任何条目，或者没有更多待处理条目，自动停止
         if (data.processed === 0 || data.pending === 0) {
+          autoEmbeddingRef.current = false;
           setAutoEmbedding(false);
           break;
         }
@@ -261,6 +268,7 @@ export default function RagPage() {
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
         console.error('自动向量化出错:', error);
+        autoEmbeddingRef.current = false;
         setAutoEmbedding(false);
         break;
       }
