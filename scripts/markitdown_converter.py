@@ -24,10 +24,17 @@ def convert_file(file_path: str) -> dict:
         md = MarkItDown()
         result = md.convert(file_path)
         
+        # 计算页数（PDF 通常以 \f 分页符分隔）
+        text = result.text_content
+        page_count = text.count('\f') + 1 if '\f' in text else 1
+        char_count = len(text)
+        
         return {
             "success": True,
             "text_content": result.text_content,
             "title": result.title if hasattr(result, 'title') else None,
+            "page_count": page_count,
+            "char_count": char_count,
         }
     except Exception as e:
         return {

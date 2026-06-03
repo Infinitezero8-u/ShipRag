@@ -301,6 +301,9 @@ export async function convertWithMarkItDown(buffer: Buffer, filename: string): P
     const markdownContent = result.text_content;
     const title = result.title || filename;
     
+    // 打印解析详情
+    console.log(`[PDF解析] 文件: ${filename}, 字符数: ${markdownContent.length}, 页数: ${result.page_count || '未知'}, 段落数: ${markdownContent.split(/\n\n+/).length}`);
+    
     // 将 Markdown 按段落分割成多个条目（便于检索）
     const paragraphs = markdownContent
       .split(/\n\n+/)
