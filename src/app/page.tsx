@@ -25,7 +25,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
-  Settings
+  Settings,
+  Download
 } from 'lucide-react';
 
 type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory';
@@ -117,9 +118,11 @@ export default function RagPage() {
   // RAG 状态
   const [ragQuery, setRagQuery] = useState('');
   const [ragAnswer, setRagAnswer] = useState('');
+  const [ragSources, setRagSources] = useState<{title?: string, content?: string, source?: string}[]>([]);
   const [ragLoading, setRagLoading] = useState(false);
   const [ragTokenLimit, setRagTokenLimit] = useState(50000); // 用户可调整的 token 上限
   const [ragSessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2)}`); // 会话ID
+  const [showSourceDialog, setShowSourceDialog] = useState(false); // 来源弹窗
   const answerRef = useRef<HTMLDivElement>(null);
 
   // 获取向量化状态
@@ -379,6 +382,7 @@ export default function RagPage() {
     if (!ragQuery.trim()) return;
     setRagLoading(true);
     setRagAnswer('');
+    setRagSources([]);
 
     try {
       // 计算 topK 基于用户设置的 token 上限（假设每条约 200 tokens）
@@ -396,19 +400,20 @@ export default function RagPage() {
           clearContext: options?.clearContext,
           responseMode: options?.responseMode,
           commandType: options?.commandType,
+          stream: false, // 使用非流式模式以便获取sources
         }),
       });
 
-      const reader = res.body?.getReader();
-      if (!reader) return;
-
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        setRagAnswer(prev => prev + chunk);
+      const data = await res.json();
+      if (data.success) {
+        setRagAnswer(data.answer || '');
+        setRagSources(data.sources || []);
+      } else {
+        setRagAnswer(data.error || '请求失败');
       }
+    } catch (error) {
+      setRagAnswer('请求出错，请重试');
+      console.error('RAG请求错误:', error);
     } finally {
       setRagLoading(false);
     }
@@ -927,7 +932,7 @@ export default function RagPage() {
                     className="text-base"
                   />
                   
-                  {/* 6个快捷按钮 */}
+                  {/* 快捷按钮行1：上下文控制 */}
                   <div className="grid grid-cols-3 gap-2">
                     <Button 
                       variant="outline" 
@@ -956,6 +961,10 @@ export default function RagPage() {
                     >
                       精简回答
                     </Button>
+                  </div>
+                  
+                  {/* 快捷按钮行2：回答模式 */}
+                  <div className="grid grid-cols-3 gap-2">
                     <Button 
                       variant="outline" 
                       size="sm" 
@@ -985,6 +994,37 @@ export default function RagPage() {
                     </Button>
                   </div>
                   
+                  {/* 快捷按钮行3：新增功能 */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ commandType: 'compliance_check' })}
+                      disabled={ragLoading || !ragAnswer}
+                      className="text-xs h-8 text-orange-600"
+                    >
+                      合规自查
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ commandType: 'extract_table' })}
+                      disabled={ragLoading || !ragAnswer}
+                      className="text-xs h-8 text-blue-600"
+                    >
+                      数据提取制表
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => handleRagQuery({ commandType: 'translate_terms' })}
+                      disabled={ragLoading || !ragAnswer}
+                      className="text-xs h-8 text-purple-600"
+                    >
+                      翻译专业术语
+                    </Button>
+                  </div>
+                  
                   <Button onClick={() => handleRagQuery()} disabled={ragLoading} className="w-full h-11">
                     {ragLoading ? (
                       <>
@@ -1008,6 +1048,40 @@ export default function RagPage() {
                       <div className="flex-1 whitespace-pre-wrap text-sm" ref={answerRef}>
                         {ragAnswer}
                       </div>
+                    </div>
+                    
+                    {/* 回答操作按钮 */}
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          // 导出PDF功能
+                          const content = `问题：${ragQuery}\n\n回答：\n${ragAnswer}\n\n${ragSources.length > 0 ? `来源：\n${ragSources.map((s: {title?: string, content?: string}) => `- ${s.title || '未知来源'}`).join('\n')}` : ''}`;
+                          const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `海图问答_${new Date().toISOString().slice(0,10)}.txt`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="text-xs h-7"
+                      >
+                        <Download className="w-3 h-3 mr-1" />
+                        导出回答
+                      </Button>
+                      {ragSources.length > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowSourceDialog(true)}
+                          className="text-xs h-7"
+                        >
+                          <FileText className="w-3 h-3 mr-1" />
+                          查看来源({ragSources.length})
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1102,6 +1176,38 @@ export default function RagPage() {
                     <span className="text-green-600 font-medium">相似度: {(previewItem.similarity * 100).toFixed(1)}%</span>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 来源弹窗 */}
+        {showSourceDialog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowSourceDialog(false)}>
+            <div className="bg-background rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="p-3 border-b flex items-center justify-between">
+                <h3 className="font-semibold text-sm">📚 引用来源</h3>
+                <Button variant="ghost" size="sm" onClick={() => setShowSourceDialog(false)} className="h-7 w-7 p-0">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="p-3 overflow-y-auto max-h-[calc(80vh-60px)]">
+                {ragSources.map((source, idx) => (
+                  <div key={idx} className="p-3 bg-muted rounded-lg mb-2 last:mb-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileText className="w-4 h-4 text-primary" />
+                      <span className="font-medium text-sm">{source.title || `来源 ${idx + 1}`}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground bg-background p-2 rounded border max-h-32 overflow-y-auto">
+                      {source.content ? source.content.substring(0, 500) + (source.content.length > 500 ? '...' : '') : '无内容'}
+                    </div>
+                    {source.source && (
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        文件: {source.source}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
