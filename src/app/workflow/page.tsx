@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import ReactFlow, {
   Node,
   Edge,
@@ -11,64 +11,60 @@ import ReactFlow, {
   Controls,
   Background,
   BackgroundVariant,
-  Panel,
   Handle,
   Position,
   NodeProps,
+  MiniMap,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import Link from 'next/link';
 
-// 自定义节点组件
+// 紧凑型节点组件（移动端优化）
 const LLMNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-blue-500 rounded-lg p-3 min-w-[150px]">
-    <Handle type="target" position={Position.Left} className="w-3 h-3 bg-blue-500" />
-    <div className="font-bold text-blue-600 mb-1">🤖 LLM</div>
-    <div className="text-xs text-gray-500">{data.model || 'doubao-seed'}</div>
-    <Handle type="source" position={Position.Right} className="w-3 h-3 bg-blue-500" />
+  <div className="bg-white border-2 border-blue-500 rounded-lg p-2 min-w-[100px] shadow-sm">
+    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-blue-500" />
+    <div className="font-bold text-blue-600 text-sm">🤖 LLM</div>
+    <div className="text-xs text-gray-500">{data.model || 'doubao'}</div>
+    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-blue-500" />
   </div>
 );
 
 const RetrievalNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-green-500 rounded-lg p-3 min-w-[150px]">
-    <Handle type="target" position={Position.Left} className="w-3 h-3 bg-green-500" />
-    <div className="font-bold text-green-600 mb-1">🔍 向量检索</div>
-    <div className="text-xs text-gray-500">Top-K: {data.topK || 10}</div>
-    <Handle type="source" position={Position.Right} className="w-3 h-3 bg-green-500" />
+  <div className="bg-white border-2 border-green-500 rounded-lg p-2 min-w-[100px] shadow-sm">
+    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-green-500" />
+    <div className="font-bold text-green-600 text-sm">🔍 检索</div>
+    <div className="text-xs text-gray-500">K={data.topK || 10}</div>
+    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-green-500" />
   </div>
 );
 
 const PromptNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-purple-500 rounded-lg p-3 min-w-[150px]">
-    <Handle type="target" position={Position.Left} className="w-3 h-3 bg-purple-500" />
-    <div className="font-bold text-purple-600 mb-1">📝 Prompt</div>
-    <div className="text-xs text-gray-500 truncate max-w-[120px]">{data.template || '基于上下文回答...'}</div>
-    <Handle type="source" position={Position.Right} className="w-3 h-3 bg-purple-500" />
+  <div className="bg-white border-2 border-purple-500 rounded-lg p-2 min-w-[100px] shadow-sm">
+    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-purple-500" />
+    <div className="font-bold text-purple-600 text-sm">📝 Prompt</div>
+    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-purple-500" />
   </div>
 );
 
 const InputNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-orange-500 rounded-lg p-3 min-w-[150px]">
-    <div className="font-bold text-orange-600 mb-1">📥 用户输入</div>
-    <div className="text-xs text-gray-500">{data.placeholder || '请输入问题'}</div>
-    <Handle type="source" position={Position.Right} className="w-3 h-3 bg-orange-500" />
+  <div className="bg-white border-2 border-orange-500 rounded-lg p-2 min-w-[100px] shadow-sm">
+    <div className="font-bold text-orange-600 text-sm">📥 输入</div>
+    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-orange-500" />
   </div>
 );
 
 const OutputNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-red-500 rounded-lg p-3 min-w-[150px]">
-    <Handle type="target" position={Position.Left} className="w-3 h-3 bg-red-500" />
-    <div className="font-bold text-red-600 mb-1">📤 输出</div>
-    <div className="text-xs text-gray-500">{data.type || '流式输出'}</div>
+  <div className="bg-white border-2 border-red-500 rounded-lg p-2 min-w-[100px] shadow-sm">
+    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-red-500" />
+    <div className="font-bold text-red-600 text-sm">📤 输出</div>
   </div>
 );
 
 const EmbeddingNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-cyan-500 rounded-lg p-3 min-w-[150px]">
-    <Handle type="target" position={Position.Left} className="w-3 h-3 bg-cyan-500" />
-    <div className="font-bold text-cyan-600 mb-1">📊 向量化</div>
-    <div className="text-xs text-gray-500">2048 维</div>
-    <Handle type="source" position={Position.Right} className="w-3 h-3 bg-cyan-500" />
+  <div className="bg-white border-2 border-cyan-500 rounded-lg p-2 min-w-[100px] shadow-sm">
+    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-cyan-500" />
+    <div className="font-bold text-cyan-600 text-sm">📊 向量化</div>
+    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-cyan-500" />
   </div>
 );
 
@@ -81,44 +77,14 @@ const nodeTypes = {
   embedding: EmbeddingNode,
 };
 
-// 默认节点配置（标准 RAG 流程）
+// 移动端适配的节点位置
 const initialNodes: Node[] = [
-  {
-    id: '1',
-    type: 'input',
-    position: { x: 50, y: 200 },
-    data: { label: '用户输入', placeholder: '请输入问题' },
-  },
-  {
-    id: '2',
-    type: 'embedding',
-    position: { x: 250, y: 200 },
-    data: { label: '向量化' },
-  },
-  {
-    id: '3',
-    type: 'retrieval',
-    position: { x: 450, y: 200 },
-    data: { label: '向量检索', topK: 20 },
-  },
-  {
-    id: '4',
-    type: 'prompt',
-    position: { x: 650, y: 200 },
-    data: { label: 'Prompt', template: '基于以下上下文回答问题...' },
-  },
-  {
-    id: '5',
-    type: 'llm',
-    position: { x: 850, y: 200 },
-    data: { label: 'LLM', model: 'doubao-seed' },
-  },
-  {
-    id: '6',
-    type: 'output',
-    position: { x: 1050, y: 200 },
-    data: { label: '输出', type: '流式输出' },
-  },
+  { id: '1', type: 'input', position: { x: 10, y: 100 }, data: { label: '用户输入' } },
+  { id: '2', type: 'embedding', position: { x: 130, y: 100 }, data: { label: '向量化' } },
+  { id: '3', type: 'retrieval', position: { x: 250, y: 100 }, data: { label: '向量检索', topK: 20 } },
+  { id: '4', type: 'prompt', position: { x: 370, y: 100 }, data: { label: 'Prompt' } },
+  { id: '5', type: 'llm', position: { x: 490, y: 100 }, data: { label: 'LLM' } },
+  { id: '6', type: 'output', position: { x: 610, y: 100 }, data: { label: '输出' } },
 ];
 
 const initialEdges: Edge[] = [
@@ -130,9 +96,9 @@ const initialEdges: Edge[] = [
 ];
 
 const nodeOptions = [
-  { type: 'input', label: '📥 用户输入', color: 'orange' },
+  { type: 'input', label: '📥 输入', color: 'orange' },
   { type: 'embedding', label: '📊 向量化', color: 'cyan' },
-  { type: 'retrieval', label: '🔍 向量检索', color: 'green' },
+  { type: 'retrieval', label: '🔍 检索', color: 'green' },
   { type: 'prompt', label: '📝 Prompt', color: 'purple' },
   { type: 'llm', label: '🤖 LLM', color: 'blue' },
   { type: 'output', label: '📤 输出', color: 'red' },
@@ -142,7 +108,14 @@ export default function WorkflowPage() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [savedWorkflows, setSavedWorkflows] = useState<string[]>([]);
-  const [workflowName, setWorkflowName] = useState('默认 RAG 流程');
+  const [workflowName, setWorkflowName] = useState('默认RAG');
+  const [showPanel, setShowPanel] = useState(false);
+  const [showSave, setShowSave] = useState(false);
+
+  useEffect(() => {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('workflow_'));
+    setSavedWorkflows(keys.map(k => k.replace('workflow_', '')));
+  }, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
@@ -153,17 +126,19 @@ export default function WorkflowPage() {
     const newNode: Node = {
       id: `${Date.now()}`,
       type,
-      position: { x: Math.random() * 400 + 100, y: Math.random() * 300 + 100 },
+      position: { x: Math.random() * 300 + 50, y: Math.random() * 200 + 50 },
       data: { label: type },
     };
     setNodes((nds) => [...nds, newNode]);
+    setShowPanel(false);
   };
 
   const saveWorkflow = () => {
     const workflow = JSON.stringify({ nodes, edges });
     localStorage.setItem(`workflow_${workflowName}`, workflow);
     setSavedWorkflows((prev) => [...new Set([...prev, workflowName])]);
-    alert('工作流已保存！');
+    setShowSave(false);
+    alert('已保存！');
   };
 
   const loadWorkflow = (name: string) => {
@@ -174,112 +149,133 @@ export default function WorkflowPage() {
       setEdges(savedEdges);
       setWorkflowName(name);
     }
+    setShowPanel(false);
   };
 
-  const clearWorkflow = () => {
-    setNodes([]);
-    setEdges([]);
+  const deleteWorkflow = (name: string) => {
+    localStorage.removeItem(`workflow_${name}`);
+    setSavedWorkflows(prev => prev.filter(n => n !== name));
   };
 
   const resetToDefault = () => {
     setNodes(initialNodes);
     setEdges(initialEdges);
+    setShowPanel(false);
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-100">
-      {/* 头部 */}
-      <div className="bg-white border-b px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-blue-600 hover:underline">← 返回</Link>
-          <h1 className="text-xl font-bold">🔄 工作流可视化</h1>
-        </div>
+    <div className="h-screen flex flex-col bg-gray-50">
+      {/* 顶部栏 */}
+      <div className="bg-white border-b px-3 py-2 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={workflowName}
-            onChange={(e) => setWorkflowName(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
-            placeholder="工作流名称"
-          />
-          <button
-            onClick={saveWorkflow}
-            className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
-          >
-            保存
+          <Link href="/" className="text-blue-600 p-2">←</Link>
+          <span className="font-bold text-base">🔄 工作流</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setShowSave(true)} className="bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm">
+            💾
           </button>
-          <button
-            onClick={resetToDefault}
-            className="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600"
-          >
-            重置
+          <button onClick={() => setShowPanel(!showPanel)} className="bg-gray-200 px-3 py-1.5 rounded-lg text-sm">
+            📋
           </button>
         </div>
       </div>
 
-      <div className="flex-1 flex">
-        {/* 左侧工具栏 */}
-        <div className="w-48 bg-white border-r p-3">
-          <div className="font-bold mb-3">添加节点</div>
-          <div className="space-y-2">
-            {nodeOptions.map((opt) => (
-              <button
-                key={opt.type}
-                onClick={() => addNode(opt.type)}
-                className={`w-full text-left px-3 py-2 rounded border-2 border-${opt.color}-400 hover:bg-${opt.color}-50 text-sm`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+      {/* 主画布 */}
+      <div className="flex-1 relative">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          nodeTypes={nodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          minZoom={0.3}
+          maxZoom={2}
+        >
+          <Background gap={12} size={1} />
+          <Controls showInteractive={false} className="!bottom-4 !left-4" />
+        </ReactFlow>
 
-          <div className="mt-6 font-bold mb-3">已保存的工作流</div>
-          <div className="space-y-1">
-            {savedWorkflows.map((name) => (
-              <button
-                key={name}
-                onClick={() => loadWorkflow(name)}
-                className="w-full text-left px-2 py-1 rounded hover:bg-gray-100 text-sm truncate"
-              >
-                📁 {name}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-6 text-xs text-gray-500">
-            <div className="font-bold mb-1">使用说明</div>
-            <ul className="space-y-1">
-              <li>• 拖拽节点移动位置</li>
-              <li>• 从右侧圆点连线</li>
-              <li>• 点击节点可编辑</li>
-              <li>• 连线显示数据流向</li>
-            </ul>
-          </div>
+        {/* 快捷操作栏（底部） */}
+        <div className="absolute bottom-4 right-4 flex gap-2">
+          <button onClick={resetToDefault} className="bg-white shadow-lg rounded-full w-12 h-12 flex items-center justify-center text-xl">
+            🔄
+          </button>
         </div>
+      </div>
 
-        {/* 主画布 */}
-        <div className="flex-1">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            nodeTypes={nodeTypes}
-            fitView
-          >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-            <Controls />
-            <Panel position="top-right">
-              <div className="bg-white rounded-lg shadow p-2 text-xs">
-                <div className="font-bold mb-1">当前流程</div>
-                <div>节点: {nodes.length}</div>
-                <div>连线: {edges.length}</div>
+      {/* 侧边面板（添加节点/已保存） */}
+      {showPanel && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:hidden" onClick={() => setShowPanel(false)}>
+          <div className="bg-white rounded-t-2xl w-full max-h-[70vh] p-4" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <span className="font-bold">节点与工作流</span>
+              <button onClick={() => setShowPanel(false)} className="text-gray-500">✕</button>
+            </div>
+
+            {/* 添加节点 */}
+            <div className="mb-4">
+              <div className="text-sm text-gray-500 mb-2">添加节点</div>
+              <div className="grid grid-cols-3 gap-2">
+                {nodeOptions.map((opt) => (
+                  <button
+                    key={opt.type}
+                    onClick={() => addNode(opt.type)}
+                    className="p-3 rounded-lg border-2 border-gray-200 text-center text-sm active:scale-95"
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-            </Panel>
-          </ReactFlow>
+            </div>
+
+            {/* 已保存的工作流 */}
+            <div>
+              <div className="text-sm text-gray-500 mb-2">已保存</div>
+              <div className="space-y-2">
+                {savedWorkflows.length === 0 && <div className="text-gray-400 text-sm">暂无保存的工作流</div>}
+                {savedWorkflows.map((name) => (
+                  <div key={name} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                    <button onClick={() => loadWorkflow(name)} className="flex-1 text-left text-sm truncate">
+                      📁 {name}
+                    </button>
+                    <button onClick={() => deleteWorkflow(name)} className="text-red-500 text-sm px-2">
+                      🗑
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* 保存弹窗 */}
+      {showSave && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowSave(false)}>
+          <div className="bg-white rounded-2xl p-4 w-[280px]" onClick={e => e.stopPropagation()}>
+            <div className="font-bold mb-3">保存工作流</div>
+            <input
+              type="text"
+              value={workflowName}
+              onChange={(e) => setWorkflowName(e.target.value)}
+              className="border rounded-lg px-3 py-2 w-full text-sm mb-3"
+              placeholder="输入名称"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setShowSave(false)} className="flex-1 py-2 rounded-lg bg-gray-200 text-sm">
+                取消
+              </button>
+              <button onClick={saveWorkflow} className="flex-1 py-2 rounded-lg bg-blue-500 text-white text-sm">
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
