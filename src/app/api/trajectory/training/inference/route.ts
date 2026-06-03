@@ -92,11 +92,45 @@ export async function POST() {
       }
     }
     
-    // 如果没有匹配到关键词，使用默认值
-    if (maxBehaviorScore === 0) {
+    // 如果没有匹配到关键词，使用 LLM 兜底推理
+    if (maxBehaviorScore === 0 || maxIntentScore === 0) {
+      try {
+        const prompt = `你是一个航运专家，请根据航迹描述判断其行为和意图。
+
+航迹描述：${traj.ai_description}
+
+可选行为类型：${behaviors.join(', ')}
+可选意图类型：${intents.join(', ')}
+
+请仅输出JSON格式：{"behavior":"XXX","intent":"XXX"}`;
+
+        const result = await llm.invoke([{ role: 'user', content: prompt }]);
+        const content = typeof result === 'string' ? result : (result as any).content || '';
+        
+        // 尝试解析 LLM 响应
+        const jsonMatch = content.match(/\{[^}]+\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.behavior && behaviors.includes(parsed.behavior)) {
+            bestBehavior = parsed.behavior;
+          }
+          if (parsed.intent && intents.includes(parsed.intent)) {
+            bestIntent = parsed.intent;
+          }
+        }
+      } catch (llmError) {
+        // LLM 兜底失败，使用默认值，不阻塞流程
+        console.error('LLM 兜底推理失败:', llmError);
+        if (maxBehaviorScore === 0) {
+          bestBehavior = 'STEADY_SAILING';
+        }
+        if (maxIntentScore === 0) {
+          bestIntent = 'INTER_PORT_TRANSIT';
+        }
+      }
+    } else if (maxBehaviorScore === 0) {
       bestBehavior = 'STEADY_SAILING';
-    }
-    if (maxIntentScore === 0) {
+    } else if (maxIntentScore === 0) {
       bestIntent = 'INTER_PORT_TRANSIT';
     }
     

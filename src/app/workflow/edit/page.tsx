@@ -150,6 +150,17 @@ const NODE_TYPE_CONFIG: Record<string, {
       { key: 'format', label: '输出格式', type: 'select', default: 'markdown', options: ['markdown', 'text', 'json'] },
     ]
   },
+  exportNode: {
+    label: '导出结果',
+    icon: '📁',
+    color: '#0ea5e9',
+    category: 'output',
+    fields: [
+      { key: 'format', label: '导出格式', type: 'select', default: 'csv', options: ['csv', 'markdown', 'json'] },
+      { key: 'filename', label: '文件名前缀', type: 'text', default: 'export' },
+      { key: 'includeMetadata', label: '包含元数据', type: 'switch', default: true },
+    ]
+  },
 };
 
 // 不可删除的节点类型
