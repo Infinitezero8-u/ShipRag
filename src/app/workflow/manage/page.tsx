@@ -1,6 +1,22 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { 
+  Plus, 
+  Copy, 
+  Edit2, 
+  Trash2, 
+  Lock, 
+  Unlock, 
+  Check, 
+  GitBranch,
+  ArrowLeft,
+  Layers,
+  Clock
+} from 'lucide-react';
 
 interface Workflow {
   id: string;
@@ -13,6 +29,34 @@ interface Workflow {
   created_at: string;
   updated_at: string;
 }
+
+// 系统内置工作流（当前使用的 RAG+SQL 工作流）
+const DEFAULT_WORKFLOW: Workflow = {
+  id: 'default-rag-sql',
+  name: '双分支 RAG+SQL 智能问答',
+  description: '标准双分支工作流：用户输入 → 意图分类 → 条件分支 → RAG分支/SQL分支/双分支并行 → 结果汇总输出。支持三路路由：RAG(文档查询)、SQL(统计查询)、ALL(双分支并行)',
+  nodes: [
+    { type: 'chatInput', name: '用户输入' },
+    { type: 'classifyPrompt', name: '分类Prompt' },
+    { type: 'classifyLLM', name: '分类LLM' },
+    { type: 'branchCondition', name: '条件分支' },
+    { type: 'queryRewrite', name: 'Query优化' },
+    { type: 'embedding', name: '向量化' },
+    { type: 'vectorRetrieval', name: '向量检索' },
+    { type: 'rerank', name: '结果重排' },
+    { type: 'promptAssembly', name: 'Prompt组装' },
+    { type: 'llm', name: 'LLM生成' },
+    { type: 'sqlPrompt', name: 'SQL生成' },
+    { type: 'sqlExecute', name: '数据库执行' },
+    { type: 'sqlPolish', name: '结果润色' },
+    { type: 'chatOutput', name: '输出汇总' },
+  ],
+  edges: [],
+  is_locked: true,
+  is_active: true,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+};
 
 export default function WorkflowManagePage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -36,6 +80,9 @@ export default function WorkflowManagePage() {
   useEffect(() => {
     fetchWorkflows();
   }, []);
+  
+  // 合并内置工作流和用户工作流，内置工作流始终在第一位
+  const allWorkflows = [DEFAULT_WORKFLOW, ...workflows];
   
   const handleCreate = async () => {
     if (!formData.name.trim()) return;
@@ -119,6 +166,9 @@ export default function WorkflowManagePage() {
   };
   
   const handleSetActive = async (id: string) => {
+    // 内置工作流已经是激活状态
+    if (id === DEFAULT_WORKFLOW.id) return;
+    
     try {
       const res = await fetch('/api/workflow', {
         method: 'PUT',
@@ -158,205 +208,293 @@ export default function WorkflowManagePage() {
     setFormData({ name: workflow.name, description: workflow.description || '' });
   };
   
+  const isDefaultWorkflow = (id: string) => id === DEFAULT_WORKFLOW.id;
+  
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      {/* 顶部导航 */}
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+      <div className="max-w-5xl mx-auto p-4 md:p-6">
+        {/* 顶部导航 */}
+        <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
-            <a href="/" className="text-blue-600 hover:underline text-sm">← 返回</a>
-            <h1 className="text-lg font-medium">工作流管理</h1>
+            <a href="/" className="flex items-center gap-1 text-slate-600 hover:text-blue-600 transition-colors text-sm">
+              <ArrowLeft className="w-4 h-4" />
+              返回
+            </a>
+            <div className="h-4 w-px bg-slate-300" />
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-blue-600" />
+              <h1 className="text-xl font-semibold text-slate-800">工作流管理</h1>
+            </div>
           </div>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-3 py-1.5 bg-blue-500 text-white rounded text-sm"
-          >
-            + 新建工作流
-          </button>
+          <Button onClick={() => setShowCreate(true)} className="gap-1.5 shadow-sm">
+            <Plus className="w-4 h-4" />
+            新建工作流
+          </Button>
         </div>
         
         {/* 工作流列表 */}
         {loading ? (
-          <div className="text-center py-8 text-gray-400">加载中...</div>
-        ) : workflows.length === 0 ? (
-          <div className="text-center py-8 text-gray-400">
-            暂无工作流，点击右上角新建
-          </div>
+          <div className="text-center py-12 text-slate-400">加载中...</div>
         ) : (
-          <div className="space-y-3">
-            {workflows.map((wf) => (
-              <div
-                key={wf.id}
-                className={`bg-white rounded-lg border p-4 ${
-                  wf.is_active ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{wf.name}</span>
-                      {wf.is_active && (
-                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 text-xs rounded">
-                          当前使用
-                        </span>
-                      )}
-                      {wf.is_locked && (
-                        <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
-                          🔒 锁定
-                        </span>
-                      )}
+          <div className="space-y-4">
+            {allWorkflows.map((wf) => {
+              const isDefault = isDefaultWorkflow(wf.id);
+              
+              return (
+                <Card 
+                  key={wf.id} 
+                  className={`transition-all duration-200 ${
+                    wf.is_active 
+                      ? 'border-blue-500/50 shadow-lg shadow-blue-100/50 bg-white' 
+                      : 'border-slate-200 bg-white/80 hover:shadow-md'
+                  } ${isDefault ? 'ring-1 ring-blue-200' : ''}`}
+                >
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        {/* 标题和标签 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-semibold text-slate-800 text-lg truncate">
+                            {wf.name}
+                          </h3>
+                          {wf.is_active && (
+                            <Badge variant="default" className="bg-blue-500 gap-1">
+                              <Check className="w-3 h-3" />
+                              当前使用
+                            </Badge>
+                          )}
+                          {isDefault && (
+                            <Badge variant="secondary" className="bg-slate-100 text-slate-600">
+                              系统内置
+                            </Badge>
+                          )}
+                          {wf.is_locked && !isDefault && (
+                            <Badge variant="outline" className="border-amber-300 text-amber-600 gap-1">
+                              <Lock className="w-3 h-3" />
+                              已锁定
+                            </Badge>
+                          )}
+                        </div>
+                        
+                        {/* 描述 */}
+                        {wf.description && (
+                          <p className="text-slate-500 text-sm mt-2 line-clamp-2">
+                            {wf.description}
+                          </p>
+                        )}
+                        
+                        {/* 元信息 */}
+                        <div className="flex items-center gap-4 mt-3 text-xs text-slate-400">
+                          <span className="flex items-center gap-1">
+                            <GitBranch className="w-3 h-3" />
+                            {wf.nodes?.length || 0} 个节点
+                          </span>
+                          <span>{wf.edges?.length || 0} 条连线</span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {new Date(wf.updated_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* 操作按钮 */}
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {!wf.is_active && !isDefault && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSetActive(wf.id)}
+                            className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                          >
+                            <Check className="w-3 h-3 mr-1" />
+                            设为当前
+                          </Button>
+                        )}
+                        
+                        {!isDefault && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              asChild
+                              className="text-slate-600 hover:bg-slate-100"
+                            >
+                              <a href={`/workflow/edit?id=${wf.id}`}>
+                                <Edit2 className="w-4 h-4" />
+                              </a>
+                            </Button>
+                            
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleCopy(wf.id)}
+                              className="text-slate-600 hover:bg-slate-100"
+                            >
+                              <Copy className="w-4 h-4" />
+                            </Button>
+                            
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleLock(wf.id, !wf.is_locked)}
+                              className={`${wf.is_locked ? 'text-green-600 hover:bg-green-50' : 'text-slate-600 hover:bg-slate-100'}`}
+                            >
+                              {wf.is_locked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                            </Button>
+                            
+                            {!wf.is_locked && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDelete(wf.id)}
+                                className="text-red-500 hover:bg-red-50 hover:text-red-600"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </>
+                        )}
+                        
+                        {/* 内置工作流：只允许查看 */}
+                        {isDefault && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                          >
+                            <a href="/workflow">
+                              <Edit2 className="w-3 h-3 mr-1" />
+                              查看详情
+                            </a>
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                    {wf.description && (
-                      <p className="text-gray-500 text-sm mt-1">{wf.description}</p>
-                    )}
-                    <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
-                      <span>{wf.nodes?.length || 0} 个节点</span>
-                      <span>{wf.edges?.length || 0} 条连线</span>
-                      <span>更新: {new Date(wf.updated_at).toLocaleString()}</span>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 ml-4">
-                    {!wf.is_active && (
-                      <button
-                        onClick={() => handleSetActive(wf.id)}
-                        className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100"
-                      >
-                        设为当前
-                      </button>
-                    )}
-                    <a
-                      href={`/workflow/edit?id=${wf.id}`}
-                      className="px-2 py-1 text-xs bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
-                    >
-                      编辑
-                    </a>
-                    <button
-                      onClick={() => handleCopy(wf.id)}
-                      className="px-2 py-1 text-xs bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
-                    >
-                      复制
-                    </button>
-                    <button
-                      onClick={() => handleLock(wf.id, !wf.is_locked)}
-                      className={`px-2 py-1 text-xs rounded ${
-                        wf.is_locked
-                          ? 'bg-green-50 text-green-600 hover:bg-green-100'
-                          : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                      }`}
-                    >
-                      {wf.is_locked ? '解锁' : '锁定'}
-                    </button>
-                    {!wf.is_locked && (
-                      <button
-                        onClick={() => handleDelete(wf.id)}
-                        className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100"
-                      >
-                        删除
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
         
         {/* 说明 */}
-        <div className="mt-8 p-4 bg-white rounded-lg border text-sm text-gray-600">
-          <h3 className="font-medium mb-2">说明</h3>
-          <ul className="list-disc list-inside space-y-1">
-            <li><strong>设为当前</strong>：将此工作流设为问答系统使用的工作流</li>
-            <li><strong>锁定</strong>：锁定后不可修改和删除，防止误操作</li>
-            <li><strong>复制</strong>：创建工作流副本，副本默认不锁定</li>
-            <li><strong>编辑</strong>：进入工作流画布编辑节点和连线</li>
-          </ul>
-        </div>
+        <Card className="mt-8 bg-white/60 border-slate-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-slate-700">使用说明</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-600">
+              <div className="flex items-start gap-2">
+                <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                  <Check className="w-3 h-3 text-blue-600" />
+                </div>
+                <span><strong>设为当前</strong>：将此工作流设为问答系统使用的工作流</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                  <Lock className="w-3 h-3 text-amber-600" />
+                </div>
+                <span><strong>锁定</strong>：锁定后不可修改和删除，防止误操作</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
+                  <Copy className="w-3 h-3 text-slate-600" />
+                </div>
+                <span><strong>复制</strong>：创建工作流副本，副本默认不锁定</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                  <Edit2 className="w-3 h-3 text-green-600" />
+                </div>
+                <span><strong>编辑</strong>：进入工作流画布编辑节点和连线</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
       
       {/* 新建弹窗 */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg w-full max-w-md p-4">
-            <h3 className="font-medium mb-4">新建工作流</h3>
-            <div className="space-y-3">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md shadow-xl">
+            <CardHeader>
+              <CardTitle>新建工作流</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div>
-                <label className="text-sm text-gray-500 block mb-1">名称 *</label>
+                <label className="text-sm text-slate-500 block mb-1.5">名称 *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border rounded text-sm"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="输入工作流名称"
                 />
               </div>
               <div>
-                <label className="text-sm text-gray-500 block mb-1">描述</label>
+                <label className="text-sm text-slate-500 block mb-1.5">描述</label>
                 <textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 border rounded text-sm h-20"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="可选描述"
                 />
               </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => { setShowCreate(false); setFormData({ name: '', description: '' }); }}
-                className="px-3 py-1.5 bg-gray-100 rounded text-sm"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleCreate}
-                className="px-3 py-1.5 bg-blue-500 text-white rounded text-sm"
-              >
-                创建
-              </button>
-            </div>
-          </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowCreate(false); setFormData({ name: '', description: '' }); }}
+                >
+                  取消
+                </Button>
+                <Button onClick={handleCreate} disabled={!formData.name.trim()}>
+                  创建
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
       
       {/* 编辑弹窗 */}
       {editingWorkflow && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg w-full max-w-md p-4">
-            <h3 className="font-medium mb-4">编辑工作流</h3>
-            <div className="space-y-3">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md shadow-xl">
+            <CardHeader>
+              <CardTitle>编辑工作流</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div>
-                <label className="text-sm text-gray-500 block mb-1">名称 *</label>
+                <label className="text-sm text-slate-500 block mb-1.5">名称 *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border rounded text-sm"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div>
-                <label className="text-sm text-gray-500 block mb-1">描述</label>
+                <label className="text-sm text-slate-500 block mb-1.5">描述</label>
                 <textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 border rounded text-sm h-20"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => { setEditingWorkflow(null); setFormData({ name: '', description: '' }); }}
-                className="px-3 py-1.5 bg-gray-100 rounded text-sm"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleUpdate}
-                className="px-3 py-1.5 bg-blue-500 text-white rounded text-sm"
-              >
-                保存
-              </button>
-            </div>
-          </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => { setEditingWorkflow(null); setFormData({ name: '', description: '' }); }}
+                >
+                  取消
+                </Button>
+                <Button onClick={handleUpdate} disabled={!formData.name.trim()}>
+                  保存
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
