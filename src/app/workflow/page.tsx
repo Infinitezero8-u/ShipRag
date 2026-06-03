@@ -1,217 +1,253 @@
 'use client';
 
-import React, { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useRef, useEffect } from 'react';
 import ReactFlow, {
   Node,
   Edge,
-  addEdge,
-  Connection,
-  useNodesState,
-  useEdgesState,
   Controls,
   Background,
-  BackgroundVariant,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  Connection,
+  Panel,
+  NodeProps,
   Handle,
   Position,
-  NodeProps,
-  MiniMap,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import Link from 'next/link';
 
-// 紧凑型节点组件（移动端优化）
-const LLMNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-blue-500 rounded-lg p-2 min-w-[100px] shadow-sm">
-    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-blue-500" />
-    <div className="font-bold text-blue-600 text-sm">🤖 LLM</div>
-    <div className="text-xs text-gray-500">{data.model || 'doubao'}</div>
-    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-blue-500" />
-  </div>
-);
-
-const RetrievalNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-green-500 rounded-lg p-2 min-w-[100px] shadow-sm">
-    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-green-500" />
-    <div className="font-bold text-green-600 text-sm">🔍 检索</div>
-    <div className="text-xs text-gray-500">K={data.topK || 10}</div>
-    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-green-500" />
-  </div>
-);
-
-const PromptNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-purple-500 rounded-lg p-2 min-w-[100px] shadow-sm">
-    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-purple-500" />
-    <div className="font-bold text-purple-600 text-sm">📝 Prompt</div>
-    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-purple-500" />
-  </div>
-);
-
-const InputNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-orange-500 rounded-lg p-2 min-w-[100px] shadow-sm">
-    <div className="font-bold text-orange-600 text-sm">📥 输入</div>
-    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-orange-500" />
-  </div>
-);
-
-const OutputNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-red-500 rounded-lg p-2 min-w-[100px] shadow-sm">
-    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-red-500" />
-    <div className="font-bold text-red-600 text-sm">📤 输出</div>
-  </div>
-);
-
-const EmbeddingNode = ({ data }: NodeProps) => (
-  <div className="bg-white border-2 border-cyan-500 rounded-lg p-2 min-w-[100px] shadow-sm">
-    <Handle type="target" position={Position.Left} className="w-2 h-2 bg-cyan-500" />
-    <div className="font-bold text-cyan-600 text-sm">📊 向量化</div>
-    <Handle type="source" position={Position.Right} className="w-2 h-2 bg-cyan-500" />
-  </div>
-);
-
-const nodeTypes = {
-  llm: LLMNode,
-  retrieval: RetrievalNode,
-  prompt: PromptNode,
-  input: InputNode,
-  output: OutputNode,
-  embedding: EmbeddingNode,
+// 节点类型定义
+const NODE_TYPES = {
+  // 1. 用户输入
+  chatInput: {
+    label: '用户输入',
+    icon: '💬',
+    color: '#10b981',
+    fields: [
+      { key: 'placeholder', label: '输入提示', type: 'text', default: '请输入您的问题' },
+    ],
+  },
+  // 2. Query优化
+  queryRewrite: {
+    label: 'Query优化',
+    icon: '✨',
+    color: '#f59e0b',
+    fields: [
+      { key: 'enabled', label: '启用优化', type: 'switch', default: true },
+      { key: 'method', label: '优化方式', type: 'select', options: ['关键词提取', '问题扩写', '歧义消除'], default: '关键词提取' },
+    ],
+  },
+  // 3. Query向量化
+  embedding: {
+    label: '向量化',
+    icon: '🔢',
+    color: '#6366f1',
+    fields: [
+      { key: 'model', label: '嵌入模型', type: 'select', options: ['doubao-embedding', 'text-embedding-3-small'], default: 'doubao-embedding' },
+    ],
+  },
+  // 4. 向量检索
+  vectorRetrieval: {
+    label: '向量检索',
+    icon: '🔍',
+    color: '#3b82f6',
+    fields: [
+      { key: 'topK', label: 'Top K', type: 'number', default: 5 },
+      { key: 'threshold', label: '相似度阈值', type: 'number', default: 0.3 },
+      { key: 'collection', label: '知识库', type: 'select', options: ['全部', '港口数据', '文档库'], default: '全部' },
+    ],
+  },
+  // 5. 结果过滤重排
+  rerank: {
+    label: '结果重排',
+    icon: '📊',
+    color: '#8b5cf6',
+    fields: [
+      { key: 'enabled', label: '启用重排', type: 'switch', default: true },
+      { key: 'minScore', label: '最低分数', type: 'number', default: 0.5 },
+    ],
+  },
+  // 6. Prompt组装
+  prompt: {
+    label: 'Prompt组装',
+    icon: '📝',
+    color: '#ec4899',
+    fields: [
+      { key: 'systemPrompt', label: '系统提示词', type: 'textarea', default: '你是一个专业的问答助手，请根据参考资料准确回答问题，不要编造内容。' },
+      { key: 'template', label: '模板', type: 'textarea', default: '【参考资料】\n{context}\n\n【用户问题】\n{question}' },
+    ],
+  },
+  // 7. LLM生成
+  llm: {
+    label: 'LLM生成',
+    icon: '🤖',
+    color: '#f43f5e',
+    fields: [
+      { key: 'model', label: '模型', type: 'select', options: ['doubao-seed-2-0-pro-260215', 'doubao-seed-2-0-lite-260215', 'deepseek-v3-2-251201', 'kimi-k2-5-260127'], default: 'doubao-seed-2-0-lite-260215' },
+      { key: 'temperature', label: '温度', type: 'number', default: 0.7 },
+      { key: 'maxTokens', label: '最大Token', type: 'number', default: 2000 },
+    ],
+  },
+  // 8. 输出
+  chatOutput: {
+    label: '输出',
+    icon: '📤',
+    color: '#14b8a6',
+    fields: [
+      { key: 'showSource', label: '显示来源', type: 'switch', default: true },
+    ],
+  },
 };
 
-// 移动端适配的节点位置
-const initialNodes: Node[] = [
-  { id: '1', type: 'input', position: { x: 10, y: 100 }, data: { label: '用户输入' } },
-  { id: '2', type: 'embedding', position: { x: 130, y: 100 }, data: { label: '向量化' } },
-  { id: '3', type: 'retrieval', position: { x: 250, y: 100 }, data: { label: '向量检索', topK: 20 } },
-  { id: '4', type: 'prompt', position: { x: 370, y: 100 }, data: { label: 'Prompt' } },
-  { id: '5', type: 'llm', position: { x: 490, y: 100 }, data: { label: 'LLM' } },
-  { id: '6', type: 'output', position: { x: 610, y: 100 }, data: { label: '输出' } },
+// 自定义节点组件
+function CustomNode({ data, selected }: NodeProps) {
+  const nodeType = NODE_TYPES[data.type as keyof typeof NODE_TYPES];
+  return (
+    <div
+      className="px-3 py-2 rounded-xl shadow-md border-2 min-w-[60px] text-center"
+      style={{
+        backgroundColor: nodeType?.color + '20',
+        borderColor: selected ? nodeType?.color : 'transparent',
+      }}
+    >
+      <Handle type="target" position={Position.Left} className="w-2 h-2" />
+      <div className="text-lg">{nodeType?.icon}</div>
+      <div className="text-[10px] font-medium whitespace-nowrap">{nodeType?.label}</div>
+      <Handle type="source" position={Position.Right} className="w-2 h-2" />
+    </div>
+  );
+}
+
+// 默认 RAG 工作流
+const defaultNodes: Node[] = [
+  { id: '1', type: 'chatInput', position: { x: 20, y: 150 }, data: { type: 'chatInput', placeholder: '请输入您的问题' } },
+  { id: '2', type: 'queryRewrite', position: { x: 100, y: 150 }, data: { type: 'queryRewrite', enabled: true, method: '关键词提取' } },
+  { id: '3', type: 'embedding', position: { x: 180, y: 150 }, data: { type: 'embedding', model: 'doubao-embedding' } },
+  { id: '4', type: 'vectorRetrieval', position: { x: 260, y: 150 }, data: { type: 'vectorRetrieval', topK: 5, threshold: 0.3 } },
+  { id: '5', type: 'rerank', position: { x: 340, y: 150 }, data: { type: 'rerank', enabled: true } },
+  { id: '6', type: 'prompt', position: { x: 420, y: 150 }, data: { type: 'prompt', systemPrompt: '你是一个专业的问答助手', template: '【参考资料】\n{context}\n\n【用户问题】\n{question}' } },
+  { id: '7', type: 'llm', position: { x: 500, y: 150 }, data: { type: 'llm', model: 'doubao-seed-2-0-lite-260215', temperature: 0.7 } },
+  { id: '8', type: 'chatOutput', position: { x: 580, y: 150 }, data: { type: 'chatOutput', showSource: true } },
 ];
 
-const initialEdges: Edge[] = [
+const defaultEdges: Edge[] = [
   { id: 'e1-2', source: '1', target: '2', animated: true },
   { id: 'e2-3', source: '2', target: '3', animated: true },
   { id: 'e3-4', source: '3', target: '4', animated: true },
   { id: 'e4-5', source: '4', target: '5', animated: true },
   { id: 'e5-6', source: '5', target: '6', animated: true },
-];
-
-const nodeOptions = [
-  { type: 'input', label: '📥 输入', color: 'orange' },
-  { type: 'embedding', label: '📊 向量化', color: 'cyan' },
-  { type: 'retrieval', label: '🔍 检索', color: 'green' },
-  { type: 'prompt', label: '📝 Prompt', color: 'purple' },
-  { type: 'llm', label: '🤖 LLM', color: 'blue' },
-  { type: 'output', label: '📤 输出', color: 'red' },
+  { id: 'e6-7', source: '6', target: '7', animated: true },
+  { id: 'e7-8', source: '7', target: '8', animated: true },
 ];
 
 export default function WorkflowPage() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [savedWorkflows, setSavedWorkflows] = useState<string[]>([]);
-  const [workflowName, setWorkflowName] = useState('默认RAG');
-  const [showPanel, setShowPanel] = useState(false);
-  const [showSave, setShowSave] = useState(false);
+  const [nodes, setNodes, onNodesChange] = useNodesState(defaultNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(defaultEdges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [showEdit, setShowEdit] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showTest, setShowTest] = useState(false);
+  const [testInput, setTestInput] = useState('');
+  const [testOutput, setTestOutput] = useState('');
+  const [isRunning, setIsRunning] = useState(false);
 
-  useEffect(() => {
-    const keys = Object.keys(localStorage).filter(k => k.startsWith('workflow_'));
-    setSavedWorkflows(keys.map(k => k.replace('workflow_', '')));
-  }, []);
+  const onConnect = useCallback((params: Connection) => {
+    setEdges((eds) => addEdge({ ...params, animated: true }, eds));
+  }, [setEdges]);
 
-  const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
-    [setEdges]
-  );
-
-  const addNode = (type: string) => {
-    const newNode: Node = {
-      id: `${Date.now()}`,
-      type,
-      position: { x: Math.random() * 300 + 50, y: Math.random() * 200 + 50 },
-      data: { label: type },
-    };
-    setNodes((nds) => [...nds, newNode]);
-    setShowPanel(false);
-  };
-
-  const saveWorkflow = () => {
-    const workflow = JSON.stringify({ nodes, edges });
-    localStorage.setItem(`workflow_${workflowName}`, workflow);
-    setSavedWorkflows((prev) => [...new Set([...prev, workflowName])]);
-    setShowSave(false);
-    alert('已保存！');
-  };
-
-  const loadWorkflow = (name: string) => {
-    const saved = localStorage.getItem(`workflow_${name}`);
-    if (saved) {
-      const { nodes: savedNodes, edges: savedEdges } = JSON.parse(saved);
-      setNodes(savedNodes);
-      setEdges(savedEdges);
-      setWorkflowName(name);
-    }
-    setShowPanel(false);
-  };
-
-  const deleteWorkflow = (name: string) => {
-    localStorage.removeItem(`workflow_${name}`);
-    setSavedWorkflows(prev => prev.filter(n => n !== name));
-  };
-
-  const resetToDefault = () => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-    setShowPanel(false);
-    setShowEdit(false);
-    setSelectedNode(null);
-  };
-
-  // 节点点击处理
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+  // 点击节点
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
-    setShowEdit(true);
   }, []);
 
   // 更新节点数据
-  const updateNodeData = (key: string, value: unknown) => {
+  const updateNodeData = (key: string, value: any) => {
     if (!selectedNode) return;
     setNodes((nds) =>
       nds.map((n) =>
-        n.id === selectedNode.id ? { ...n, data: { ...n.data, [key]: value } } : n
+        n.id === selectedNode.id
+          ? { ...n, data: { ...n.data, [key]: value } }
+          : n
       )
     );
     setSelectedNode((prev) => prev ? { ...prev, data: { ...prev.data, [key]: value } } : null);
   };
 
-  // 删除选中节点
-  const deleteSelectedNode = () => {
+  // 添加节点
+  const addNode = (type: string) => {
+    const nodeType = NODE_TYPES[type as keyof typeof NODE_TYPES];
+    const newId = Date.now().toString();
+    const defaultData: Record<string, any> = { type };
+    nodeType.fields.forEach((f) => { defaultData[f.key] = f.default; });
+    
+    const newNode: Node = {
+      id: newId,
+      type,
+      position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 100 },
+      data: defaultData,
+    };
+    setNodes((nds) => [...nds, newNode]);
+    setShowAdd(false);
+  };
+
+  // 删除节点
+  const deleteNode = () => {
     if (!selectedNode) return;
     setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
     setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
-    setShowEdit(false);
     setSelectedNode(null);
   };
+
+  // 执行工作流
+  const runWorkflow = async () => {
+    if (!testInput.trim()) return;
+    setIsRunning(true);
+    setTestOutput('');
+    
+    try {
+      const response = await fetch('/api/rag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: testInput, stream: false }),
+      });
+      const data = await response.json();
+      setTestOutput(data.answer || data.error || '无结果');
+    } catch (err) {
+      setTestOutput('执行失败');
+    }
+    setIsRunning(false);
+  };
+
+  const nodeTypes = Object.fromEntries(
+    Object.keys(NODE_TYPES).map((key) => [key, CustomNode])
+  );
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* 顶部栏 */}
-      <div className="bg-white border-b px-3 py-2 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <Link href="/" className="text-blue-600 p-2">←</Link>
-          <span className="font-bold text-base">🔄 工作流</span>
+      <div className="bg-white border-b px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="text-gray-500">←</Link>
+          <span className="font-bold">🔄 工作流编排</span>
         </div>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setShowSave(true)} className="bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm">
-            💾
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowTest(true)}
+            className="px-3 py-1 rounded-lg bg-blue-500 text-white text-sm"
+          >
+            ▶ 测试
           </button>
-          <button onClick={() => setShowPanel(!showPanel)} className="bg-gray-200 px-3 py-1.5 rounded-lg text-sm">
-            📋
+          <button
+            onClick={() => { setNodes(defaultNodes); setEdges(defaultEdges); }}
+            className="px-3 py-1 rounded-lg bg-gray-200 text-sm"
+          >
+            重置
           </button>
         </div>
       </div>
 
-      {/* 主画布 */}
+      {/* 工作流画布 */}
       <div className="flex-1 relative">
         <ReactFlow
           nodes={nodes}
@@ -222,195 +258,141 @@ export default function WorkflowPage() {
           onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.3}
+          minZoom={0.5}
           maxZoom={2}
         >
           <Background gap={12} size={1} />
-          <Controls showInteractive={false} className="!bottom-4 !left-4" />
+          <Controls showInteractive={false} />
+          <Panel position="bottom-left">
+            <button
+              onClick={() => setShowAdd(true)}
+              className="px-3 py-2 rounded-lg bg-white shadow text-sm"
+            >
+              + 添加节点
+            </button>
+          </Panel>
         </ReactFlow>
-
-        {/* 快捷操作栏（底部） */}
-        <div className="absolute bottom-4 right-4 flex gap-2">
-          <button onClick={resetToDefault} className="bg-white shadow-lg rounded-full w-12 h-12 flex items-center justify-center text-xl">
-            🔄
-          </button>
-        </div>
       </div>
 
-      {/* 侧边面板（添加节点/已保存） */}
-      {showPanel && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:hidden" onClick={() => setShowPanel(false)}>
-          <div className="bg-white rounded-t-2xl w-full max-h-[70vh] p-4" onClick={e => e.stopPropagation()}>
+      {/* 添加节点弹窗 */}
+      {showAdd && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-end justify-center" onClick={() => setShowAdd(false)}>
+          <div className="bg-white rounded-t-2xl w-full max-w-md p-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
-              <span className="font-bold">节点与工作流</span>
-              <button onClick={() => setShowPanel(false)} className="text-gray-500">✕</button>
+              <span className="font-bold">添加节点</span>
+              <button onClick={() => setShowAdd(false)}>✕</button>
             </div>
-
-            {/* 添加节点 */}
-            <div className="mb-4">
-              <div className="text-sm text-gray-500 mb-2">添加节点</div>
-              <div className="grid grid-cols-3 gap-2">
-                {nodeOptions.map((opt) => (
-                  <button
-                    key={opt.type}
-                    onClick={() => addNode(opt.type)}
-                    className="p-3 rounded-lg border-2 border-gray-200 text-center text-sm active:scale-95"
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 已保存的工作流 */}
-            <div>
-              <div className="text-sm text-gray-500 mb-2">已保存</div>
-              <div className="space-y-2">
-                {savedWorkflows.length === 0 && <div className="text-gray-400 text-sm">暂无保存的工作流</div>}
-                {savedWorkflows.map((name) => (
-                  <div key={name} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-                    <button onClick={() => loadWorkflow(name)} className="flex-1 text-left text-sm truncate">
-                      📁 {name}
-                    </button>
-                    <button onClick={() => deleteWorkflow(name)} className="text-red-500 text-sm px-2">
-                      🗑
-                    </button>
-                  </div>
-                ))}
-              </div>
+            <div className="grid grid-cols-4 gap-2">
+              {Object.entries(NODE_TYPES).map(([key, node]) => (
+                <button
+                  key={key}
+                  onClick={() => addNode(key)}
+                  className="p-2 rounded-xl text-center"
+                  style={{ backgroundColor: node.color + '20' }}
+                >
+                  <div className="text-xl">{node.icon}</div>
+                  <div className="text-[10px]">{node.label}</div>
+                </button>
+              ))}
             </div>
           </div>
         </div>
       )}
 
-      {/* 保存弹窗 */}
-      {showSave && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowSave(false)}>
-          <div className="bg-white rounded-2xl p-4 w-[280px]" onClick={e => e.stopPropagation()}>
-            <div className="font-bold mb-3">保存工作流</div>
+      {/* 测试弹窗 */}
+      {showTest && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-end justify-center" onClick={() => setShowTest(false)}>
+          <div className="bg-white rounded-t-2xl w-full max-w-md p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <span className="font-bold">▶ 测试工作流</span>
+              <button onClick={() => setShowTest(false)}>✕</button>
+            </div>
             <input
               type="text"
-              value={workflowName}
-              onChange={(e) => setWorkflowName(e.target.value)}
+              value={testInput}
+              onChange={(e) => setTestInput(e.target.value)}
               className="border rounded-lg px-3 py-2 w-full text-sm mb-3"
-              placeholder="输入名称"
+              placeholder="输入测试问题..."
             />
-            <div className="flex gap-2">
-              <button onClick={() => setShowSave(false)} className="flex-1 py-2 rounded-lg bg-gray-200 text-sm">
-                取消
-              </button>
-              <button onClick={saveWorkflow} className="flex-1 py-2 rounded-lg bg-blue-500 text-white text-sm">
-                保存
-              </button>
-            </div>
+            <button
+              onClick={runWorkflow}
+              disabled={isRunning}
+              className="w-full py-2 rounded-lg bg-blue-500 text-white text-sm mb-3 disabled:opacity-50"
+            >
+              {isRunning ? '执行中...' : '执行'}
+            </button>
+            {testOutput && (
+              <div className="bg-gray-50 rounded-lg p-3 text-sm whitespace-pre-wrap max-h-40 overflow-auto">
+                {testOutput}
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* 节点编辑面板 */}
-      {showEdit && selectedNode && (
-        <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-2xl shadow-lg max-h-[70vh] overflow-auto">
+      {selectedNode && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white rounded-t-2xl shadow-lg max-h-[60vh] overflow-auto">
           <div className="p-4 border-b sticky top-0 bg-white flex justify-between items-center">
-            <div className="font-bold">编辑: {selectedNode.data.label}</div>
-            <button onClick={() => setShowEdit(false)} className="text-gray-500">✕</button>
-          </div>
-          <div className="p-4 space-y-4">
-            {/* 通用属性 */}
-            <div>
-              <label className="text-xs text-gray-500 block mb-1">节点名称</label>
-              <input
-                type="text"
-                value={selectedNode.data.label || ''}
-                onChange={(e) => updateNodeData('label', e.target.value)}
-                className="border rounded-lg px-3 py-2 w-full text-sm"
-              />
+            <div className="font-bold">
+              {NODE_TYPES[selectedNode.data.type as keyof typeof NODE_TYPES]?.icon}{' '}
+              {NODE_TYPES[selectedNode.data.type as keyof typeof NODE_TYPES]?.label}
             </div>
-
-            {/* 节点类型特定属性 */}
-            {selectedNode.data.type === 'input' && (
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">输入提示</label>
-                <input
-                  type="text"
-                  value={selectedNode.data.placeholder || '请输入问题'}
-                  onChange={(e) => updateNodeData('placeholder', e.target.value)}
-                  className="border rounded-lg px-3 py-2 w-full text-sm"
-                />
-              </div>
-            )}
-
-            {selectedNode.data.type === 'retrieval' && (
-              <>
-                <div>
-                  <label className="text-xs text-gray-500 block mb-1">Top K</label>
+            <button onClick={() => setSelectedNode(null)}>✕</button>
+          </div>
+          <div className="p-4 space-y-3">
+            {NODE_TYPES[selectedNode.data.type as keyof typeof NODE_TYPES]?.fields.map((field) => (
+              <div key={field.key}>
+                <label className="text-xs text-gray-500 block mb-1">{field.label}</label>
+                {field.type === 'text' && (
                   <input
-                    type="number"
-                    value={selectedNode.data.topK || 5}
-                    onChange={(e) => updateNodeData('topK', parseInt(e.target.value))}
+                    type="text"
+                    value={selectedNode.data[field.key] || ''}
+                    onChange={(e) => updateNodeData(field.key, e.target.value)}
                     className="border rounded-lg px-3 py-2 w-full text-sm"
                   />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 block mb-1">相似度阈值</label>
+                )}
+                {field.type === 'number' && (
                   <input
                     type="number"
-                    step="0.1"
-                    value={selectedNode.data.threshold || 0.3}
-                    onChange={(e) => updateNodeData('threshold', parseFloat(e.target.value))}
+                    step={field.key === 'temperature' || field.key === 'threshold' || field.key === 'minScore' ? '0.1' : '1'}
+                    value={selectedNode.data[field.key] ?? field.default}
+                    onChange={(e) => updateNodeData(field.key, field.key === 'temperature' || field.key === 'threshold' || field.key === 'minScore' ? parseFloat(e.target.value) : parseInt(e.target.value))}
                     className="border rounded-lg px-3 py-2 w-full text-sm"
                   />
-                </div>
-              </>
-            )}
-
-            {selectedNode.data.type === 'llm' && (
-              <>
-                <div>
-                  <label className="text-xs text-gray-500 block mb-1">模型</label>
+                )}
+                {field.type === 'textarea' && (
+                  <textarea
+                    value={selectedNode.data[field.key] || ''}
+                    onChange={(e) => updateNodeData(field.key, e.target.value)}
+                    className="border rounded-lg px-3 py-2 w-full text-sm h-20"
+                  />
+                )}
+                {field.type === 'select' && (
                   <select
-                    value={selectedNode.data.model || 'doubao-seed-2-0-lite-260215'}
-                    onChange={(e) => updateNodeData('model', e.target.value)}
+                    value={selectedNode.data[field.key] || field.default}
+                    onChange={(e) => updateNodeData(field.key, e.target.value)}
                     className="border rounded-lg px-3 py-2 w-full text-sm"
                   >
-                    <option value="doubao-seed-2-0-lite-260215">Doubao Lite</option>
-                    <option value="doubao-seed-2-0-pro-260215">Doubao Pro</option>
-                    <option value="deepseek-v3-2-251201">DeepSeek V3</option>
-                    <option value="kimi-k2-5-260127">Kimi K2</option>
+                    {'options' in field && field.options?.map((opt: string) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
                   </select>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 block mb-1">温度</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="1"
-                    value={selectedNode.data.temperature || 0.7}
-                    onChange={(e) => updateNodeData('temperature', parseFloat(e.target.value))}
-                    className="border rounded-lg px-3 py-2 w-full text-sm"
-                  />
-                </div>
-              </>
-            )}
-
-            {selectedNode.data.type === 'prompt' && (
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">提示词模板</label>
-                <textarea
-                  value={selectedNode.data.template || '根据以下内容回答问题：\n\n{context}\n\n问题：{question}'}
-                  onChange={(e) => updateNodeData('template', e.target.value)}
-                  className="border rounded-lg px-3 py-2 w-full text-sm h-24"
-                />
-                <p className="text-xs text-gray-400 mt-1">可用变量: {'{context}'}, {'{question}'}</p>
+                )}
+                {field.type === 'switch' && (
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => updateNodeData(field.key, !selectedNode.data[field.key])}
+                      className={`w-10 h-6 rounded-full transition ${selectedNode.data[field.key] ? 'bg-blue-500' : 'bg-gray-300'}`}
+                    >
+                      <div className={`w-4 h-4 bg-white rounded-full transition ${selectedNode.data[field.key] ? 'translate-x-5' : 'translate-x-1'}`} />
+                    </button>
+                    <span className="text-sm">{selectedNode.data[field.key] ? '开启' : '关闭'}</span>
+                  </div>
+                )}
               </div>
-            )}
-
-            {/* 删除按钮 */}
-            <button
-              onClick={deleteSelectedNode}
-              className="w-full py-2 rounded-lg bg-red-50 text-red-600 text-sm"
-            >
+            ))}
+            <button onClick={deleteNode} className="w-full py-2 rounded-lg bg-red-50 text-red-600 text-sm mt-4">
               删除节点
             </button>
           </div>
