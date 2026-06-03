@@ -463,9 +463,11 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
           });
         } else {
           return NextResponse.json({
+            success: true,
             answer: `📊 **统计查询**\n\n${answer}\n\n---\n*SQL: ${sql}*`,
             queryType: 'stats',
             sql,
+            sources: [],
           });
         }
       } catch (e) {
@@ -492,9 +494,11 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
           });
         } else {
           return NextResponse.json({
+            success: true,
             answer: `📊 **统计查询**\n\n${result}\n\n---\n*SQL: ${sql}*`,
             queryType: 'stats',
             sql,
+            sources: [],
           });
         }
       }
