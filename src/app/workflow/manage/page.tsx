@@ -288,64 +288,53 @@ export default function WorkflowManagePage() {
                       : 'border-slate-200 bg-white/80 hover:shadow-sm'
                   } ${isDefault ? 'ring-1 ring-blue-200' : ''}`}
                 >
-                  <CardContent className="p-3">
-                    <div className="flex items-center justify-between gap-3">
+                  <CardContent className="p-2">
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         {/* 标题和标签 */}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <h3 className="font-medium text-slate-800 text-xs truncate">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <h3 className="font-medium text-slate-800 text-[10px] truncate">
                             {wf.name}
                           </h3>
                           {wf.is_active && (
-                            <Badge variant="default" className="bg-blue-500 gap-0.5 h-4 px-1.5 text-[10px]">
+                            <Badge variant="default" className="bg-blue-500 gap-0.5 h-3.5 px-1 text-[9px]">
                               <Check className="w-2 h-2" />
                               当前
                             </Badge>
                           )}
                           {isDefault && (
-                            <Badge variant="secondary" className="bg-slate-100 text-slate-600 h-4 px-1.5 text-[10px]">
+                            <Badge variant="secondary" className="bg-slate-100 text-slate-600 h-3.5 px-1 text-[9px]">
                               内置
                             </Badge>
                           )}
                           {wf.is_locked && !isDefault && (
-                            <Badge variant="outline" className="border-amber-300 text-amber-600 gap-0.5 h-4 px-1.5 text-[10px]">
+                            <Badge variant="outline" className="border-amber-300 text-amber-600 gap-0.5 h-3.5 px-1 text-[9px]">
                               <Lock className="w-2 h-2" />
-                              锁定
                             </Badge>
                           )}
+                          {/* 元信息移到标题行 */}
+                          <span className="text-[9px] text-slate-400 ml-1">
+                            {wf.nodes?.length || 0}节点 {wf.edges?.length || 0}连线
+                          </span>
                         </div>
                         
                         {/* 描述 */}
                         {wf.description && (
-                          <p className="text-slate-500 text-[10px] mt-1 line-clamp-1">
+                          <p className="text-slate-500 text-[9px] mt-0.5 line-clamp-1">
                             {wf.description}
                           </p>
                         )}
-                        
-                        {/* 元信息 */}
-                        <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-400">
-                          <span className="flex items-center gap-0.5">
-                            <GitBranch className="w-2.5 h-2.5" />
-                            {wf.nodes?.length || 0}节点
-                          </span>
-                          <span>{wf.edges?.length || 0}连线</span>
-                          <span className="flex items-center gap-0.5">
-                            <Clock className="w-2.5 h-2.5" />
-                            {new Date(wf.updated_at).toLocaleDateString()}
-                          </span>
-                        </div>
                       </div>
                       
                       {/* 操作按钮 */}
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
                         {!wf.is_active && !isDefault && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => handleSetActive(wf.id)}
-                            className="text-blue-600 border-blue-200 hover:bg-blue-50 h-6 px-2 text-[10px]"
+                            className="text-blue-600 border-blue-200 hover:bg-blue-50 h-5 px-1.5 text-[9px]"
                           >
-                            <Check className="w-2.5 h-2.5 mr-0.5" />
                             设为当前
                           </Button>
                         )}
@@ -356,10 +345,10 @@ export default function WorkflowManagePage() {
                               variant="ghost"
                               size="sm"
                               asChild
-                              className="text-slate-500 hover:bg-slate-100 h-6 w-6 p-0"
+                              className="text-slate-500 hover:bg-slate-100 h-5 w-5 p-0"
                             >
                               <a href={`/workflow/edit?id=${wf.id}`}>
-                                <Edit2 className="w-3 h-3" />
+                                <Edit2 className="w-2.5 h-2.5" />
                               </a>
                             </Button>
                             
@@ -367,18 +356,18 @@ export default function WorkflowManagePage() {
                               variant="ghost"
                               size="sm"
                               onClick={() => handleCopy(wf.id)}
-                              className="text-slate-500 hover:bg-slate-100 h-6 w-6 p-0"
+                              className="text-slate-500 hover:bg-slate-100 h-5 w-5 p-0"
                             >
-                              <Copy className="w-3 h-3" />
+                              <Copy className="w-2.5 h-2.5" />
                             </Button>
                             
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => handleLock(wf.id, !wf.is_locked)}
-                              className={`${wf.is_locked ? 'text-green-600 hover:bg-green-50' : 'text-slate-500 hover:bg-slate-100'} h-6 w-6 p-0`}
+                              className={`${wf.is_locked ? 'text-green-600 hover:bg-green-50' : 'text-slate-500 hover:bg-slate-100'} h-5 w-5 p-0`}
                             >
-                              {wf.is_locked ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                              {wf.is_locked ? <Unlock className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
                             </Button>
                             
                             {!wf.is_locked && (
@@ -386,9 +375,9 @@ export default function WorkflowManagePage() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleDelete(wf.id)}
-                                className="text-red-500 hover:bg-red-50 hover:text-red-600 h-6 w-6 p-0"
+                                className="text-red-500 hover:bg-red-50 hover:text-red-600 h-5 w-5 p-0"
                               >
-                                <Trash2 className="w-3 h-3" />
+                                <Trash2 className="w-2.5 h-2.5" />
                               </Button>
                             )}
                           </>
@@ -401,10 +390,9 @@ export default function WorkflowManagePage() {
                               variant="outline"
                               size="sm"
                               asChild
-                              className="text-blue-600 border-blue-200 hover:bg-blue-50 h-6 px-2 text-[10px]"
+                              className="text-blue-600 border-blue-200 hover:bg-blue-50 h-5 px-1.5 text-[9px]"
                             >
                               <a href={`/workflow/edit?id=${wf.id}`}>
-                                <Edit2 className="w-2.5 h-2.5 mr-0.5" />
                                 查看
                               </a>
                             </Button>
@@ -413,9 +401,8 @@ export default function WorkflowManagePage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleCopyDefault(wf)}
-                              className="text-green-600 border-green-200 hover:bg-green-50 h-6 px-2 text-[10px]"
+                              className="text-green-600 border-green-200 hover:bg-green-50 h-5 px-1.5 text-[9px]"
                             >
-                              <Copy className="w-2.5 h-2.5 mr-0.5" />
                               复制
                             </Button>
                           </>
