@@ -182,3 +182,72 @@ export async function GET(request: NextRequest) {
     }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    const filename = searchParams.get('filename');
+    
+    if (!id && !filename) {
+      return NextResponse.json({ error: '需要提供 id 或 filename' }, { status: 400 });
+    }
+    
+    const supabase = getSupabaseClient();
+    
+    // 获取文件记录
+    let fileQuery = supabase.from('file_uploads').select('*');
+    if (id) {
+      fileQuery = fileQuery.eq('id', id);
+    } else if (filename) {
+      fileQuery = fileQuery.eq('filename', filename);
+    }
+    
+    const { data: fileData, error: fileError } = await fileQuery.single();
+    
+    if (fileError || !fileData) {
+      return NextResponse.json({ error: '文件不存在' }, { status: 404 });
+    }
+    
+    // 删除对象存储中的文件
+    if (fileData.storage_url) {
+      try {
+        const storageKey = fileData.storage_url.split('/').pop()?.split('?')[0] || '';
+        if (storageKey) {
+          await storage.deleteFile({ fileKey: storageKey });
+        }
+      } catch (e) {
+        console.error('删除存储文件失败:', e);
+      }
+    }
+    
+    // 删除相关的知识条目
+    const { error: itemsError } = await supabase
+      .from('knowledge_items')
+      .delete()
+      .eq('source', fileData.filename);
+    
+    if (itemsError) {
+      console.error('删除知识条目失败:', itemsError);
+    }
+    
+    // 删除文件记录
+    const { error: deleteError } = await supabase
+      .from('file_uploads')
+      .delete()
+      .eq('id', fileData.id);
+    
+    if (deleteError) {
+      return NextResponse.json({ error: `删除失败: ${deleteError.message}` }, { status: 500 });
+    }
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: `已删除文件 ${fileData.filename} 及相关条目` 
+    });
+  } catch (error) {
+    return NextResponse.json({ 
+      error: `删除失败: ${error instanceof Error ? error.message : String(error)}` 
+    }, { status: 500 });
+  }
+}
