@@ -320,10 +320,97 @@ export default function SeaChartPage() {
       <div className="max-w-7xl mx-auto p-4">
         {/* 地图/海图展示 */}
         {(activeTab === 'map' || activeTab === 'track') && (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-            {/* 控制面板 */}
-            <div className="lg:col-span-1 space-y-4">
-              {/* 图层控制 - 可折叠 */}
+          <div className="space-y-4">
+            {/* 地图区域 */}
+            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <MapContainer
+                center={mapCenter}
+                zoom={mapZoom}
+                style={{ height: '500px', width: '100%' }}
+              >
+                <MapController center={mapCenter} zoom={mapZoom} />
+                <MapClickHandler onMapClick={handleMapClick} />
+                
+                {/* 基础地图 - 高德地图（国内稳定） */}
+                <TileLayer
+                  attribution='&copy; 高德地图'
+                  url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+                  subdomains={['1', '2', '3', '4']}
+                  maxZoom={18}
+                />
+                
+                {/* 海图叠加 - OpenSeaMap */}
+                {showSeaMap && (
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openseamap.org">OpenSeaMap</a>'
+                    url="https://{s}.tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
+                    subdomains={['a', 'b', 'c']}
+                    maxZoom={19}
+                  />
+                )}
+
+                {/* 港口标记 */}
+                {showPorts && allPorts.map((port) => {
+                  // 从 port 中获取国家代码
+                  const countryCode = (port as any).ctryCode || (port as any).countryCode || '';
+                  return (
+                  <Marker key={port.id} position={[port.lat, port.lng]} icon={getPortIcon(countryCode)}>
+                    <Popup>
+                      <div className="min-w-[75px] text-xs">
+                        <h4 className="font-bold text-xs">{port.name}</h4>
+                        <p className="text-xs text-gray-600">代码: {port.id}</p>
+                        {port.country && <p className="text-xs text-gray-600">国家: {port.country}</p>}
+                      </div>
+                    </Popup>
+                  </Marker>
+                  );
+                })}
+
+                {/* 模拟航迹线 */}
+                {showTrack && mockTrack.length > 1 && (
+                  <Polyline
+                    positions={mockTrack.map(p => [p.lat, p.lng])}
+                    pathOptions={{ color: '#3b82f6', weight: 3, opacity: 0.8 }}
+                  />
+                )}
+
+                {/* 航迹起点 */}
+                {showTrack && mockTrack.length > 0 && (
+                  <Marker position={[mockTrack[0].lat, mockTrack[0].lng]} icon={shipIcon}>
+                    <Popup>
+                      <div>
+                        <h4 className="font-bold">起点: 上海港</h4>
+                        <p className="text-sm text-gray-600">时间: {mockTrack[0].time}</p>
+                      </div>
+                    </Popup>
+                  </Marker>
+                )}
+
+                {/* 航迹终点 */}
+                {showTrack && mockTrack.length > 0 && (
+                  <Marker position={[mockTrack[mockTrack.length - 1].lat, mockTrack[mockTrack.length - 1].lng]} icon={shipIcon}>
+                    <Popup>
+                      <div>
+                        <h4 className="font-bold">终点: 新加坡港</h4>
+                        <p className="text-sm text-gray-600">时间: {mockTrack[mockTrack.length - 1].time}</p>
+                      </div>
+                    </Popup>
+                  </Marker>
+                )}
+
+                {/* 自定义航迹 */}
+                {customTrack.length > 1 && (
+                  <Polyline
+                    positions={customTrack.map(p => [p.lat, p.lng])}
+                    pathOptions={{ color: '#ef4444', weight: 2, opacity: 0.8, dashArray: '5, 10' }}
+                  />
+                )}
+              </MapContainer>
+            </div>
+
+            {/* 控制面板 - 水平排列 */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* 图层控制 */}
               <div className="bg-white rounded-xl shadow-sm overflow-hidden">
                 <button 
                   onClick={() => setExpandLayer(!expandLayer)}
@@ -366,7 +453,7 @@ export default function SeaChartPage() {
                 )}
               </div>
 
-              {/* 视图控制 - 可折叠 */}
+              {/* 视图控制 */}
               <div className="bg-white rounded-xl shadow-sm overflow-hidden">
                 <button 
                   onClick={() => setExpandView(!expandView)}
@@ -508,13 +595,13 @@ export default function SeaChartPage() {
               </div>
             </div>
 
-            {/* 地图区域 */}
-            <div className="lg:col-span-3">
+            {/* 地图区域 - 在上方 */}
+            <div className="w-full">
               <div className="bg-white rounded-xl shadow-sm overflow-hidden">
                 <MapContainer
                   center={mapCenter}
                   zoom={mapZoom}
-                  style={{ height: '600px', width: '100%' }}
+                  style={{ height: '500px', width: '100%' }}
                 >
                   <MapController center={mapCenter} zoom={mapZoom} />
                   <MapClickHandler onMapClick={handleMapClick} />
