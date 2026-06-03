@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
 - title: 标题 (text)
 - content: 内容 (text)
 - source: 来源文件名 (text)
-- file_type: 文件类型 (text)
+- modality: 数据类型 (text)，如: pdf, excel, doc, markdown, json, image
 - tags: 标签数组 (text[])
 - created_at: 创建时间 (timestamp)
 
@@ -33,13 +33,22 @@ export async function POST(request: NextRequest) {
     const sqlPrompt = `已知数据表结构：
 ${schema}
 
-根据用户问题，生成简单的SELECT查询SQL。
+根据用户问题，生成SELECT查询SQL。
 规则：
 1. 只生成SELECT语句，禁止INSERT/UPDATE/DELETE
 2. 统计数量用 SELECT COUNT(*) FROM table_name
-3. 不要添加复杂的WHERE条件，除非用户明确指定筛选条件
-4. 不要使用数组操作函数
+3. 根据问题中的关键词添加WHERE条件：
+   - 提到具体数据类型(pdf/excel/doc/markdown/json/image等)：WHERE modality = 'xxx'
+   - 提到具体来源文件名：WHERE source LIKE '%关键词%'
+   - 提到具体内容关键词：WHERE content LIKE '%关键词%'
+   - 提到标签：WHERE '标签名' = ANY(tags)
+4. 多个条件用 AND 或 OR 连接
 5. 只输出SQL语句，不要多余文字
+
+示例：
+- "一共有多少PDF" → SELECT COUNT(*) FROM knowledge_items WHERE modality = 'pdf'
+- "港口有多少条数据" → SELECT COUNT(*) FROM knowledge_items WHERE source LIKE '%港口%' OR content LIKE '%港口%'
+- "阿联酋有多少港口" → SELECT COUNT(*) FROM knowledge_items WHERE content LIKE '%阿联酋%'
 
 用户问题：${query}`;
 
@@ -80,26 +89,65 @@ ${schema}
         
         // 检查是否有 WHERE 条件
         if (lowerSql.includes('where')) {
-          // 有条件查询 - 尝试解析条件
+          let queryBuilder = supabase.from(tableName).select('*', { count: 'exact', head: true });
+          let hasCondition = false;
+          
+          // 解析 modality = 'xxx' 或 file_type = 'xxx' 条件
+          const modalityMatch = sql.match(/(?:modality|file_type)\s*=\s*'([^']+)'/i);
+          if (modalityMatch) {
+            const modality = modalityMatch[1];
+            queryBuilder = queryBuilder.eq('modality', modality);
+            hasCondition = true;
+          }
+          
+          // 解析 source LIKE '%xxx%' 条件
+          const sourceLikeMatch = sql.match(/source\s+like\s+'%([^']+)%'/i);
+          if (sourceLikeMatch) {
+            const keyword = sourceLikeMatch[1];
+            queryBuilder = queryBuilder.ilike('source', `%${keyword}%`);
+            hasCondition = true;
+          }
+          
+          // 解析 content LIKE '%xxx%' 条件
+          const contentLikeMatches = sql.match(/content\s+like\s+'%([^']+)%'/gi);
+          if (contentLikeMatches) {
+            const keywords = contentLikeMatches.map(m => m.match(/'%([^']+)%'/i)?.[1]).filter(Boolean);
+            if (keywords.length > 0) {
+              // 使用 or 条件连接多个 content like
+              const orConditions = keywords.map(k => `content.ilike.%${k}%`).join(',');
+              queryBuilder = queryBuilder.or(orConditions);
+              hasCondition = true;
+            }
+          }
+          
+          // 解析标签条件 '标签' = ANY(tags)
           const tagMatch = sql.match(/'([^']+)'\s*=\s*any\s*\(\s*tags\s*\)/i);
           if (tagMatch) {
-            // 标签查询
             const tag = tagMatch[1];
-            const { count, error } = await supabase
-              .from(tableName)
-              .select('*', { count: 'exact', head: true })
-              .contains('tags', [tag]);
+            queryBuilder = queryBuilder.contains('tags', [tag]);
+            hasCondition = true;
+          }
+          
+          if (hasCondition) {
+            const { count, error } = await queryBuilder;
             if (error) {
-              // 如果标签查询失败，返回总数
-              const { count: totalCount } = await supabase
-                .from(tableName)
-                .select('*', { count: 'exact', head: true });
-              result = [{ count: totalCount || 0, note: `未找到标签 "${tag}" 的数据，返回总数` }];
+              // 如果条件查询失败，尝试更宽松的查询
+              const keywordMatch = sql.match(/where\s+.+like\s+'%([^']+)%'/i);
+              if (keywordMatch) {
+                // 尝试搜索 content 字段
+                const { count: fallbackCount } = await supabase
+                  .from(tableName)
+                  .select('*', { count: 'exact', head: true })
+                  .ilike('content', `%${keywordMatch[1]}%`);
+                result = [{ count: fallbackCount || 0 }];
+              } else {
+                result = [{ count: 0, note: '查询条件执行失败' }];
+              }
             } else {
               result = [{ count: count || 0 }];
             }
           } else {
-            // 其他 WHERE 条件，返回总数
+            // 无法解析条件，返回总数
             const { count } = await supabase
               .from(tableName)
               .select('*', { count: 'exact', head: true });

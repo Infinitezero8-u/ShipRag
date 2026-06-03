@@ -176,36 +176,98 @@ export async function POST(request: NextRequest) {
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
     
-    // 问题分类：检查是否是统计问题
-    const { isStats, statsType } = isStatsQuery(query);
+    // 问题分类：调用分类 API 判断走 SQL 还是 RAG
+    let isStats = false;
+    try {
+      const classifyResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/classify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const classifyData = await classifyResponse.json();
+      isStats = classifyData.route === 'SQL';
+    } catch (e) {
+      // 分类失败，使用本地判断
+      const localClassify = isStatsQuery(query);
+      isStats = localClassify.isStats;
+    }
     
     if (isStats) {
-      // 直接执行统计查询
-      const { result, sql } = await executeStatsQuery(supabase, query, statsType);
-      
-      if (stream) {
-        const encoder = new TextEncoder();
-        const readable = new ReadableStream({
-          async start(controller) {
-            controller.enqueue(encoder.encode(`📊 **统计查询**\n\n`));
-            controller.enqueue(encoder.encode(result));
-            controller.enqueue(encoder.encode(`\n\n---\n*SQL: ${sql}*`));
-            controller.close();
-          },
+      // 使用 SQL API 动态生成和执行 SQL
+      try {
+        const sqlResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/sql`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
         });
         
-        return new Response(readable, {
-          headers: {
-            'Content-Type': 'text/event-stream; charset=utf-8',
-            'Transfer-Encoding': 'chunked',
-          },
+        const sqlData = await sqlResponse.json();
+        const sql = sqlData.sql || 'SELECT COUNT(*) FROM knowledge_items';
+        const result = sqlData.result?.[0]?.count ?? sqlData.result ?? 0;
+        
+        // 润色结果
+        const polishResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/sql-polish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, data: sqlData.result }),
         });
-      } else {
-        return NextResponse.json({
-          answer: `📊 **统计查询**\n\n${result}\n\n---\n*SQL: ${sql}*`,
-          queryType: 'stats',
-          sql,
-        });
+        
+        const polishData = await polishResponse.json();
+        const answer = polishData.answer || `查询结果：${result} 条`;
+        
+        if (stream) {
+          const encoder = new TextEncoder();
+          const readable = new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode(`📊 **统计查询**\n\n`));
+              controller.enqueue(encoder.encode(answer));
+              controller.enqueue(encoder.encode(`\n\n---\n*SQL: ${sql}*`));
+              controller.close();
+            },
+          });
+          
+          return new Response(readable, {
+            headers: {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Transfer-Encoding': 'chunked',
+            },
+          });
+        } else {
+          return NextResponse.json({
+            answer: `📊 **统计查询**\n\n${answer}\n\n---\n*SQL: ${sql}*`,
+            queryType: 'stats',
+            sql,
+          });
+        }
+      } catch (e) {
+        // SQL API 失败，使用备用方案
+        const localClassify = isStatsQuery(query);
+        const { result, sql } = await executeStatsQuery(supabase, query, localClassify.statsType);
+        
+        if (stream) {
+          const encoder = new TextEncoder();
+          const readable = new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode(`📊 **统计查询**\n\n`));
+              controller.enqueue(encoder.encode(result));
+              controller.enqueue(encoder.encode(`\n\n---\n*SQL: ${sql}*`));
+              controller.close();
+            },
+          });
+          
+          return new Response(readable, {
+            headers: {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Transfer-Encoding': 'chunked',
+            },
+          });
+        } else {
+          return NextResponse.json({
+            answer: `📊 **统计查询**\n\n${result}\n\n---\n*SQL: ${sql}*`,
+            queryType: 'stats',
+            sql,
+          });
+        }
       }
     }
 
