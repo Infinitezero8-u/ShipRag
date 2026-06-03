@@ -371,10 +371,16 @@ export default function RagPage() {
         {/* 标题 */}
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl sm:text-2xl font-bold">跨模态 RAG 知识检索</h1>
-          <a href="/manage" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
-            <Settings className="w-4 h-4" />
-            管理知识库
-          </a>
+          <div className="flex items-center gap-3">
+            <a href="/workflow" className="text-sm text-purple-600 hover:underline flex items-center gap-1">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
+              工作流
+            </a>
+            <a href="/manage" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+              <Settings className="w-4 h-4" />
+              管理
+            </a>
+          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
