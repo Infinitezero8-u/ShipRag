@@ -165,6 +165,31 @@ export default function WorkflowManagePage() {
     }
   };
   
+  // 复制内置工作流
+  const handleCopyDefault = async (wf: Workflow) => {
+    try {
+      const res = await fetch('/api/workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `${wf.name} (副本)`,
+          description: wf.description,
+          nodes: wf.nodes,
+          edges: wf.edges,
+        }),
+      });
+      
+      if (res.ok) {
+        fetchWorkflows();
+      } else {
+        const data = await res.json();
+        alert(data.error || '复制失败');
+      }
+    } catch (error) {
+      console.error('复制失败:', error);
+    }
+  };
+  
   const handleSetActive = async (id: string) => {
     // 内置工作流已经是激活状态
     if (id === DEFAULT_WORKFLOW.id) return;
@@ -355,19 +380,31 @@ export default function WorkflowManagePage() {
                           </>
                         )}
                         
-                        {/* 内置工作流：只允许查看 */}
+                        {/* 内置工作流：允许查看和复制，不允许删除和修改 */}
                         {isDefault && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            asChild
-                            className="text-blue-600 border-blue-200 hover:bg-blue-50"
-                          >
-                            <a href="/workflow">
-                              <Edit2 className="w-3 h-3 mr-1" />
-                              查看详情
-                            </a>
-                          </Button>
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              asChild
+                              className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                            >
+                              <a href="/workflow">
+                                <Edit2 className="w-3 h-3 mr-1" />
+                                查看
+                              </a>
+                            </Button>
+                            
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleCopyDefault(wf)}
+                              className="text-green-600 border-green-200 hover:bg-green-50"
+                            >
+                              <Copy className="w-3 h-3 mr-1" />
+                              复制
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>
