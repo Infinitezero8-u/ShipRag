@@ -2,10 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { EmbeddingClient, HeaderUtils } from 'coze-coding-dev-sdk';
 
+// 内容哈希缓存，用于判重
+const contentHashCache = new Set<string>();
+
+// 计算内容哈希（简单版本：使用前100字符 + 长度）
+function getContentHash(content: string): string {
+  const normalized = content.trim().toLowerCase();
+  const prefix = normalized.substring(0, 100);
+  const length = normalized.length;
+  return `${length}:${prefix}`;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { itemId, batchSize = 10 } = body;
+    const { itemId, batchSize = 10, skipDuplicate = true } = body;
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
@@ -14,6 +25,22 @@ export async function POST(request: NextRequest) {
     // 如果指定了 itemId，只处理该条目
     if (itemId) {
       return await embedSingleItem(supabase, embeddingClient, itemId);
+    }
+
+    // 初始化判重缓存：加载已有条目的内容哈希
+    if (skipDuplicate && contentHashCache.size === 0) {
+      const { data: existingItems } = await supabase
+        .from('knowledge_items')
+        .select('content')
+        .not('embedding', 'is', null);
+      
+      if (existingItems) {
+        for (const item of existingItems) {
+          if (item.content) {
+            contentHashCache.add(getContentHash(item.content));
+          }
+        }
+      }
     }
 
     // 否则批量处理所有未向量化的条目
@@ -37,6 +64,7 @@ export async function POST(request: NextRequest) {
     }
 
     let processed = 0;
+    let skipped = 0;
     let failed = 0;
     const errors: string[] = [];
 
@@ -49,6 +77,19 @@ export async function POST(request: NextRequest) {
       // 跳过空内容
       if (!item.content || item.content.trim().length === 0) {
         continue;
+      }
+
+      // 判重检查
+      if (skipDuplicate) {
+        const contentHash = getContentHash(item.content);
+        if (contentHashCache.has(contentHash)) {
+          skipped++;
+          // 删除重复条目
+          await supabase.from('knowledge_items').delete().eq('id', item.id);
+          continue;
+        }
+        // 添加到缓存
+        contentHashCache.add(contentHash);
       }
 
       try {
@@ -82,6 +123,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       processed,
+      skipped,
       failed,
       total: items.length,
       errors: errors.length > 0 ? errors : undefined,

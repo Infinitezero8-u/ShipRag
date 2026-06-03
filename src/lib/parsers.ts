@@ -1,12 +1,18 @@
 /**
  * 文件解析模块
- * 支持 Excel、Doc、MD、JSON、图片等多种格式
+ * 支持 Excel、Doc、MD、JSON、图片、PDF、PPT 等多种格式
+ * 集成微软 MarkItDown 进行文档转换
  */
 
 import * as XLSX from 'xlsx';
 import * as mammoth from 'mammoth';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import path from 'path';
 
-export type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory';
+const execAsync = promisify(exec);
+
+export type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory' | 'pdf' | 'ppt';
 
 export interface ParsedItem {
   id: string;
@@ -239,9 +245,83 @@ export function getFileType(filename: string): Modality | null {
     'jpeg': 'image',
     'gif': 'image',
     'webp': 'image',
+    'pdf': 'pdf',
+    'pptx': 'ppt',
+    'ppt': 'ppt',
+    'mp3': 'text',  // 音频通过 MarkItDown 转文字
+    'wav': 'text',
+    'm4a': 'text',
+    'epub': 'text',  // EPUB 通过 MarkItDown 转 Markdown
   };
 
   return ext ? typeMap[ext] || null : null;
+}
+
+/**
+ * 使用 MarkItDown 转换文件（支持 PDF、PPT、音频等）
+ */
+export async function convertWithMarkItDown(buffer: Buffer, filename: string): Promise<ParseResult> {
+  try {
+    // 转换为 Base64
+    const base64Content = buffer.toString('base64');
+    
+    // 调用 Python 脚本
+    const scriptPath = path.join(process.cwd(), 'scripts', 'markitdown_converter.py');
+    
+    // 使用 stdin 传递 base64 内容（避免命令行参数过长）
+    const { stdout } = await execAsync(
+      `python3 "${scriptPath}" --base64 "${base64Content}" "${filename}"`,
+      { maxBuffer: 50 * 1024 * 1024 }  // 50MB buffer
+    );
+    
+    const result = JSON.parse(stdout);
+    
+    if (!result.success) {
+      return { success: false, items: [], error: result.error || 'MarkItDown 转换失败' };
+    }
+    
+    // 解析 Markdown 内容，按段落分割
+    const markdownContent = result.text_content;
+    const title = result.title || filename;
+    
+    // 将 Markdown 按段落分割成多个条目（便于检索）
+    const paragraphs = markdownContent
+      .split(/\n\n+/)
+      .filter((p: string) => p.trim().length > 50)  // 过滤太短的段落
+      .map((p: string) => p.trim());
+    
+    const items: ParsedItem[] = paragraphs.map((content: string, index: number) => ({
+      id: generateId(),
+      modality: getFileType(filename) || 'text',
+      title: paragraphs.length > 1 ? `${title} - 第${index + 1}段` : title,
+      content,
+      metadata: {
+        source: filename,
+        paragraphIndex: index + 1,
+        totalParagraphs: paragraphs.length,
+        originalTitle: title,
+      },
+    }));
+    
+    // 如果没有分割出段落，存储整个内容
+    if (items.length === 0) {
+      items.push({
+        id: generateId(),
+        modality: getFileType(filename) || 'text',
+        title,
+        content: markdownContent,
+        metadata: { source: filename },
+      });
+    }
+    
+    return { success: true, items };
+  } catch (error) {
+    return {
+      success: false,
+      items: [],
+      error: `MarkItDown 转换失败: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 /**
@@ -272,6 +352,11 @@ export async function parseFile(
     case 'json':
       return parseJson(buffer.toString('utf-8'), filename);
     case 'text':
+      // 对于音频文件，使用 MarkItDown 进行语音转录
+      const ext = filename.toLowerCase().split('.').pop();
+      if (['mp3', 'wav', 'm4a', 'epub'].includes(ext || '')) {
+        return convertWithMarkItDown(buffer, filename);
+      }
       return parseText(buffer.toString('utf-8'), filename);
     case 'image':
       // 图片不解析内容，返回空，由上层处理上传
@@ -285,6 +370,10 @@ export async function parseFile(
           metadata: { mimeType },
         }] 
       };
+    case 'pdf':
+    case 'ppt':
+      // PDF 和 PPT 使用 MarkItDown 转换
+      return convertWithMarkItDown(buffer, filename);
     default:
       return { 
         success: false, 
