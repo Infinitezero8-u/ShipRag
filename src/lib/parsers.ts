@@ -6,11 +6,8 @@
 
 import * as XLSX from 'xlsx';
 import * as mammoth from 'mammoth';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import path from 'path';
-
-const execAsync = promisify(exec);
 
 export type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory' | 'pdf' | 'ppt';
 
@@ -268,13 +265,33 @@ export async function convertWithMarkItDown(buffer: Buffer, filename: string): P
     // 调用 Python 脚本
     const scriptPath = path.join(process.cwd(), 'scripts', 'markitdown_converter.py');
     
-    // 使用 stdin 传递 base64 内容（避免命令行参数过长）
-    const { stdout } = await execAsync(
-      `python3 "${scriptPath}" --base64 "${base64Content}" "${filename}"`,
-      { maxBuffer: 50 * 1024 * 1024 }  // 50MB buffer
-    );
-    
-    const result = JSON.parse(stdout);
+    // 使用 spawn 并通过 stdin 传递 base64 内容（避免命令行参数过长导致 E2BIG 错误）
+    const result = await new Promise<any>((resolve, reject) => {
+      const proc = spawn('python3', [scriptPath, '--stdin', filename]);
+      
+      let stdout = '';
+      let stderr = '';
+      
+      proc.stdout.on('data', (data) => { stdout += data.toString(); });
+      proc.stderr.on('data', (data) => { stderr += data.toString(); });
+      
+      proc.on('error', (err) => reject(err));
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(stderr || `Process exited with code ${code}`));
+        } else {
+          try {
+            resolve(JSON.parse(stdout));
+          } catch (e) {
+            reject(new Error(`Invalid JSON: ${stdout.substring(0, 200)}`));
+          }
+        }
+      });
+      
+      // 通过 stdin 发送 base64 内容
+      proc.stdin.write(base64Content);
+      proc.stdin.end();
+    });
     
     if (!result.success) {
       return { success: false, items: [], error: result.error || 'MarkItDown 转换失败' };

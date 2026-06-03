@@ -26,7 +26,7 @@ def convert_file(file_path: str) -> dict:
         
         return {
             "success": True,
-            "content": result.text_content,
+            "text_content": result.text_content,
             "title": result.title if hasattr(result, 'title') else None,
         }
     except Exception as e:
@@ -63,7 +63,8 @@ def convert_base64(content_base64: str, filename: str) -> dict:
     """将 Base64 编码的文件内容转换为 Markdown"""
     try:
         # 创建临时文件
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+        suffix = os.path.splitext(filename)[1] or '.bin'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(base64.b64decode(content_base64))
             tmp_path = tmp.name
         
@@ -83,10 +84,19 @@ def convert_base64(content_base64: str, filename: str) -> dict:
 
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: python markitdown_converter.py <file_path> or --base64 <content> <filename> or --url <url>"}))
+        print(json.dumps({"error": "Usage: python markitdown_converter.py <file_path> or --stdin <filename> or --url <url>"}))
         sys.exit(1)
     
-    if sys.argv[1] == "--base64":
+    if sys.argv[1] == "--stdin":
+        # 从 stdin 读取 base64 内容
+        if len(sys.argv) < 3:
+            print(json.dumps({"error": "Usage: python markitdown_converter.py --stdin <filename>"}))
+            sys.exit(1)
+        filename = sys.argv[2]
+        base64_content = sys.stdin.read().strip()
+        result = convert_base64(base64_content, filename)
+    elif sys.argv[1] == "--base64":
+        # 旧方式：从命令行参数读取（保留兼容性）
         if len(sys.argv) < 4:
             print(json.dumps({"error": "Usage: python markitdown_converter.py --base64 <base64_content> <filename>"}))
             sys.exit(1)
