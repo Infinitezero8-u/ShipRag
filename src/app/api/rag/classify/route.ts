@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 
-// 问题分类 API
+// 问题分类 API - 支持三分类：RAG / SQL / ALL
 export async function POST(request: NextRequest) {
   try {
-    const { query } = await request.json();
+    const { query, prompt } = await request.json();
     
     if (!query) {
       return NextResponse.json({ error: '缺少查询内容' }, { status: 400 });
     }
 
-    const classifyPrompt = `你只允许输出两个单词：RAG 或者 SQL
-规则：
-1. 用户问题需要统计、求和、计数、平均值、分组、月度汇总、查数据数值 → 输出SQL
-2. 用户是查文档内容、条款、规则、文字解释，不需要查数据库数字 → 输出RAG
+    const classifyPrompt = prompt || `你是意图判断专家，分析用户问题，输出标签：
+【RAG】：需要查阅文档、条款、规则、说明类文本知识；
+【SQL】：需要对数据库做求和、计数、汇总、明细查询；
+【ALL】：既需要文档资料，又需要统计数据，两条链路都要执行。
+仅输出标签文本：RAG / SQL / ALL，不要多余内容。
 用户提问：${query}`;
 
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
@@ -21,11 +22,19 @@ export async function POST(request: NextRequest) {
     
     const response = await llmClient.invoke(
       [{ role: 'user', content: classifyPrompt }],
-      { model: 'doubao-seed-2-0-lite-260215' }
+      { model: 'doubao-seed-2-0-lite-260215', temperature: 0 }
     );
 
     const result = response.content || 'RAG';
-    const route = result.trim().toUpperCase().includes('SQL') ? 'SQL' : 'RAG';
+    const trimmed = result.trim().toUpperCase();
+    
+    // 解析三分类结果
+    let route = 'RAG';
+    if (trimmed.includes('ALL')) {
+      route = 'ALL';
+    } else if (trimmed.includes('SQL')) {
+      route = 'SQL';
+    }
 
     return NextResponse.json({
       route,

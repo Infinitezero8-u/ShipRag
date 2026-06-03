@@ -1,26 +1,20 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import ReactFlow, {
-  Node,
-  Edge,
-  Controls,
-  Background,
-  useNodesState,
-  useEdgesState,
-  addEdge,
-  Connection,
-  Panel,
-  NodeProps,
-  Handle,
-  Position,
-  MarkerType,
+  Node, Edge, Controls, Background,
+  Handle, Position, useNodesState, useEdgesState, addEdge, Connection
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import Link from 'next/link';
 
-// 节点类型定义
-const NODE_TYPES = {
+// ==================== 节点类型定义 ====================
+const NODE_TYPES: Record<string, {
+  label: string;
+  icon: string;
+  color: string;
+  category: string;
+  fields: { key: string; label: string; type: string; default: any; options?: string[]; description?: string }[];
+}> = {
   // 1. 用户输入
   chatInput: {
     label: '用户输入',
@@ -29,232 +23,239 @@ const NODE_TYPES = {
     category: 'input',
     fields: [
       { key: 'placeholder', label: '输入提示', type: 'text', default: '请输入您的问题' },
-    ],
+      { key: 'enableHistory', label: '开启多轮对话', type: 'switch', default: true },
+      { key: 'historyCount', label: '历史轮数', type: 'number', default: 5, description: '最多携带N轮历史对话' },
+    ]
   },
-  // 2. 问题分类Prompt
+  
+  // 2. 分类Prompt
   classifyPrompt: {
     label: '分类Prompt',
     icon: '🏷️',
-    color: '#a855f7',
-    category: 'prompt',
+    color: '#f59e0b',
+    category: 'classify',
     fields: [
-      { key: 'template', label: '分类提示词', type: 'textarea', default: `你只允许输出两个单词：RAG 或者 SQL
-规则：
-1. 用户问题需要统计、求和、计数、平均值、分组、月度汇总、查数据数值 → 输出SQL
-2. 用户是查文档内容、条款、规则、文字解释，不需要查数据库数字 → 输出RAG
-用户提问：{question}` },
-    ],
+      { key: 'template', label: '分类模板', type: 'textarea', default: `你是意图判断专家，分析用户问题，输出标签：
+【RAG】：需要查阅文档、条款、规则、说明类文本知识；
+【SQL】：需要对数据库做求和、计数、汇总、明细查询；
+【ALL】：既需要文档资料，又需要统计数据，两条链路都要执行。
+仅输出标签文本：RAG / SQL / ALL，不要多余内容。` },
+    ]
   },
+  
   // 3. 分类LLM
   classifyLLM: {
     label: '分类LLM',
     icon: '🤖',
-    color: '#f43f5e',
-    category: 'llm',
+    color: '#8b5cf6',
+    category: 'classify',
     fields: [
-      { key: 'model', label: '模型', type: 'select', options: ['doubao-seed-2-0-lite-260215', 'doubao-seed-2-0-pro-260215'], default: 'doubao-seed-2-0-lite-260215' },
-    ],
+      { key: 'model', label: '模型', type: 'select', default: 'doubao-seed-32k', options: ['doubao-seed-32k', 'deepseek-chat'] },
+      { key: 'temperature', label: 'Temperature', type: 'number', default: 0 },
+    ]
   },
+  
   // 4. 条件分支
   conditionRoute: {
     label: '条件分支',
     icon: '🔀',
-    color: '#f59e0b',
-    category: 'logic',
+    color: '#ec4899',
+    category: 'route',
     fields: [
-      { key: 'ragLabel', label: 'RAG分支标签', type: 'text', default: 'RAG' },
-      { key: 'sqlLabel', label: 'SQL分支标签', type: 'text', default: 'SQL' },
-    ],
+      { key: 'mode', label: '路由模式', type: 'select', default: 'three-way', options: ['three-way', 'two-way'] },
+    ]
   },
+  
   // 5. Query优化
   queryRewrite: {
     label: 'Query优化',
     icon: '✨',
-    color: '#f59e0b',
-    category: 'process',
+    color: '#06b6d4',
+    category: 'rag',
     fields: [
-      { key: 'enabled', label: '启用优化', type: 'switch', default: true },
-      { key: 'method', label: '优化方式', type: 'select', options: ['关键词提取', '问题扩写', '歧义消除'], default: '关键词提取' },
-    ],
+      { key: 'enabled', label: '启用', type: 'switch', default: true },
+      { key: 'enableSpellCheck', label: '错别字修正', type: 'switch', default: true },
+      { key: 'enableKeyword', label: '关键词提取', type: 'switch', default: true },
+      { key: 'enableExpand', label: '语义扩写', type: 'switch', default: true },
+    ]
   },
-  // 6. Query向量化
+  
+  // 6. 向量化
   embedding: {
     label: '向量化',
     icon: '🔢',
     color: '#6366f1',
-    category: 'process',
+    category: 'rag',
     fields: [
-      { key: 'model', label: '嵌入模型', type: 'select', options: ['doubao-embedding', 'text-embedding-3-small'], default: 'doubao-embedding' },
-    ],
+      { key: 'model', label: '向量模型', type: 'select', default: 'doubao-embedding', options: ['doubao-embedding', 'bge-m3'] },
+    ]
   },
+  
   // 7. 向量检索
   vectorRetrieval: {
     label: '向量检索',
     icon: '🔍',
-    color: '#3b82f6',
-    category: 'retrieval',
+    color: '#14b8a6',
+    category: 'rag',
     fields: [
-      { key: 'topK', label: 'Top K', type: 'number', default: 5 },
-      { key: 'threshold', label: '相似度阈值', type: 'number', default: 0.3 },
-    ],
+      { key: 'topK', label: '召回数量', type: 'number', default: 8 },
+      { key: 'threshold', label: '相似度阈值', type: 'number', default: 0.65 },
+      { key: 'enableMetadataFilter', label: '元数据筛选', type: 'switch', default: true },
+    ]
   },
-  // 8. 结果过滤重排
+  
+  // 8. 结果重排
   rerank: {
     label: '结果重排',
     icon: '📊',
-    color: '#8b5cf6',
-    category: 'process',
+    color: '#f97316',
+    category: 'rag',
     fields: [
-      { key: 'enabled', label: '启用重排', type: 'switch', default: true },
-      { key: 'minScore', label: '最低分数', type: 'number', default: 0.5 },
-    ],
+      { key: 'enabled', label: '启用Rerank', type: 'switch', default: true },
+      { key: 'keepTop', label: '保留TOP', type: 'number', default: 5 },
+    ]
   },
+  
   // 9. Prompt组装
   prompt: {
     label: 'Prompt组装',
     icon: '📝',
-    color: '#ec4899',
-    category: 'prompt',
+    color: '#84cc16',
+    category: 'rag',
     fields: [
-      { key: 'systemPrompt', label: '系统提示词', type: 'textarea', default: '你是一个专业的问答助手，请根据参考资料准确回答问题，不要编造内容。' },
-      { key: 'template', label: '模板', type: 'textarea', default: '【参考资料】\n{context}\n\n【用户问题】\n{question}' },
-    ],
+      { key: 'systemPrompt', label: '系统提示词', type: 'textarea', default: '你是专业的问答助手，根据参考资料回答问题。' },
+      { key: 'fallbackMessage', label: '兜底话术', type: 'text', default: '暂未找到相关信息。' },
+      { key: 'showSource', label: '标注来源', type: 'switch', default: true },
+    ]
   },
+  
   // 10. LLM生成
   llm: {
     label: 'LLM生成',
     icon: '🤖',
-    color: '#f43f5e',
-    category: 'llm',
+    color: '#8b5cf6',
+    category: 'rag',
     fields: [
-      { key: 'model', label: '模型', type: 'select', options: ['doubao-seed-2-0-pro-260215', 'doubao-seed-2-0-lite-260215', 'deepseek-v3-2-251201'], default: 'doubao-seed-2-0-lite-260215' },
-      { key: 'temperature', label: '温度', type: 'number', default: 0.7 },
-      { key: 'maxTokens', label: '最大Token', type: 'number', default: 2000 },
-    ],
+      { key: 'model', label: '模型', type: 'select', default: 'doubao-seed-32k', options: ['doubao-seed-32k', 'deepseek-chat'] },
+      { key: 'temperature', label: 'Temperature', type: 'number', default: 0.3 },
+      { key: 'maxTokens', label: 'Max Tokens', type: 'number', default: 2000 },
+      { key: 'stream', label: '流式输出', type: 'switch', default: true },
+    ]
   },
-  // 11. SQL生成Prompt
+  
+  // 11. SQL生成
   sqlPrompt: {
     label: 'SQL生成',
     icon: '🗃️',
     color: '#0ea5e9',
-    category: 'prompt',
+    category: 'sql',
     fields: [
-      { key: 'schema', label: '表结构', type: 'textarea', default: `表名: knowledge_items
-字段:
-- id: 主键
-- title: 标题
-- content: 内容
-- source: 来源
-- tags: 标签
-- created_at: 创建时间` },
-      { key: 'template', label: 'SQL提示词', type: 'textarea', default: `已知数据表结构：
-{schema}
-
-根据用户问题，生成合规的SELECT查询SQL，禁止增删改语句。
-用户问题：{question}
-只输出SQL语句，不要多余文字。` },
-    ],
+      { key: 'allowedOnlySelect', label: '仅允许SELECT', type: 'switch', default: true },
+      { key: 'tableSchema', label: '表结构', type: 'textarea', default: 'knowledge_items(id, title, content, modality, source, tags)' },
+    ]
   },
+  
   // 12. 数据库执行
   dbExecute: {
     label: '数据库执行',
     icon: '🗄️',
-    color: '#14b8a6',
-    category: 'database',
+    color: '#22c55e',
+    category: 'sql',
     fields: [
-      { key: 'connection', label: '连接名', type: 'select', options: ['Supabase (主库)', '只读副本'], default: 'Supabase (主库)' },
-      { key: 'readonly', label: '只读模式', type: 'switch', default: true },
-    ],
+      { key: 'timeout', label: '超时(秒)', type: 'number', default: 5 },
+      { key: 'retry', label: '重试次数', type: 'number', default: 1 },
+    ]
   },
-  // 13. 结果润色LLM
+  
+  // 13. 结果润色
   resultPolish: {
     label: '结果润色',
     icon: '✍️',
-    color: '#f472b6',
-    category: 'llm',
+    color: '#a855f7',
+    category: 'sql',
     fields: [
-      { key: 'model', label: '模型', type: 'select', options: ['doubao-seed-2-0-lite-260215', 'doubao-seed-2-0-pro-260215'], default: 'doubao-seed-2-0-lite-260215' },
-      { key: 'template', label: '润色提示词', type: 'textarea', default: `根据下面数据库查询出来的数据，用通顺中文回答用户问题，不要编造额外内容。
-原始提问：{question}
-查询数据：{data}` },
-    ],
+      { key: 'model', label: '润色模型', type: 'select', default: 'doubao-seed-32k', options: ['doubao-seed-32k', 'deepseek-chat'] },
+    ]
   },
-  // 14. 输出
-  chatOutput: {
-    label: '输出',
+  
+  // 14. 输出汇总
+  mergeOutput: {
+    label: '输出汇总',
     icon: '📤',
-    color: '#14b8a6',
+    color: '#ef4444',
     category: 'output',
     fields: [
-      { key: 'showSource', label: '显示来源', type: 'switch', default: true },
-    ],
+      { key: 'format', label: '输出格式', type: 'select', default: 'markdown', options: ['markdown', 'text', 'json'] },
+      { key: 'showSource', label: '标注来源', type: 'switch', default: true },
+    ]
   },
 };
 
-// 分支节点（带两个输出）
-function BranchNode({ data, selected }: NodeProps) {
-  const nodeType = NODE_TYPES[data.type as keyof typeof NODE_TYPES];
+// ==================== 节点组件 ====================
+function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
+  const config = NODE_TYPES[data.type];
+  if (!config) return null;
+  
   return (
     <div
-      className="px-3 py-2 rounded-xl shadow-md border-2 min-w-[60px] text-center"
-      style={{
-        backgroundColor: nodeType?.color + '20',
-        borderColor: selected ? nodeType?.color : 'transparent',
-      }}
+      className={`px-3 py-2 rounded-lg shadow-md border-2 ${selected ? 'border-blue-500' : 'border-transparent'}`}
+      style={{ backgroundColor: config.color + '20', borderColor: selected ? '#3b82f6' : config.color + '50' }}
     >
-      <Handle type="target" position={Position.Left} className="w-2 h-2" />
-      <div className="text-lg">{nodeType?.icon}</div>
-      <div className="text-[10px] font-medium whitespace-nowrap">{nodeType?.label}</div>
-      <Handle type="source" position={Position.Top} id="rag" className="w-2 h-2" style={{ left: 15 }} />
-      <Handle type="source" position={Position.Bottom} id="sql" className="w-2 h-2" style={{ left: 15 }} />
+      {/* 输入连接点 */}
+      {data.type !== 'chatInput' && (
+        <Handle type="target" position={Position.Left} className="w-3 h-3 bg-gray-400" />
+      )}
+      
+      {/* 特殊连接点：条件分支的三路输出 */}
+      {data.type === 'conditionRoute' && (
+        <>
+          <Handle type="source" position={Position.Top} id="rag" className="w-3 h-3 bg-green-500" style={{ left: 20 }} />
+          <Handle type="source" position={Position.Right} id="all" className="w-3 h-3 bg-purple-500" />
+          <Handle type="source" position={Position.Bottom} id="sql" className="w-3 h-3 bg-blue-500" style={{ left: 20 }} />
+        </>
+      )}
+      
+      {/* 普通输出连接点 */}
+      {data.type !== 'conditionRoute' && data.type !== 'mergeOutput' && (
+        <Handle type="source" position={Position.Right} className="w-3 h-3 bg-gray-400" />
+      )}
+      
+      {/* 节点内容 */}
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <span>{config.icon}</span>
+        <span style={{ color: config.color }}>{config.label}</span>
+      </div>
     </div>
   );
 }
 
-// 自定义节点组件
-function CustomNode({ data, selected }: NodeProps) {
-  const nodeType = NODE_TYPES[data.type as keyof typeof NODE_TYPES];
-  return (
-    <div
-      className="px-3 py-2 rounded-xl shadow-md border-2 min-w-[60px] text-center"
-      style={{
-        backgroundColor: nodeType?.color + '20',
-        borderColor: selected ? nodeType?.color : 'transparent',
-      }}
-    >
-      <Handle type="target" position={Position.Left} className="w-2 h-2" />
-      <div className="text-lg">{nodeType?.icon}</div>
-      <div className="text-[10px] font-medium whitespace-nowrap">{nodeType?.label}</div>
-      <Handle type="source" position={Position.Right} className="w-2 h-2" />
-    </div>
-  );
-}
+const nodeTypes = { custom: CustomNode };
 
-// 默认双分支工作流
+// ==================== 默认工作流布局 ====================
 const defaultNodes: Node[] = [
   // 输入层
-  { id: 'input', type: 'chatInput', position: { x: 20, y: 180 }, data: { type: 'chatInput', placeholder: '请输入您的问题' } },
+  { id: 'input', type: 'custom', position: { x: 20, y: 200 }, data: { type: 'chatInput' } },
   
   // 分类层
-  { id: 'classifyPrompt', type: 'classifyPrompt', position: { x: 100, y: 180 }, data: { type: 'classifyPrompt' } },
-  { id: 'classifyLLM', type: 'classifyLLM', position: { x: 180, y: 180 }, data: { type: 'classifyLLM' } },
-  { id: 'condition', type: 'conditionRoute', position: { x: 260, y: 180 }, data: { type: 'conditionRoute' } },
+  { id: 'classifyPrompt', type: 'custom', position: { x: 120, y: 200 }, data: { type: 'classifyPrompt' } },
+  { id: 'classifyLLM', type: 'custom', position: { x: 220, y: 200 }, data: { type: 'classifyLLM' } },
+  { id: 'condition', type: 'custom', position: { x: 320, y: 200 }, data: { type: 'conditionRoute' } },
   
   // RAG 分支 (上方)
-  { id: 'queryRewrite', type: 'queryRewrite', position: { x: 340, y: 80 }, data: { type: 'queryRewrite' } },
-  { id: 'embedding', type: 'embedding', position: { x: 420, y: 80 }, data: { type: 'embedding' } },
-  { id: 'vectorRetrieval', type: 'vectorRetrieval', position: { x: 500, y: 80 }, data: { type: 'vectorRetrieval' } },
-  { id: 'rerank', type: 'rerank', position: { x: 580, y: 80 }, data: { type: 'rerank' } },
-  { id: 'ragPrompt', type: 'prompt', position: { x: 660, y: 80 }, data: { type: 'prompt' } },
-  { id: 'ragLLM', type: 'llm', position: { x: 740, y: 80 }, data: { type: 'llm' } },
+  { id: 'queryRewrite', type: 'custom', position: { x: 420, y: 80 }, data: { type: 'queryRewrite' } },
+  { id: 'embedding', type: 'custom', position: { x: 520, y: 80 }, data: { type: 'embedding' } },
+  { id: 'vectorRetrieval', type: 'custom', position: { x: 620, y: 80 }, data: { type: 'vectorRetrieval' } },
+  { id: 'rerank', type: 'custom', position: { x: 720, y: 80 }, data: { type: 'rerank' } },
+  { id: 'ragPrompt', type: 'custom', position: { x: 820, y: 80 }, data: { type: 'prompt' } },
+  { id: 'ragLLM', type: 'custom', position: { x: 920, y: 80 }, data: { type: 'llm' } },
   
   // SQL 分支 (下方)
-  { id: 'sqlPrompt', type: 'sqlPrompt', position: { x: 340, y: 280 }, data: { type: 'sqlPrompt' } },
-  { id: 'dbExecute', type: 'dbExecute', position: { x: 420, y: 280 }, data: { type: 'dbExecute' } },
-  { id: 'resultPolish', type: 'resultPolish', position: { x: 500, y: 280 }, data: { type: 'resultPolish' } },
+  { id: 'sqlPrompt', type: 'custom', position: { x: 420, y: 320 }, data: { type: 'sqlPrompt' } },
+  { id: 'dbExecute', type: 'custom', position: { x: 520, y: 320 }, data: { type: 'dbExecute' } },
+  { id: 'resultPolish', type: 'custom', position: { x: 620, y: 320 }, data: { type: 'resultPolish' } },
   
-  // 输出
-  { id: 'output', type: 'chatOutput', position: { x: 820, y: 180 }, data: { type: 'chatOutput' } },
+  // 输出汇总
+  { id: 'mergeOutput', type: 'custom', position: { x: 1000, y: 200 }, data: { type: 'mergeOutput' } },
 ];
 
 const defaultEdges: Edge[] = [
@@ -263,41 +264,45 @@ const defaultEdges: Edge[] = [
   { id: 'e2', source: 'classifyPrompt', target: 'classifyLLM', animated: true },
   { id: 'e3', source: 'classifyLLM', target: 'condition', animated: true },
   
-  // RAG 分支
+  // RAG 分支 (从条件分支上方输出)
   { id: 'e4', source: 'condition', sourceHandle: 'rag', target: 'queryRewrite', animated: true, label: 'RAG', style: { stroke: '#10b981' } },
   { id: 'e5', source: 'queryRewrite', target: 'embedding', animated: true },
   { id: 'e6', source: 'embedding', target: 'vectorRetrieval', animated: true },
   { id: 'e7', source: 'vectorRetrieval', target: 'rerank', animated: true },
   { id: 'e8', source: 'rerank', target: 'ragPrompt', animated: true },
   { id: 'e9', source: 'ragPrompt', target: 'ragLLM', animated: true },
-  { id: 'e10', source: 'ragLLM', target: 'output', animated: true },
+  { id: 'e10', source: 'ragLLM', target: 'mergeOutput', animated: true },
   
-  // SQL 分支
+  // SQL 分支 (从条件分支下方输出)
   { id: 'e11', source: 'condition', sourceHandle: 'sql', target: 'sqlPrompt', animated: true, label: 'SQL', style: { stroke: '#0ea5e9' } },
   { id: 'e12', source: 'sqlPrompt', target: 'dbExecute', animated: true },
   { id: 'e13', source: 'dbExecute', target: 'resultPolish', animated: true },
-  { id: 'e14', source: 'resultPolish', target: 'output', animated: true },
+  { id: 'e14', source: 'resultPolish', target: 'mergeOutput', animated: true },
+  
+  // ALL 分支 (同时触发 RAG 和 SQL)
+  { id: 'e15', source: 'condition', sourceHandle: 'all', target: 'queryRewrite', animated: true, label: 'ALL→RAG', style: { stroke: '#a855f7', strokeDasharray: '5,5' } },
+  { id: 'e16', source: 'condition', sourceHandle: 'all', target: 'sqlPrompt', animated: true, label: 'ALL→SQL', style: { stroke: '#a855f7', strokeDasharray: '5,5' } },
 ];
 
+// ==================== 主页面 ====================
 export default function WorkflowPage() {
   const [nodes, setNodes, onNodesChange] = useNodesState(defaultNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(defaultEdges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
   const [showTest, setShowTest] = useState(false);
   const [testInput, setTestInput] = useState('');
   const [testOutput, setTestOutput] = useState('');
-  const [isRunning, setIsRunning] = useState(false);
-  const [routeType, setRouteType] = useState<'RAG' | 'SQL' | ''>('');
-
+  const [testLog, setTestLog] = useState<string[]>([]);
+  
   const onConnect = useCallback((params: Connection) => {
     setEdges((eds) => addEdge({ ...params, animated: true }, eds));
   }, [setEdges]);
-
-  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+  
+  const onNodeClick = useCallback((_: any, node: Node) => {
     setSelectedNode(node);
   }, []);
-
+  
+  // 更新节点数据
   const updateNodeData = (key: string, value: any) => {
     if (!selectedNode) return;
     setNodes((nds) =>
@@ -307,309 +312,269 @@ export default function WorkflowPage() {
           : n
       )
     );
-    setSelectedNode((prev) => prev ? { ...prev, data: { ...prev.data, [key]: value } } : null);
+    setSelectedNode((n) => n ? { ...n, data: { ...n.data, [key]: value } } : null);
   };
-
-  const addNode = (type: string) => {
-    const nodeType = NODE_TYPES[type as keyof typeof NODE_TYPES];
-    const newId = Date.now().toString();
-    const defaultData: Record<string, any> = { type };
-    nodeType.fields.forEach((f) => { defaultData[f.key] = f.default; });
-    
-    const newNode: Node = {
-      id: newId,
-      type,
-      position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 100 },
-      data: defaultData,
-    };
-    setNodes((nds) => [...nds, newNode]);
-    setShowAdd(false);
-  };
-
-  const deleteNode = () => {
-    if (!selectedNode) return;
-    setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
-    setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
-    setSelectedNode(null);
-  };
-
-  // 执行工作流
-  const runWorkflow = async () => {
+  
+  // 执行工作流测试
+  const runTest = async () => {
     if (!testInput.trim()) return;
-    setIsRunning(true);
+    
     setTestOutput('');
-    setRouteType('');
+    setTestLog([]);
+    
+    const addLog = (msg: string) => setTestLog((l) => [...l, msg]);
     
     try {
-      // 1. 分类问题
-      setTestOutput('正在分析问题类型...');
+      // Step 1: 意图分类
+      addLog('📊 正在分类用户意图...');
       const classifyRes = await fetch('/api/rag/classify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: testInput }),
+        body: JSON.stringify({ query: testInput })
       });
       const classifyData = await classifyRes.json();
       const route = classifyData.route || 'RAG';
-      setRouteType(route);
+      addLog(`✅ 意图分类: ${route}`);
       
-      if (route === 'SQL') {
-        // SQL 分支
-        setTestOutput(`路由: SQL 分支\n正在生成 SQL...`);
-        
-        const sqlRes = await fetch('/api/rag/sql', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: testInput }),
-        });
-        const sqlData = await sqlRes.json();
-        
-        if (sqlData.error) {
-          setTestOutput(`路由: SQL 分支\n\nSQL: ${sqlData.sql || '生成失败'}\n\n错误: ${sqlData.error}`);
-        } else if (sqlData.result && sqlData.result.length > 0) {
-          setTestOutput(`路由: SQL 分支\n\nSQL: ${sqlData.sql}\n\n数据: ${JSON.stringify(sqlData.result)}\n\n润色中...`);
-          
-          const polishRes = await fetch('/api/rag/sql-polish', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: testInput, data: sqlData.result }),
-          });
-          const polishData = await polishRes.json();
-          setTestOutput(`路由: SQL 分支\n\n答案: ${polishData.answer || '润色失败'}\n\n---\nSQL: ${sqlData.sql}`);
-        } else {
-          setTestOutput(`路由: SQL 分支\n\nSQL: ${sqlData.sql}\n\n结果: 无数据`);
-        }
-      } else {
-        // RAG 分支
-        setTestOutput(`路由: RAG 分支\n正在检索知识库...`);
-        
+      let ragResult = '';
+      let sqlResult = '';
+      
+      // 根据 route 执行不同分支
+      if (route === 'RAG' || route === 'ALL') {
+        addLog('🔍 执行 RAG 分支...');
         const ragRes = await fetch('/api/rag', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: testInput, stream: false }),
+          body: JSON.stringify({ query: testInput, stream: false })
         });
-        const ragData = await ragRes.json();
-        setTestOutput(`路由: RAG 分支\n\n${ragData.answer || ragData.error || '无结果'}`);
+        ragResult = await ragRes.text();
+        addLog(`✅ RAG 结果: ${ragResult.substring(0, 100)}...`);
       }
-    } catch (err) {
-      setTestOutput('执行失败: ' + (err as Error).message);
+      
+      if (route === 'SQL' || route === 'ALL') {
+        addLog('🗄️ 执行 SQL 分支...');
+        const sqlRes = await fetch('/api/rag/sql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: testInput })
+        });
+        const sqlData = await sqlRes.json();
+        sqlResult = sqlData.result ? JSON.stringify(sqlData.result) : '';
+        addLog(`✅ SQL 结果: ${sqlResult.substring(0, 100)}...`);
+        
+        // 润色 SQL 结果
+        if (sqlResult) {
+          const polishRes = await fetch('/api/rag/sql-polish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: testInput, data: sqlData.result })
+          });
+          const polishData = await polishRes.json();
+          sqlResult = polishData.answer || sqlResult;
+        }
+      }
+      
+      // 合并结果
+      let finalOutput = '';
+      if (route === 'RAG') {
+        finalOutput = ragResult;
+      } else if (route === 'SQL') {
+        finalOutput = sqlResult;
+      } else if (route === 'ALL') {
+        finalOutput = `## 📚 文档资料\n${ragResult}\n\n## 📊 统计数据\n${sqlResult}`;
+      }
+      
+      addLog('✅ 工作流执行完成');
+      setTestOutput(finalOutput);
+      
+    } catch (error: any) {
+      addLog(`❌ 执行失败: ${error.message}`);
+      setTestOutput('暂时无法解答该问题');
     }
-    setIsRunning(false);
   };
-
-  const nodeTypes = {
-    ...Object.fromEntries(Object.keys(NODE_TYPES).map((key) => [key, CustomNode])),
-    conditionRoute: BranchNode,
-  };
-
-  // 按分类分组节点
-  const nodeCategories = {
-    '输入/输出': ['chatInput', 'chatOutput'],
-    '分类路由': ['classifyPrompt', 'classifyLLM', 'conditionRoute'],
-    'RAG处理': ['queryRewrite', 'embedding', 'vectorRetrieval', 'rerank', 'prompt', 'llm'],
-    'SQL处理': ['sqlPrompt', 'dbExecute', 'resultPolish'],
-  };
-
+  
   return (
     <div className="h-screen flex flex-col bg-gray-50">
-      {/* 顶部栏 */}
-      <div className="bg-white border-b px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="text-gray-500">←</Link>
-          <span className="font-bold">🔄 双分支RAG工作流</span>
+      {/* 顶部导航 */}
+      <div className="h-12 border-b bg-white flex items-center justify-between px-4">
+        <div className="flex items-center gap-4">
+          <a href="/" className="text-blue-600 hover:underline">← 返回</a>
+          <span className="font-medium">双分支 RAG 工作流</span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowTest(true)}
+            onClick={() => setShowTest(!showTest)}
             className="px-3 py-1 rounded-lg bg-blue-500 text-white text-sm"
           >
             ▶ 测试
           </button>
           <button
-            onClick={() => { setNodes(defaultNodes); setEdges(defaultEdges); }}
+            onClick={() => { setNodes(defaultNodes); setEdges(defaultEdges); setSelectedNode(null); }}
             className="px-3 py-1 rounded-lg bg-gray-200 text-sm"
           >
             重置
           </button>
         </div>
       </div>
-
-      {/* 路由说明 */}
-      <div className="bg-gradient-to-r from-green-50 to-blue-50 px-4 py-2 flex items-center justify-center gap-4 text-xs">
-        <span className="text-green-600">📤 RAG分支: 文档/条款/规则查询</span>
-        <span className="text-blue-600">📊 SQL分支: 统计/求和/计数查询</span>
-      </div>
-
-      {/* 工作流画布 */}
-      <div className="flex-1 relative">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onNodeClick={onNodeClick}
-          nodeTypes={nodeTypes}
-          fitView
-          minZoom={0.3}
-          maxZoom={2}
-        >
-          <Background gap={12} size={1} />
-          <Controls showInteractive={false} />
-          <Panel position="bottom-left">
-            <button
-              onClick={() => setShowAdd(true)}
-              className="px-3 py-2 rounded-lg bg-white shadow text-sm"
-            >
-              + 添加节点
-            </button>
-          </Panel>
-        </ReactFlow>
-      </div>
-
-      {/* 添加节点弹窗 */}
-      {showAdd && (
-        <div className="fixed inset-0 z-50 bg-black/30 flex items-end justify-center" onClick={() => setShowAdd(false)}>
-          <div className="bg-white rounded-t-2xl w-full max-w-md p-4 max-h-[70vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <span className="font-bold">添加节点</span>
-              <button onClick={() => setShowAdd(false)}>✕</button>
-            </div>
-            {Object.entries(nodeCategories).map(([cat, types]) => (
-              <div key={cat} className="mb-4">
-                <div className="text-xs text-gray-500 mb-2">{cat}</div>
-                <div className="grid grid-cols-4 gap-2">
-                  {types.map((type) => {
-                    const node = NODE_TYPES[type as keyof typeof NODE_TYPES];
-                    if (!node) return null;
-                    return (
-                      <button
-                        key={type}
-                        onClick={() => addNode(type)}
-                        className="p-2 rounded-xl text-center"
-                        style={{ backgroundColor: node.color + '20' }}
+      
+      <div className="flex-1 flex">
+        {/* 工作流画布 */}
+        <div className="flex-1">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodeClick={onNodeClick}
+            nodeTypes={nodeTypes}
+            fitView
+          >
+            <Background />
+            <Controls />
+          </ReactFlow>
+        </div>
+        
+        {/* 右侧面板 */}
+        <div className="w-80 border-l bg-white overflow-y-auto">
+          {selectedNode ? (
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-medium flex items-center gap-2">
+                  <span>{NODE_TYPES[selectedNode.data.type]?.icon}</span>
+                  <span>{NODE_TYPES[selectedNode.data.type]?.label}</span>
+                </h3>
+                <button
+                  onClick={() => setSelectedNode(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              {/* 参数编辑 */}
+              <div className="space-y-3">
+                {NODE_TYPES[selectedNode.data.type]?.fields.map((field) => (
+                  <div key={field.key}>
+                    <label className="text-xs text-gray-500 block mb-1">
+                      {field.label}
+                      {field.description && (
+                        <span className="text-gray-400 ml-1">({field.description})</span>
+                      )}
+                    </label>
+                    {field.type === 'text' && (
+                      <input
+                        type="text"
+                        value={selectedNode.data[field.key] ?? field.default}
+                        onChange={(e) => updateNodeData(field.key, e.target.value)}
+                        className="w-full px-2 py-1 border rounded text-sm"
+                      />
+                    )}
+                    {field.type === 'number' && (
+                      <input
+                        type="number"
+                        value={selectedNode.data[field.key] ?? field.default}
+                        onChange={(e) => updateNodeData(field.key, Number(e.target.value))}
+                        className="w-full px-2 py-1 border rounded text-sm"
+                        step={field.key.includes('threshold') || field.key.includes('temperature') ? '0.1' : '1'}
+                      />
+                    )}
+                    {field.type === 'textarea' && (
+                      <textarea
+                        value={selectedNode.data[field.key] ?? field.default}
+                        onChange={(e) => updateNodeData(field.key, e.target.value)}
+                        className="w-full px-2 py-1 border rounded text-sm h-24"
+                      />
+                    )}
+                    {field.type === 'select' && (
+                      <select
+                        value={selectedNode.data[field.key] ?? field.default}
+                        onChange={(e) => updateNodeData(field.key, e.target.value)}
+                        className="w-full px-2 py-1 border rounded text-sm"
                       >
-                        <div className="text-xl">{node.icon}</div>
-                        <div className="text-[10px]">{node.label}</div>
-                      </button>
-                    );
-                  })}
+                        {field.options?.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    )}
+                    {field.type === 'switch' && (
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedNode.data[field.key] ?? field.default}
+                          onChange={(e) => updateNodeData(field.key, e.target.checked)}
+                          className="rounded"
+                        />
+                        <span className="text-sm">
+                          {selectedNode.data[field.key] ?? field.default ? '开启' : '关闭'}
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 text-gray-400 text-sm">
+              <p>点击节点查看和编辑参数</p>
+              <div className="mt-4 space-y-2">
+                <p className="font-medium text-gray-600">工作流说明：</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>绿色线：RAG 分支</li>
+                  <li>蓝色线：SQL 分支</li>
+                  <li>紫色虚线：ALL 双分支并行</li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* 测试面板 */}
+      {showTest && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg w-[600px] max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h3 className="font-medium">工作流测试</h3>
+              <button onClick={() => setShowTest(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div className="p-4 space-y-3">
+              <input
+                type="text"
+                value={testInput}
+                onChange={(e) => setTestInput(e.target.value)}
+                placeholder="输入测试问题..."
+                className="w-full px-3 py-2 border rounded-lg"
+              />
+              <button
+                onClick={runTest}
+                className="w-full py-2 bg-blue-500 text-white rounded-lg"
+              >
+                执行
+              </button>
+            </div>
+            
+            {/* 执行日志 */}
+            {testLog.length > 0 && (
+              <div className="px-4 pb-2">
+                <div className="bg-gray-100 rounded p-2 text-xs font-mono space-y-1 max-h-32 overflow-y-auto">
+                  {testLog.map((log, i) => (
+                    <div key={i}>{log}</div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 测试弹窗 */}
-      {showTest && (
-        <div className="fixed inset-0 z-50 bg-black/30 flex items-end justify-center" onClick={() => setShowTest(false)}>
-          <div className="bg-white rounded-t-2xl w-full max-w-md p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <span className="font-bold">▶ 测试工作流</span>
-              <button onClick={() => setShowTest(false)}>✕</button>
-            </div>
-            <input
-              type="text"
-              value={testInput}
-              onChange={(e) => setTestInput(e.target.value)}
-              className="border rounded-lg px-3 py-2 w-full text-sm mb-3"
-              placeholder="输入测试问题..."
-            />
-            <div className="flex gap-2 mb-3">
-              <button
-                onClick={() => setTestInput('港口有多少条数据？')}
-                className="px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs"
-              >
-                统计示例
-              </button>
-              <button
-                onClick={() => setTestInput('合同付款条款是什么？')}
-                className="px-2 py-1 rounded bg-green-50 text-green-600 text-xs"
-              >
-                文档示例
-              </button>
-            </div>
-            <button
-              onClick={runWorkflow}
-              disabled={isRunning}
-              className="w-full py-2 rounded-lg bg-blue-500 text-white text-sm mb-3 disabled:opacity-50"
-            >
-              {isRunning ? '执行中...' : '执行'}
-            </button>
+            )}
+            
+            {/* 结果输出 */}
             {testOutput && (
-              <div className="bg-gray-50 rounded-lg p-3 text-sm whitespace-pre-wrap max-h-48 overflow-auto">
-                {testOutput}
+              <div className="p-4 border-t flex-1 overflow-y-auto">
+                <div className="prose prose-sm max-w-none">
+                  <pre className="whitespace-pre-wrap bg-gray-100 p-3 rounded text-sm">
+                    {testOutput}
+                  </pre>
+                </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* 节点编辑面板 */}
-      {selectedNode && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white rounded-t-2xl shadow-lg max-h-[60vh] overflow-auto">
-          <div className="p-4 border-b sticky top-0 bg-white flex justify-between items-center">
-            <div className="font-bold">
-              {NODE_TYPES[selectedNode.data.type as keyof typeof NODE_TYPES]?.icon}{' '}
-              {NODE_TYPES[selectedNode.data.type as keyof typeof NODE_TYPES]?.label}
-            </div>
-            <button onClick={() => setSelectedNode(null)}>✕</button>
-          </div>
-          <div className="p-4 space-y-3">
-            {NODE_TYPES[selectedNode.data.type as keyof typeof NODE_TYPES]?.fields.map((field) => (
-              <div key={field.key}>
-                <label className="text-xs text-gray-500 block mb-1">{field.label}</label>
-                {field.type === 'text' && (
-                  <input
-                    type="text"
-                    value={selectedNode.data[field.key] || ''}
-                    onChange={(e) => updateNodeData(field.key, e.target.value)}
-                    className="border rounded-lg px-3 py-2 w-full text-sm"
-                  />
-                )}
-                {field.type === 'number' && (
-                  <input
-                    type="number"
-                    step={field.key === 'temperature' || field.key === 'threshold' || field.key === 'minScore' ? '0.1' : '1'}
-                    value={selectedNode.data[field.key] ?? field.default}
-                    onChange={(e) => updateNodeData(field.key, field.key === 'temperature' || field.key === 'threshold' || field.key === 'minScore' ? parseFloat(e.target.value) : parseInt(e.target.value))}
-                    className="border rounded-lg px-3 py-2 w-full text-sm"
-                  />
-                )}
-                {field.type === 'textarea' && (
-                  <textarea
-                    value={selectedNode.data[field.key] || ''}
-                    onChange={(e) => updateNodeData(field.key, e.target.value)}
-                    className="border rounded-lg px-3 py-2 w-full text-sm h-24"
-                  />
-                )}
-                {field.type === 'select' && (
-                  <select
-                    value={selectedNode.data[field.key] || field.default}
-                    onChange={(e) => updateNodeData(field.key, e.target.value)}
-                    className="border rounded-lg px-3 py-2 w-full text-sm"
-                  >
-                    {'options' in field && field.options?.map((opt: string) => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
-                )}
-                {field.type === 'switch' && (
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => updateNodeData(field.key, !selectedNode.data[field.key])}
-                      className={`w-10 h-6 rounded-full transition ${selectedNode.data[field.key] ? 'bg-blue-500' : 'bg-gray-300'}`}
-                    >
-                      <div className={`w-4 h-4 bg-white rounded-full transition ${selectedNode.data[field.key] ? 'translate-x-5' : 'translate-x-1'}`} />
-                    </button>
-                    <span className="text-sm">{selectedNode.data[field.key] ? '开启' : '关闭'}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-            <button onClick={deleteNode} className="w-full py-2 rounded-lg bg-red-50 text-red-600 text-sm mt-4">
-              删除节点
-            </button>
           </div>
         </div>
       )}
