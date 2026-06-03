@@ -513,10 +513,12 @@ export default function SeaChartPage() {
                   <MapController center={mapCenter} zoom={mapZoom} />
                   <MapClickHandler onMapClick={handleMapClick} />
                   
-                  {/* 基础地图 - OpenStreetMap */}
+                  {/* 基础地图 - 高德地图（国内稳定） */}
                   <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; 高德地图'
+                    url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+                    subdomains={['1', '2', '3', '4']}
+                    maxZoom={18}
                   />
                   
                   {/* 海图叠加 - OpenSeaMap */}
