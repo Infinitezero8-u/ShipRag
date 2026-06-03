@@ -60,6 +60,7 @@ interface Port {
   lat: number;
   lng: number;
   country?: string;
+  ctryCode?: string; // 国家代码
 }
 
 interface TrackPoint {
@@ -88,6 +89,7 @@ interface SeaMapProps {
   showTrack: boolean;
   showTrajectories: boolean;
   allPorts: Port[];
+  portFilterCountry?: string; // 港口国家筛选
   mockTrack: TrackPoint[];
   customTrack: TrackPoint[];
   trajectories: Trajectory[];
@@ -141,12 +143,28 @@ export default function SeaMap({
   showTrack,
   showTrajectories,
   allPorts,
+  portFilterCountry,
   mockTrack,
   customTrack,
   trajectories,
   selectedTrajectory,
   onMapClick,
 }: SeaMapProps) {
+  // 根据国家筛选港口
+  const filteredPorts = allPorts.filter(port => {
+    if (!portFilterCountry) return true;
+    const ctryCode = port.ctryCode || '';
+    const country = port.country || '';
+    
+    if (portFilterCountry === 'CN') {
+      return ctryCode === 'CN' || ctryCode === 'CHN' || country === '中国';
+    } else if (portFilterCountry === 'US') {
+      return ctryCode === 'US' || ctryCode === 'USA' || country === '美国';
+    } else if (portFilterCountry === 'OTHER') {
+      return !['CN', 'CHN', 'US', 'USA'].includes(ctryCode) && !['中国', '美国'].includes(country);
+    }
+    return true;
+  });
   return (
     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
       <MapContainer
@@ -176,7 +194,7 @@ export default function SeaMap({
         )}
 
         {/* 港口标记 */}
-        {showPorts && allPorts.map((port) => {
+        {showPorts && filteredPorts.map((port) => {
           const countryCode = (port as any).ctryCode || (port as any).countryCode || '';
           return (
             <Marker key={port.id} position={[port.lat, port.lng]} icon={getPortIcon(countryCode)}>

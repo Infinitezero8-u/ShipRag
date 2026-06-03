@@ -109,6 +109,7 @@ export default function SeaChartPage() {
   const [mapZoom, setMapZoom] = useState(3);
   const [showSeaMap, setShowSeaMap] = useState(true);
   const [showPorts, setShowPorts] = useState(true);
+  const [portFilterCountry, setPortFilterCountry] = useState<string>(''); // 港口国家筛选
   const [showTrack, setShowTrack] = useState(true);
   const [customTrack, setCustomTrack] = useState<TrackPoint[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -475,6 +476,7 @@ export default function SeaChartPage() {
               showTrack={showTrack}
               showTrajectories={showTrajectories}
               allPorts={allPorts}
+              portFilterCountry={portFilterCountry}
               mockTrack={mockTrack}
               customTrack={customTrack}
               trajectories={trajectories}
@@ -504,15 +506,44 @@ export default function SeaChartPage() {
                       />
                       <span className="text-sm text-gray-700">海图叠加 (OpenSeaMap)</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={showPorts}
-                        onChange={(e) => setShowPorts(e.target.checked)}
-                        className="w-4 h-4 rounded"
-                      />
-                      <span className="text-sm text-gray-700">港口标记 ({allPorts.length}个)</span>
-                    </label>
+                    <div className="border-t pt-2 mt-2">
+                      <label className="text-xs text-gray-500 font-medium">港口筛选</label>
+                      <div className="mt-1 space-y-1 text-xs">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!portFilterCountry || portFilterCountry === 'CN'}
+                            onChange={() => setPortFilterCountry(portFilterCountry === 'CN' ? '' : 'CN')}
+                            className="w-3 h-3 rounded"
+                          />
+                          <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                          <span className="text-gray-700">中国 ({allPorts.filter(p => p.ctryCode === 'CN' || p.ctryCode === 'CHN' || p.country === '中国').length}个)</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!portFilterCountry || portFilterCountry === 'US'}
+                            onChange={() => setPortFilterCountry(portFilterCountry === 'US' ? '' : 'US')}
+                            className="w-3 h-3 rounded"
+                          />
+                          <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                          <span className="text-gray-700">美国 ({allPorts.filter(p => p.ctryCode === 'US' || p.ctryCode === 'USA' || p.country === '美国').length}个)</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!portFilterCountry || portFilterCountry === 'OTHER'}
+                            onChange={() => setPortFilterCountry(portFilterCountry === 'OTHER' ? '' : 'OTHER')}
+                            className="w-3 h-3 rounded"
+                          />
+                          <span className="w-2 h-2 rounded-full bg-gray-500"></span>
+                          <span className="text-gray-700">其他 ({allPorts.filter(p => 
+                            !['CN', 'CHN', 'US', 'USA'].includes(p.ctryCode || '') && 
+                            !['中国', '美国'].includes(p.country)
+                          ).length}个)</span>
+                        </label>
+                      </div>
+                    </div>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
