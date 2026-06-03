@@ -235,6 +235,24 @@ export default function RagPage() {
       // 停止向量化
       autoEmbeddingRef.current = false;
       setAutoEmbedding(false);
+      
+      // 询问是否删除待处理条目
+      if (embedStatus && embedStatus.pending > 0) {
+        if (confirm(`是否删除剩余 ${embedStatus.pending} 条待向量化的条目？`)) {
+          try {
+            const res = await fetch('/api/embed', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ clearAll: true }),
+            });
+            const data = await res.json();
+            alert(`已删除 ${data.deleted} 条待处理条目`);
+            fetchEmbedStatus();
+          } catch (error) {
+            console.error('删除待处理条目失败:', error);
+          }
+        }
+      }
       return;
     }
 
