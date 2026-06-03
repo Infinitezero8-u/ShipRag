@@ -362,16 +362,21 @@ export default function WorkflowPage() {
           body: JSON.stringify({ query: testInput }),
         });
         const sqlData = await sqlRes.json();
-        setTestOutput(`路由: SQL 分支\n\nSQL: ${sqlData.sql || '生成失败'}\n\n执行中...`);
         
-        if (sqlData.sql) {
-          const result = await fetch('/api/rag/sql-polish', {
+        if (sqlData.error) {
+          setTestOutput(`路由: SQL 分支\n\nSQL: ${sqlData.sql || '生成失败'}\n\n错误: ${sqlData.error}`);
+        } else if (sqlData.result && sqlData.result.length > 0) {
+          setTestOutput(`路由: SQL 分支\n\nSQL: ${sqlData.sql}\n\n数据: ${JSON.stringify(sqlData.result)}\n\n润色中...`);
+          
+          const polishRes = await fetch('/api/rag/sql-polish', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: testInput, data: sqlData.result }),
           });
-          const polishData = await result.json();
-          setTestOutput(`路由: SQL 分支\n\n答案: ${polishData.answer || '润色失败'}`);
+          const polishData = await polishRes.json();
+          setTestOutput(`路由: SQL 分支\n\n答案: ${polishData.answer || '润色失败'}\n\n---\nSQL: ${sqlData.sql}`);
+        } else {
+          setTestOutput(`路由: SQL 分支\n\nSQL: ${sqlData.sql}\n\n结果: 无数据`);
         }
       } else {
         // RAG 分支

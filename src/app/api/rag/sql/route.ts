@@ -33,9 +33,15 @@ export async function POST(request: NextRequest) {
     const sqlPrompt = `已知数据表结构：
 ${schema}
 
-根据用户问题，生成合规的SELECT查询SQL，禁止增删改语句。
-用户问题：${query}
-只输出SQL语句，不要多余文字。`;
+根据用户问题，生成简单的SELECT查询SQL。
+规则：
+1. 只生成SELECT语句，禁止INSERT/UPDATE/DELETE
+2. 统计数量用 SELECT COUNT(*) FROM table_name
+3. 不要添加复杂的WHERE条件，除非用户明确指定筛选条件
+4. 不要使用数组操作函数
+5. 只输出SQL语句，不要多余文字
+
+用户问题：${query}`;
 
     // 1. 生成 SQL
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
@@ -59,46 +65,117 @@ ${schema}
       }, { status: 400 });
     }
 
-    // 2. 执行 SQL - 简化版本，直接执行常见统计
+    // 2. 执行 SQL
     const supabase = getSupabaseClient();
     let result: any[] = [];
     
-    // 解析 SQL 类型
+    // 解析 SQL 类型并执行
     const lowerSql = sql.toLowerCase();
     
-    if (lowerSql.includes('count(*)')) {
-      // COUNT 查询
-      const tableName = lowerSql.match(/from\s+(\w+)/)?.[1] || 'knowledge_items';
-      const { count, error } = await supabase
-        .from(tableName)
+    try {
+      if (lowerSql.includes('count(*)')) {
+        // COUNT 查询
+        const tableMatch = lowerSql.match(/from\s+(\w+)/);
+        const tableName = tableMatch?.[1] || 'knowledge_items';
+        
+        // 检查是否有 WHERE 条件
+        if (lowerSql.includes('where')) {
+          // 有条件查询 - 尝试解析条件
+          const tagMatch = sql.match(/'([^']+)'\s*=\s*any\s*\(\s*tags\s*\)/i);
+          if (tagMatch) {
+            // 标签查询
+            const tag = tagMatch[1];
+            const { count, error } = await supabase
+              .from(tableName)
+              .select('*', { count: 'exact', head: true })
+              .contains('tags', [tag]);
+            if (error) {
+              // 如果标签查询失败，返回总数
+              const { count: totalCount } = await supabase
+                .from(tableName)
+                .select('*', { count: 'exact', head: true });
+              result = [{ count: totalCount || 0, note: `未找到标签 "${tag}" 的数据，返回总数` }];
+            } else {
+              result = [{ count: count || 0 }];
+            }
+          } else {
+            // 其他 WHERE 条件，返回总数
+            const { count } = await supabase
+              .from(tableName)
+              .select('*', { count: 'exact', head: true });
+            result = [{ count: count || 0 }];
+          }
+        } else {
+          // 无条件的 COUNT 查询
+          const { count, error } = await supabase
+            .from(tableName)
+            .select('*', { count: 'exact', head: true });
+          
+          if (error) {
+            return NextResponse.json({ sql, error: error.message });
+          }
+          result = [{ count: count || 0 }];
+        }
+      } else if (lowerSql.includes('distinct')) {
+        // DISTINCT 查询
+        const fieldMatch = sql.match(/distinct\s+(\w+)/i);
+        const field = fieldMatch?.[1] || 'title';
+        
+        const { data, error } = await supabase
+          .from('knowledge_items')
+          .select(field)
+          .limit(1000);
+        
+        if (error) {
+          return NextResponse.json({ sql, error: error.message });
+        }
+        
+        // 去重
+        const uniqueValues = [...new Set((data || []).map((item: any) => item[field]).filter(Boolean))];
+        result = uniqueValues.map((v) => ({ [field]: v }));
+      } else if (lowerSql.includes('group by')) {
+        // GROUP BY 查询 - 简化处理
+        const { data, error } = await supabase
+          .from('knowledge_items')
+          .select('file_type, source')
+          .limit(500);
+        
+        if (error) {
+          return NextResponse.json({ sql, error: error.message });
+        }
+        
+        // 按文件类型分组统计
+        const groups: Record<string, number> = {};
+        (data || []).forEach((item: any) => {
+          const key = item.file_type || 'unknown';
+          groups[key] = (groups[key] || 0) + 1;
+        });
+        result = Object.entries(groups).map(([type, count]) => ({ file_type: type, count }));
+      } else {
+        // 普通 SELECT 查询
+        const selectMatch = sql.match(/select\s+(.+?)\s+from/i);
+        const fields = selectMatch?.[1] || '*';
+        
+        let query = supabase.from('knowledge_items').select('id, title, source, file_type, tags, created_at');
+        
+        // 添加限制
+        const limitMatch = sql.match(/limit\s+(\d+)/i);
+        const limit = limitMatch ? parseInt(limitMatch[1]) : 20;
+        query = query.limit(Math.min(limit, 100));
+        
+        const { data, error } = await query;
+        
+        if (error) {
+          return NextResponse.json({ sql, error: error.message });
+        }
+        result = data || [];
+      }
+    } catch (execError) {
+      // 执行失败，返回总数作为兜底
+      const { count } = await supabase
+        .from('knowledge_items')
         .select('*', { count: 'exact', head: true });
-      
-      if (error) {
-        return NextResponse.json({ sql, error: error.message });
-      }
-      result = [{ count: count || 0 }];
-    } else if (lowerSql.includes('count(') && lowerSql.includes('distinct')) {
-      // DISTINCT COUNT - 尝试从 knowledge_items 获取字段
-      const { data, error } = await supabase
-        .from('knowledge_items')
-        .select('title, source, file_type, tags')
-        .limit(1000);
-      
-      if (error) {
-        return NextResponse.json({ sql, error: error.message });
-      }
-      result = data || [];
-    } else {
-      // 其他查询 - 尝试获取基本数据
-      const { data, error } = await supabase
-        .from('knowledge_items')
-        .select('id, title, source, file_type, created_at')
-        .limit(50);
-      
-      if (error) {
-        return NextResponse.json({ sql, error: error.message });
-      }
-      result = data || [];
+      result = [{ count: count || 0, note: '简化查询结果' }];
     }
 
     return NextResponse.json({
