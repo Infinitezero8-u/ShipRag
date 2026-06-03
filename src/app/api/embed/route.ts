@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { EmbeddingClient, LLMClient, Config, HeaderUtils, S3Storage } from 'coze-coding-dev-sdk';
+import path from 'path';
 
 // 初始化对象存储
 const storage = new S3Storage({
@@ -93,21 +94,17 @@ export async function POST(request: NextRequest) {
         }
         
         try {
-          // 1. 使用 LLM 生成图片描述
+          // 1. 使用 MarkItDown 生成图片描述（OCR）
           let imageDescription = item.content || '';
           if (!imageDescription || imageDescription.trim().length === 0) {
-            const llmClient = new LLMClient(llmConfig, customHeaders);
-            const messages = [
-              {
-                role: 'user' as const,
-                content: [
-                  { type: 'text' as const, text: '请用中文简要描述这张图片的内容，不超过100字。' },
-                  { type: 'image_url' as const, image_url: { url: imageUrl } }
-                ]
-              }
-            ];
-            const descResponse = await llmClient.invoke(messages, { model: 'doubao-seed-2-0-lite-260215' });
-            imageDescription = descResponse.content || '图片内容';
+            const { execSync } = await import('child_process');
+            const scriptPath = path.join(process.cwd(), 'scripts', 'markitdown_converter.py');
+            const result = execSync(`python3 "${scriptPath}" --url "${imageUrl}"`, {
+              encoding: 'utf-8',
+              timeout: 30000,
+            });
+            const parsed = JSON.parse(result);
+            imageDescription = parsed.content || '图片内容';
             // 更新描述到数据库
             await supabase.from('knowledge_items').update({ content: imageDescription }).eq('id', item.id);
           }
