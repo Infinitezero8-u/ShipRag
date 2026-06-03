@@ -396,6 +396,7 @@ export async function PATCH(request: NextRequest) {
     
     if (action === 'reembed') {
       // 重新向量化
+      const { keepOld } = body;
       let targetIds = ids;
       
       if (all) {
@@ -413,19 +414,93 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json({ success: true, processed: 0, message: '没有需要重新向量化的条目' });
       }
       
-      // 清除向量，让它们重新被向量化
-      const { error: clearError } = await supabase
-        .from('knowledge_items')
-        .update({ embedding: null })
-        .in('id', targetIds);
-      
-      if (clearError) throw clearError;
-      
-      return NextResponse.json({
-        success: true,
-        processed: targetIds.length,
-        message: `已清除 ${targetIds.length} 条条目的向量，请执行向量化`
-      });
+      if (keepOld) {
+        // 保留原结果：直接执行向量化覆盖
+        const embeddingClient = new EmbeddingClient();
+        let processed = 0;
+        let failed = 0;
+        const errors: string[] = [];
+        
+        for (const itemId of targetIds) {
+          try {
+            // 获取条目内容
+            const { data: item, error: queryError } = await supabase
+              .from('knowledge_items')
+              .select('id, content, modality, metadata')
+              .eq('id', itemId)
+              .maybeSingle();
+            
+            if (queryError || !item) {
+              failed++;
+              continue;
+            }
+            
+            // 处理图片
+            if (item.modality === 'image') {
+              const imageUrl = (item.metadata as Record<string, unknown>)?.imageUrl as string | undefined;
+              if (imageUrl) {
+                const embedding = await embeddingClient.embedImage(imageUrl);
+                await supabase.rpc('update_embedding', {
+                  item_id: item.id,
+                  embedding_vector: embedding,
+                });
+                processed++;
+                continue;
+              }
+            }
+            
+            // 文本向量化
+            if (item.content && item.content.trim().length > 0) {
+              const maxContentLength = 8000;
+              const truncatedContent = item.content.length > maxContentLength 
+                ? item.content.substring(0, maxContentLength) + '...'
+                : item.content;
+              
+              const embedding = await embeddingClient.embedText(truncatedContent);
+              
+              const { error: updateError } = await supabase.rpc('update_embedding', {
+                item_id: item.id,
+                embedding_vector: embedding,
+              });
+              
+              if (updateError) {
+                failed++;
+                errors.push(`更新 ${itemId} 失败: ${updateError.message}`);
+              } else {
+                processed++;
+              }
+            } else {
+              failed++;
+            }
+          } catch (e) {
+            failed++;
+            errors.push(`处理 ${itemId} 失败: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        
+        return NextResponse.json({
+          success: true,
+          processed,
+          failed,
+          total: targetIds.length,
+          message: `已重新向量化 ${processed} 个条目`,
+          errors: errors.length > 0 ? errors : undefined
+        });
+      } else {
+        // 不保留原结果：清除向量，让它们重新被向量化
+        const { error: clearError } = await supabase
+          .from('knowledge_items')
+          .update({ embedding: null })
+          .in('id', targetIds);
+        
+        if (clearError) throw clearError;
+        
+        return NextResponse.json({
+          success: true,
+          processed: targetIds.length,
+          message: `已清除 ${targetIds.length} 条条目的向量，请执行向量化`
+        });
+      }
     }
     
     if (action === 'retag') {

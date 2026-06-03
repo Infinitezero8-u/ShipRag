@@ -319,15 +319,35 @@ export default function ManagePage() {
 
   // 重新向量化选中的条目
   const reEmbedSelected = async () => {
-    if (!confirm(`确定要重新向量化 ${selectedItems.size} 个条目吗？`)) return;
+    const selectedCount = selectedItems.size;
+    
+    // 询问是否保留原向量化结果
+    const keepOld = confirm(
+      `即将重新向量化 ${selectedCount} 个条目。\n\n` +
+      `选择"确定"：保留原向量化结果，生成新的向量覆盖\n` +
+      `选择"取消"：清除原向量后重新生成（条目会变为待处理状态）\n\n` +
+      `是否保留原向量化结果？`
+    );
+    
     try {
       const res = await fetch('/api/embed', {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: Array.from(selectedItems), action: 're-embed' })
+        body: JSON.stringify({ 
+          action: 'reembed', 
+          ids: Array.from(selectedItems),
+          keepOld 
+        })
       });
       const data = await res.json();
-      alert(`向量化完成: 处理 ${data.processed} 条`);
+      
+      if (keepOld) {
+        // 保留原结果：直接执行向量化
+        alert(`已将 ${data.processced || selectedCount} 个条目标记为待重新向量化，请点击"执行向量化"按钮处理。`);
+      } else {
+        alert(`已清除 ${data.processed || selectedCount} 个条目的向量，请点击"执行向量化"按钮重新生成。`);
+      }
+      
       fetchItems();
     } catch (err) {
       console.error('重新向量化失败:', err);
@@ -336,15 +356,32 @@ export default function ManagePage() {
 
   // 重新向量化全部
   const reEmbedAll = async () => {
-    if (!confirm('确定要重新向量化全部条目吗？这可能需要较长时间。')) return;
+    // 询问是否保留原向量化结果
+    const keepOld = confirm(
+      `即将重新向量化全部条目。\n\n` +
+      `选择"确定"：保留原向量化结果，生成新的向量覆盖\n` +
+      `选择"取消"：清除原向量后重新生成（条目会变为待处理状态）\n\n` +
+      `是否保留原向量化结果？`
+    );
+    
     try {
       const res = await fetch('/api/embed', {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 're-embed-all' })
+        body: JSON.stringify({ 
+          action: 'reembed', 
+          all: true,
+          keepOld 
+        })
       });
       const data = await res.json();
-      alert(`向量化完成: 处理 ${data.processed} 条`);
+      
+      if (keepOld) {
+        alert(`已将 ${data.processed || 0} 个条目标记为待重新向量化，请点击"执行向量化"按钮处理。`);
+      } else {
+        alert(`已清除 ${data.processed || 0} 个条目的向量，请点击"执行向量化"按钮重新生成。`);
+      }
+      
       fetchItems();
     } catch (err) {
       console.error('重新向量化失败:', err);
