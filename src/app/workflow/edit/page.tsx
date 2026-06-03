@@ -224,7 +224,12 @@ const nodeTypes = { custom: CustomNode };
 // ==================== 默认节点 ====================
 const createDefaultNodes = (): Node[] => [
   { id: 'input', type: 'custom', position: { x: 50, y: 150 }, data: { type: 'chatInput' } },
-  { id: 'output', type: 'custom', position: { x: 700, y: 150 }, data: { type: 'mergeOutput' } },
+  { id: 'output', type: 'custom', position: { x: 400, y: 150 }, data: { type: 'mergeOutput' } },
+];
+
+// 默认连线
+const createDefaultEdges = (): Edge[] => [
+  { id: 'e-input-output', source: 'input', sourceHandle: 'source', target: 'output', targetHandle: 'target', style: { stroke: '#94a3b8' }, type: 'smoothstep' },
 ];
 
 // ==================== 节点面板 ====================
@@ -235,14 +240,14 @@ const NODE_CATEGORIES = {
   'SQL 分支': ['sqlPrompt', 'dbExecute', 'resultPolish'],
 };
 
-function NodePalette({ onDragStart }: { onDragStart: (type: string) => void }) {
+function NodePalette({ onDragStart, compact = false }: { onDragStart: (type: string) => void; compact?: boolean }) {
   return (
-    <div className="bg-white border-r w-48 p-2 overflow-y-auto">
-      <h4 className="text-xs font-medium text-gray-500 mb-2">拖拽节点到画布</h4>
+    <div className={`bg-white border-r overflow-y-auto ${compact ? 'w-full p-2' : 'w-36 p-2 hidden sm:block'}`}>
+      <h4 className="text-[10px] font-medium text-gray-500 mb-1">拖拽或点击添加</h4>
       {Object.entries(NODE_CATEGORIES).map(([cat, types]) => (
-        <div key={cat} className="mb-3">
-          <p className="text-xs text-gray-400 mb-1">{cat}</p>
-          <div className="space-y-1">
+        <div key={cat} className="mb-2">
+          <p className="text-[10px] text-gray-400 mb-1">{cat}</p>
+          <div className="space-y-0.5">
             {types.map((type) => {
               const config = NODE_TYPE_CONFIG[type];
               if (!config) return null;
@@ -255,7 +260,8 @@ function NodePalette({ onDragStart }: { onDragStart: (type: string) => void }) {
                     e.dataTransfer.effectAllowed = 'move';
                     onDragStart(type);
                   }}
-                  className="flex items-center gap-1 px-2 py-1 rounded cursor-grab hover:bg-gray-100 text-xs"
+                  onClick={() => onDragStart(type)} // 点击也可添加
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer hover:bg-gray-100 text-[10px]"
                   style={{ backgroundColor: config.color + '10' }}
                 >
                   <span>{config.icon}</span>
@@ -386,12 +392,13 @@ function NodeEditPanel({
 // ==================== 主组件 ====================
 function WorkflowEditor() {
   const [nodes, setNodes, onNodesChange] = useNodesState(createDefaultNodes());
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(createDefaultEdges());
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflowName, setWorkflowName] = useState('新建工作流');
   const [saving, setSaving] = useState(false);
   const [dragType, setDragType] = useState<string | null>(null);
+  const [showNodePanel, setShowNodePanel] = useState(false); // 移动端节点面板展开状态
   
   // 从 URL 加载工作流
   useEffect(() => {
@@ -545,39 +552,71 @@ function WorkflowEditor() {
     setSaving(false);
   };
   
+  // 添加节点（支持点击添加）
+  const handleAddNode = (type: string) => {
+    const config = NODE_TYPE_CONFIG[type];
+    if (!config) return;
+    
+    const newNode: Node = {
+      id: `${type}-${Date.now()}`,
+      type: 'custom',
+      position: { x: 200 + Math.random() * 100, y: 100 + Math.random() * 100 },
+      data: { type, ...Object.fromEntries(config.fields.map(f => [f.key, f.default])) }
+    };
+    setNodes([...nodes, newNode]);
+    setShowNodePanel(false); // 添加后关闭面板
+  };
+  
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* 顶部导航 */}
-      <div className="h-11 border-b bg-white flex items-center justify-between px-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <a href="/workflow/manage" className="text-blue-600 hover:underline text-sm">← 管理</a>
+      <div className="h-10 border-b bg-white flex items-center justify-between px-2 shrink-0">
+        <div className="flex items-center gap-2">
+          <a href="/workflow/manage" className="text-blue-600 text-xs">← 管理</a>
           <input
             type="text"
             value={workflowName}
             onChange={(e) => setWorkflowName(e.target.value)}
-            className="px-2 py-1 border rounded text-sm w-40"
+            className="px-2 py-0.5 border rounded text-xs w-28"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {/* 移动端添加节点按钮 */}
           <button
-            onClick={() => { setNodes(createDefaultNodes()); setEdges([]); }}
-            className="px-2 py-1 bg-gray-200 rounded text-xs"
+            onClick={() => setShowNodePanel(!showNodePanel)}
+            className="sm:hidden px-2 py-1 bg-green-500 text-white rounded text-[10px]"
+          >
+            + 节点
+          </button>
+          <button
+            onClick={() => { setNodes(createDefaultNodes()); setEdges(createDefaultEdges()); setSelectedNode(null); }}
+            className="px-2 py-1 bg-gray-200 rounded text-[10px]"
           >
             清空
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-3 py-1 bg-blue-500 text-white rounded text-xs disabled:opacity-50"
+            className="px-2 py-1 bg-blue-500 text-white rounded text-[10px] disabled:opacity-50"
           >
-            {saving ? '保存中...' : '保存'}
+            {saving ? '...' : '保存'}
           </button>
         </div>
       </div>
       
-      <div className="flex-1 flex">
-        {/* 左侧节点面板 */}
-        <NodePalette onDragStart={setDragType} />
+      <div className="flex-1 flex relative">
+        {/* 左侧节点面板 - 桌面端 */}
+        <NodePalette onDragStart={handleAddNode} />
+        
+        {/* 移动端节点面板抽屉 */}
+        {showNodePanel && (
+          <div className="sm:hidden fixed inset-0 z-50">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setShowNodePanel(false)} />
+            <div className="absolute left-0 top-10 bottom-0 w-48 bg-white shadow-lg overflow-y-auto">
+              <NodePalette onDragStart={handleAddNode} compact />
+            </div>
+          </div>
+        )}
         
         {/* 画布 */}
         <div className="flex-1">
@@ -594,12 +633,12 @@ function WorkflowEditor() {
             fitView
           >
             <Background />
-            <Controls />
+            <Controls className="sm:block hidden" />
           </ReactFlow>
         </div>
         
-        {/* 右侧编辑面板 */}
-        <div className="w-56 border-l bg-white overflow-y-auto hidden sm:block">
+        {/* 右侧编辑面板 - 桌面端 */}
+        <div className="w-48 border-l bg-white overflow-y-auto hidden sm:block">
           {selectedNode ? (
             <NodeEditPanel
               selectedNode={selectedNode}
@@ -608,9 +647,9 @@ function WorkflowEditor() {
               onClose={() => setSelectedNode(null)}
             />
           ) : (
-            <div className="p-3 text-gray-400 text-xs">
+            <div className="p-2 text-gray-400 text-[10px]">
               <p>点击节点编辑参数</p>
-              <p className="mt-2">💡 用户输入和输出汇总节点不可删除</p>
+              <p className="mt-1">💡 用户输入和输出节点不可删除</p>
             </div>
           )}
         </div>
@@ -618,7 +657,7 @@ function WorkflowEditor() {
       
       {/* 移动端底部编辑面板 */}
       {selectedNode && (
-        <div className="sm:hidden fixed inset-x-0 bottom-0 bg-white border-t rounded-t-xl shadow-lg z-40 max-h-[50vh] overflow-y-auto">
+        <div className="sm:hidden fixed inset-x-0 bottom-0 bg-white border-t rounded-t-lg shadow-lg z-40 max-h-[50vh] overflow-y-auto">
           <div className="sticky top-0 bg-white px-3 py-2 flex justify-center border-b">
             <div className="w-10 h-1 bg-gray-300 rounded-full" />
           </div>
