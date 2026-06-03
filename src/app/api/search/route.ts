@@ -153,7 +153,7 @@ async function fallbackSearch(
   // 查询所有已向量化的条目
   let query = supabase
     .from('knowledge_items')
-    .select('id, modality, title, content, source, metadata, embedding')
+    .select('id, modality, title, content, source, metadata, embedding, tags')
     .not('embedding', 'is', null);
 
   if (modality) {
@@ -221,7 +221,7 @@ async function exactSearch(
   // 构建搜索查询
   let searchQuery = supabase
     .from('knowledge_items')
-    .select('id, modality, title, content, source, metadata, created_at', { count: 'exact' })
+    .select('id, modality, title, content, source, metadata, created_at, tags', { count: 'exact' })
     .not('embedding', 'is', null); // 只搜索已向量化的条目
   
   // 添加关键词搜索条件（搜索 title 和 content）
@@ -317,6 +317,34 @@ function cosineSimilarity(a: number[], b: number[]): number {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+    const action = searchParams.get('action');
+    
+    // 获取标签列表
+    if (action === 'tags') {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('knowledge_items')
+        .select('tags');
+      
+      if (error) {
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+      
+      // 统计标签使用次数
+      const tagCount: Record<string, number> = {};
+      for (const item of data || []) {
+        for (const tag of item.tags || []) {
+          tagCount[tag] = (tagCount[tag] || 0) + 1;
+        }
+      }
+      
+      const tags = Object.entries(tagCount)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+      
+      return NextResponse.json({ success: true, tags });
+    }
+    
     const modality = searchParams.get('modality');
     const type = searchParams.get('type') || 'all'; // all, embedded, pending
     const page = parseInt(searchParams.get('page') || '1', 10);
