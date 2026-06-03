@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { EmbeddingClient, HeaderUtils } from 'coze-coding-dev-sdk';
+import { EmbeddingClient, HeaderUtils, S3Storage } from 'coze-coding-dev-sdk';
+
+// 初始化对象存储
+const storage = new S3Storage({
+  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
+  accessKey: "",
+  secretKey: "",
+  bucketName: process.env.COZE_BUCKET_NAME,
+  region: "cn-beijing",
+});
 
 // 内容哈希缓存，用于判重
 const contentHashCache = new Set<string>();
@@ -47,7 +56,7 @@ export async function POST(request: NextRequest) {
     // 查询 embedding 为 null 的条目
     const { data: items, error: queryError } = await supabase
       .from('knowledge_items')
-      .select('id, modality, content, title')
+      .select('id, modality, content, title, metadata')
       .is('embedding', null)
       .limit(batchSize);
 
@@ -69,8 +78,37 @@ export async function POST(request: NextRequest) {
     const errors: string[] = [];
 
     for (const item of items) {
-      // 跳过图片类型（需要单独处理）
+      // 处理图片类型
       if (item.modality === 'image') {
+        // 从 metadata 获取图片 URL
+        const imageUrl = (item.metadata as Record<string, unknown>)?.imageUrl as string | undefined;
+        
+        if (!imageUrl) {
+          failed++;
+          errors.push(`图片 ${item.id} 没有有效的 URL`);
+          continue;
+        }
+        
+        try {
+          // 使用图片嵌入 API
+          const embedding = await embeddingClient.embedImage(imageUrl);
+          
+          // 更新向量
+          const { error: updateError } = await supabase.rpc('update_embedding', {
+            item_id: item.id,
+            embedding_vector: embedding,
+          });
+          
+          if (updateError) {
+            failed++;
+            errors.push(`图片 ${item.id} 向量化失败: ${updateError.message}`);
+          } else {
+            processed++;
+          }
+        } catch (imgError) {
+          failed++;
+          errors.push(`图片 ${item.id} 嵌入失败: ${imgError instanceof Error ? imgError.message : String(imgError)}`);
+        }
         continue;
       }
 

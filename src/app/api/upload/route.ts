@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { parseFile, getFileType } from '@/lib/parsers';
-import { HeaderUtils } from 'coze-coding-dev-sdk';
+import { HeaderUtils, S3Storage } from 'coze-coding-dev-sdk';
+
+// 初始化对象存储
+const storage = new S3Storage({
+  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
+  accessKey: "",
+  secretKey: "",
+  bucketName: process.env.COZE_BUCKET_NAME,
+  region: "cn-beijing",
+});
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,6 +31,27 @@ export async function POST(request: NextRequest) {
     // 读取文件内容
     const buffer = Buffer.from(await file.arrayBuffer());
     
+    // 如果是图片，上传到对象存储
+    let imageUrl: string | undefined;
+    let storageKey: string | undefined;
+    if (fileType === 'image') {
+      try {
+        storageKey = await storage.uploadFile({
+          fileContent: buffer,
+          fileName: `images/${filename}`,
+          contentType: file.type || 'image/jpeg',
+        });
+        // 生成预签名 URL（有效期 7 天）
+        imageUrl = await storage.generatePresignedUrl({
+          key: storageKey,
+          expireTime: 604800, // 7 天
+        });
+      } catch (uploadError) {
+        console.error('图片上传失败:', uploadError);
+        // 继续处理，但记录错误
+      }
+    }
+    
     // 解析文件
     const parseResult = await parseFile(buffer, filename, file.type);
     
@@ -40,6 +70,7 @@ export async function POST(request: NextRequest) {
         filename,
         file_type: fileType,
         file_size: String(file.size),
+        storage_url: storageKey || null,
         status: 'processing',
         item_count: String(parseResult.items.length),
       })
@@ -56,7 +87,11 @@ export async function POST(request: NextRequest) {
       title: item.title,
       content: item.content,
       source: filename,
-      metadata: item.metadata || {},
+      metadata: {
+        ...item.metadata,
+        ...(imageUrl && { imageUrl }),
+        ...(storageKey && { storageKey }),
+      },
     }));
 
     if (itemsToInsert.length > 0) {
