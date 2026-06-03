@@ -14,13 +14,29 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-// 港口图标 - 黑色小圆点
-const portIcon = new L.DivIcon({
-  className: 'custom-port-marker',
-  html: '<div style="width:8px;height:8px;background:#000;border-radius:50%;border:1px solid #333;"></div>',
-  iconSize: [8, 8],
-  iconAnchor: [4, 4],
-});
+// 港口图标 - 根据国家代码返回不同颜色
+const getPortIcon = (countryCode?: string) => {
+  let color = '#000'; // 默认黑色
+  let borderColor = '#333';
+  
+  if (countryCode) {
+    const code = countryCode.toUpperCase();
+    if (code === 'CN' || code === 'CHN' || code === '中国') {
+      color = '#ef4444'; // 中国红色
+      borderColor = '#dc2626';
+    } else if (code === 'US' || code === 'USA' || code === '美国') {
+      color = '#3b82f6'; // 美国蓝色
+      borderColor = '#2563eb';
+    }
+  }
+  
+  return new L.DivIcon({
+    className: 'custom-port-marker',
+    html: `<div style="width:8px;height:8px;background:${color};border-radius:50%;border:1px solid ${borderColor};"></div>`,
+    iconSize: [8, 8],
+    iconAnchor: [4, 4],
+  });
+};
 
 // 船舶图标
 const shipIcon = new L.Icon({
@@ -93,7 +109,7 @@ function MapController({ center, zoom }: { center: [number, number]; zoom: numbe
 
 export default function SeaChartPage() {
   const [activeTab, setActiveTab] = useState<'map' | 'track' | 'chart'>('map');
-  const [mapCenter, setMapCenter] = useState<[number, number]>([20, 110]);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([35, 105]);
   const [mapZoom, setMapZoom] = useState(4);
   const [showSeaMap, setShowSeaMap] = useState(true);
   const [showPorts, setShowPorts] = useState(true);
@@ -509,8 +525,11 @@ export default function SeaChartPage() {
                   )}
 
                   {/* 港口标记 */}
-                  {showPorts && allPorts.map((port) => (
-                    <Marker key={port.id} position={[port.lat, port.lng]} icon={portIcon}>
+                  {showPorts && allPorts.map((port) => {
+                    // 从 port 中获取国家代码
+                    const countryCode = (port as any).ctryCode || (port as any).countryCode || '';
+                    return (
+                    <Marker key={port.id} position={[port.lat, port.lng]} icon={getPortIcon(countryCode)}>
                       <Popup>
                         <div className="min-w-[75px] text-xs">
                           <h4 className="font-bold text-xs">{port.name}</h4>
@@ -519,7 +538,8 @@ export default function SeaChartPage() {
                         </div>
                       </Popup>
                     </Marker>
-                  ))}
+                    );
+                  })}
 
                   {/* 模拟航迹线 */}
                   {showTrack && mockTrack.length > 1 && (
