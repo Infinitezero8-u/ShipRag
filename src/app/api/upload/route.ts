@@ -144,28 +144,47 @@ export async function POST(request: NextRequest) {
       console.log(`[上传] 准备插入 ${itemsToInsert.length} 条条目，来源: ${filename}`);
       console.log(`[上传] 条目预览:`, itemsToInsert.map(i => ({ modality: i.modality, title: i.title?.substring(0, 30), contentLen: i.content?.length })));
       
-      const { data: insertedData, error: insertError, count } = await supabase
-        .from('knowledge_items')
-        .insert(itemsToInsert)
-        .select();
-
-      console.log(`[上传] 插入结果: data.length=${insertedData?.length}, count=${count}, error=${insertError?.message || 'null'}`);
-      if (insertedData && insertedData.length > 0) {
-        console.log(`[上传] 插入的第一条: id=${insertedData[0].id}, title=${insertedData[0].title}`);
+      // 分批插入，避免 Supabase 批量插入限制
+      const BATCH_SIZE = 2;
+      let totalInserted = 0;
+      const insertedIds: string[] = [];
+      let lastError: string | null = null;
+      
+      for (let i = 0; i < itemsToInsert.length; i += BATCH_SIZE) {
+        const batch = itemsToInsert.slice(i, i + BATCH_SIZE);
+        console.log(`[上传] 插入批次 ${Math.floor(i/BATCH_SIZE) + 1}: ${batch.length} 条`);
+        
+        const { data: batchData, error: batchError } = await supabase
+          .from('knowledge_items')
+          .insert(batch)
+          .select('id, title');
+        
+        console.log(`[上传] 批次结果: 插入=${batchData?.length || 0}, 错误=${batchError?.message || '无'}`);
+        
+        if (batchData && batchData.length > 0) {
+          totalInserted += batchData.length;
+          insertedIds.push(...batchData.map(d => d.id));
+        }
+        
+        if (batchError) {
+          lastError = batchError.message;
+          console.error(`[上传] 批次插入失败:`, batchError);
+        }
       }
+      
+      console.log(`[上传] 总计插入: ${totalInserted} 条, IDs: ${insertedIds.join(', ')}`);
 
-      if (insertError) {
-        console.error(`[上传] 插入失败:`, insertError);
+      if (totalInserted === 0) {
         // 更新上传状态为失败
         await supabase
           .from('file_uploads')
           .update({ status: 'failed' })
           .eq('id', uploadRecord.id);
         
-        return NextResponse.json({ error: `插入知识条目失败: ${insertError.message}` }, { status: 500 });
+        return NextResponse.json({ error: `插入知识条目失败: ${lastError || '未知错误'}` }, { status: 500 });
       }
       
-      console.log(`[上传] 成功插入 ${insertedData?.length || 0} 条条目`);
+      console.log(`[上传] 成功插入 ${totalInserted} 条条目`);
     } else {
       console.log(`[上传] 警告: 解析出 0 条条目，来源: ${filename}`);
     }
