@@ -29,6 +29,8 @@ export default function TrajectorySearchPage() {
   const [startPort, setStartPort] = useState('');
   const [endPort, setEndPort] = useState('');
   const [seaArea, setSeaArea] = useState('');
+  const [behavior, setBehavior] = useState('');
+  const [intent, setIntent] = useState('');
   const [minLng, setMinLng] = useState('');
   const [maxLng, setMaxLng] = useState('');
   const [minLat, setMinLat] = useState('');
@@ -69,6 +71,8 @@ export default function TrajectorySearchPage() {
       if (startPort.trim()) body.startPort = startPort;
       if (endPort.trim()) body.endPort = endPort;
       if (seaArea.trim()) body.seaArea = seaArea;
+      if (behavior) body.behavior = behavior;
+      if (intent) body.intent = intent;
       if (minLng) body.minLng = parseFloat(minLng);
       if (maxLng) body.maxLng = parseFloat(maxLng);
       if (minLat) body.minLat = parseFloat(minLat);
@@ -172,6 +176,50 @@ export default function TrajectorySearchPage() {
               value={seaArea}
               onChange={(e) => setSeaArea(e.target.value)}
             />
+            
+            {/* 行为分类 */}
+            <select
+              value={behavior}
+              onChange={(e) => setBehavior(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md text-sm"
+            >
+              <option value="">全部行为</option>
+              <option value="DOCKING">码头靠泊</option>
+              <option value="ANCHORING">锚泊</option>
+              <option value="BUOY_MOORING">浮筒系泊</option>
+              <option value="DRIFTING">原地漂泊</option>
+              <option value="STEADY_SAILING">匀速直航</option>
+              <option value="CHANNEL_TURNING">航道转向</option>
+              <option value="VARIABLE_SAILING">变速航行</option>
+              <option value="TURNING_BACK">原地掉头</option>
+              <option value="LOITERING">原地徘徊</option>
+              <option value="AVOIDING">船舶避让</option>
+              <option value="CROSSING_CHANNEL">横穿航道</option>
+              <option value="DEVIATION">违规偏航</option>
+              <option value="AIS_OFF">AIS关机失联</option>
+              <option value="SUSPICIOUS_LOITERING">无目的低速游荡</option>
+            </select>
+            
+            {/* 意图分类 */}
+            <select
+              value={intent}
+              onChange={(e) => setIntent(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md text-sm"
+            >
+              <option value="">全部意图</option>
+              <option value="INBOUND">船舶进港</option>
+              <option value="OUTBOUND">船舶出港</option>
+              <option value="WAITING_ANCHORAGE">锚地候泊</option>
+              <option value="INTER_PORT_TRANSIT">跨港干线运输</option>
+              <option value="INTERMEDIATE_CALL">中途挂靠港口</option>
+              <option value="PILOTAGE">接驳引水</option>
+              <option value="ENGINEERING_WORK">水上工程作业</option>
+              <option value="FISHING">渔船捕捞</option>
+              <option value="MEETING_AVOIDANCE">会船避让</option>
+              <option value="EMERGENCY_SHELTER">故障临时避险</option>
+              <option value="SUSPICIOUS_SMUGGLING">可疑走私航行</option>
+              <option value="RESTRICTED_ENTRY">违规闯入禁航</option>
+            </select>
             
             {/* 空间范围 */}
             <div className="grid grid-cols-4 gap-2">

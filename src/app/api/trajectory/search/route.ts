@@ -10,6 +10,8 @@ export async function GET(request: NextRequest) {
     const startPort = searchParams.get('startPort') || '';
     const endPort = searchParams.get('endPort') || '';
     const seaArea = searchParams.get('seaArea') || '';
+    const behavior = searchParams.get('behavior') || '';
+    const intent = searchParams.get('intent') || '';
     const minLng = searchParams.get('minLng');
     const maxLng = searchParams.get('maxLng');
     const minLat = searchParams.get('minLat');
@@ -33,6 +35,12 @@ export async function GET(request: NextRequest) {
     }
     if (seaArea) {
       dbQuery = dbQuery.ilike('sea_area', `%${seaArea}%`);
+    }
+    if (behavior) {
+      dbQuery = dbQuery.eq('behavior_code', behavior);
+    }
+    if (intent) {
+      dbQuery = dbQuery.eq('intent_code', intent);
     }
     
     // 空间范围过滤
@@ -87,6 +95,12 @@ export async function GET(request: NextRequest) {
             r.sea_area?.toLowerCase().includes(seaArea.toLowerCase())
           );
         }
+        if (behavior) {
+          results = results.filter((r: any) => r.behavior_code === behavior);
+        }
+        if (intent) {
+          results = results.filter((r: any) => r.intent_code === intent);
+        }
         
         return NextResponse.json({ trajectories: results.slice(0, limit) });
       }
@@ -115,6 +129,8 @@ export async function POST(request: NextRequest) {
       startPort,
       endPort,
       seaArea,
+      behavior,
+      intent,
       minLng,
       maxLng,
       minLat,
@@ -140,6 +156,12 @@ export async function POST(request: NextRequest) {
     }
     if (seaArea) {
       dbQuery = dbQuery.ilike('sea_area', `%${seaArea}%`);
+    }
+    if (behavior) {
+      dbQuery = dbQuery.eq('behavior_code', behavior);
+    }
+    if (intent) {
+      dbQuery = dbQuery.eq('intent_code', intent);
     }
     
     // 空间范围过滤
@@ -193,6 +215,12 @@ export async function POST(request: NextRequest) {
           results = results.filter((r: any) => 
             r.sea_area?.toLowerCase().includes(seaArea.toLowerCase())
           );
+        }
+        if (behavior) {
+          results = results.filter((r: any) => r.behavior_code === behavior);
+        }
+        if (intent) {
+          results = results.filter((r: any) => r.intent_code === intent);
         }
         
         return NextResponse.json(results.slice(0, limit));

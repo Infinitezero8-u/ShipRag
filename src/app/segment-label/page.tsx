@@ -12,8 +12,10 @@ import {
   Activity,
   Target,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Upload
 } from 'lucide-react';
+import Link from 'next/link';
 
 interface Behavior {
   id: string;
@@ -270,6 +272,15 @@ export default function SegmentLabelManagePage() {
             <ArrowLeft size={20} />
           </button>
           <h1 className="text-xl font-semibold">航段行为与意图管理</h1>
+          <div className="flex items-center gap-2 ml-auto">
+            <Link
+              href="/trajectory-training"
+              className="px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 flex items-center gap-1.5 text-sm"
+            >
+              <Upload size={16} />
+              训练平台
+            </Link>
+          </div>
         </div>
       </header>
 

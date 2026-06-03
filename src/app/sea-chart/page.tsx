@@ -137,6 +137,8 @@ export default function SeaChartPage() {
     startPort: '',
     endPort: '',
     seaArea: '',
+    behavior: '',
+    intent: '',
   });
   const [showTrajectories, setShowTrajectories] = useState(true);
   
@@ -673,6 +675,52 @@ export default function SeaChartPage() {
                         placeholder="输入海域名称"
                         className="w-full mt-1 px-2 py-1 border rounded text-xs"
                       />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">行为分类</label>
+                      <select
+                        value={trajectoryFilter.behavior}
+                        onChange={(e) => setTrajectoryFilter({ ...trajectoryFilter, behavior: e.target.value })}
+                        className="w-full mt-1 px-2 py-1 border rounded text-xs"
+                      >
+                        <option value="">全部行为</option>
+                        <option value="DOCKING">码头靠泊</option>
+                        <option value="ANCHORING">锚泊</option>
+                        <option value="BUOY_MOORING">浮筒系泊</option>
+                        <option value="DRIFTING">原地漂泊</option>
+                        <option value="STEADY_SAILING">匀速直航</option>
+                        <option value="CHANNEL_TURNING">航道转向</option>
+                        <option value="VARIABLE_SAILING">变速航行</option>
+                        <option value="TURNING_BACK">原地掉头</option>
+                        <option value="LOITERING">原地徘徊</option>
+                        <option value="AVOIDING">船舶避让</option>
+                        <option value="CROSSING_CHANNEL">横穿航道</option>
+                        <option value="DEVIATION">违规偏航</option>
+                        <option value="AIS_OFF">AIS关机失联</option>
+                        <option value="SUSPICIOUS_LOITERING">无目的低速游荡</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">意图分类</label>
+                      <select
+                        value={trajectoryFilter.intent}
+                        onChange={(e) => setTrajectoryFilter({ ...trajectoryFilter, intent: e.target.value })}
+                        className="w-full mt-1 px-2 py-1 border rounded text-xs"
+                      >
+                        <option value="">全部意图</option>
+                        <option value="INBOUND">船舶进港</option>
+                        <option value="OUTBOUND">船舶出港</option>
+                        <option value="WAITING_ANCHORAGE">锚地候泊</option>
+                        <option value="INTER_PORT_TRANSIT">跨港干线运输</option>
+                        <option value="INTERMEDIATE_CALL">中途挂靠港口</option>
+                        <option value="PILOTAGE">接驳引水</option>
+                        <option value="ENGINEERING_WORK">水上工程作业</option>
+                        <option value="FISHING">渔船捕捞</option>
+                        <option value="MEETING_AVOIDANCE">会船避让</option>
+                        <option value="EMERGENCY_SHELTER">故障临时避险</option>
+                        <option value="SUSPICIOUS_SMUGGLING">可疑走私航行</option>
+                        <option value="RESTRICTED_ENTRY">违规闯入禁航</option>
+                      </select>
                     </div>
                     <button
                       onClick={loadTrajectories}
