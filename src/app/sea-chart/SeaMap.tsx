@@ -89,7 +89,7 @@ interface SeaMapProps {
   showTrack: boolean;
   showTrajectories: boolean;
   allPorts: Port[];
-  portFilterCountry?: string; // 港口国家筛选
+  selectedCountries?: string[]; // 港口国家筛选：多选数组
   mockTrack: TrackPoint[];
   customTrack: TrackPoint[];
   trajectories: Trajectory[];
@@ -143,27 +143,30 @@ export default function SeaMap({
   showTrack,
   showTrajectories,
   allPorts,
-  portFilterCountry,
+  selectedCountries,
   mockTrack,
   customTrack,
   trajectories,
   selectedTrajectory,
   onMapClick,
 }: SeaMapProps) {
-  // 根据国家筛选港口
+  // 根据国家筛选港口（支持多选）
   const filteredPorts = allPorts.filter(port => {
-    if (!portFilterCountry) return true;
+    if (!selectedCountries || selectedCountries.length === 0) return true;
+    
     const ctryCode = port.ctryCode || '';
     const country = port.country || '';
     
-    if (portFilterCountry === 'CN') {
-      return ctryCode === 'CN' || ctryCode === 'CHN' || country === '中国';
-    } else if (portFilterCountry === 'US') {
-      return ctryCode === 'US' || ctryCode === 'USA' || country === '美国';
-    } else if (portFilterCountry === 'OTHER') {
-      return !['CN', 'CHN', 'US', 'USA'].includes(ctryCode) && !['中国', '美国'].includes(country);
-    }
-    return true;
+    return selectedCountries.some(selectedCountry => {
+      if (selectedCountry === 'CN') {
+        return ctryCode === 'CN' || ctryCode === 'CHN' || country === '中国';
+      } else if (selectedCountry === 'US') {
+        return ctryCode === 'US' || ctryCode === 'USA' || country === '美国';
+      } else if (selectedCountry === 'OTHER') {
+        return !['CN', 'CHN', 'US', 'USA'].includes(ctryCode) && !['中国', '美国'].includes(country);
+      }
+      return false;
+    });
   });
   return (
     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
