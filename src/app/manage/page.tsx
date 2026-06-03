@@ -32,6 +32,12 @@ export default function ManagePage() {
   const [loading, setLoading] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
+  // 编辑状态
+  const [editingItem, setEditingItem] = useState<KnowledgeItem | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [saving, setSaving] = useState(false);
+  
   // 分页状态
   const [itemPage, setItemPage] = useState(1);
   const [itemTotal, setItemTotal] = useState(0);
@@ -123,6 +129,47 @@ export default function ManagePage() {
       setSelectedItems(new Set());
     } else {
       setSelectedItems(new Set(items.map(i => i.id)));
+    }
+  };
+
+  // 编辑功能
+  const openEdit = (item: KnowledgeItem) => {
+    setEditingItem(item);
+    setEditTitle(item.title);
+    setEditContent(item.content || '');
+  };
+
+  const closeEdit = () => {
+    setEditingItem(null);
+    setEditTitle('');
+    setEditContent('');
+  };
+
+  const saveEdit = async () => {
+    if (!editingItem) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/search', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingItem.id,
+          title: editTitle,
+          content: editContent,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        closeEdit();
+        fetchItems();
+      } else {
+        alert('保存失败: ' + data.error);
+      }
+    } catch (e) {
+      console.error('保存失败:', e);
+      alert('保存失败');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -325,6 +372,12 @@ export default function ManagePage() {
                             {item.content?.substring(0, 150)}...
                           </div>
                         </div>
+                        <button
+                          onClick={() => openEdit(item)}
+                          className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded"
+                        >
+                          编辑
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -359,6 +412,56 @@ export default function ManagePage() {
           </>
         )}
       </div>
+
+      {/* 编辑弹窗 */}
+      {editingItem && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-auto">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="font-bold text-lg">编辑条目</h2>
+              <button onClick={closeEdit} className="text-gray-500 hover:text-gray-700">✕</button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">标题</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">内容</label>
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  rows={8}
+                  className="w-full px-3 py-2 border rounded-lg text-sm resize-none"
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                类型: {editingItem.modality} · 来源: {editingItem.source}
+              </div>
+            </div>
+            <div className="p-4 border-t flex gap-2 justify-end">
+              <button
+                onClick={closeEdit}
+                className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={saving}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

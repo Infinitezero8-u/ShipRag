@@ -107,6 +107,39 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// 更新条目信息
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { id, title, content, metadata } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: '缺少 id 参数' }, { status: 400 });
+    }
+
+    const supabase = getSupabaseClient();
+    
+    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (title !== undefined) updateData.title = title;
+    if (content !== undefined) updateData.content = content;
+    if (metadata !== undefined) updateData.metadata = metadata;
+
+    const { error } = await supabase
+      .from('knowledge_items')
+      .update(updateData)
+      .eq('id', id);
+
+    if (error) {
+      return NextResponse.json({ error: `更新失败: ${error.message}` }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, message: '更新成功' });
+  } catch (error) {
+    console.error('更新条目失败:', error);
+    return NextResponse.json({ error: '更新失败' }, { status: 500 });
+  }
+}
+
 // 备用搜索方法：直接查询并计算相似度
 async function fallbackSearch(
   supabase: ReturnType<typeof getSupabaseClient>,
