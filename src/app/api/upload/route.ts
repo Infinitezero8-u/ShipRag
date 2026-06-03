@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { parseFile, getFileType } from '@/lib/parsers';
-import { HeaderUtils, S3Storage, LLMClient, Config } from 'coze-coding-dev-sdk';
+import { HeaderUtils, S3Storage, LLMClient, Config, FetchClient } from 'coze-coding-dev-sdk';
+import { v4 as uuidv4 } from 'uuid';
 
 // 初始化对象存储
 const storage = new S3Storage({
@@ -16,9 +17,15 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
+    const url = formData.get('url') as string | null;
+    
+    // 处理 URL 解析
+    if (url && !file) {
+      return await handleUrlUpload(url, request);
+    }
     
     if (!file) {
-      return NextResponse.json({ error: '未提供文件' }, { status: 400 });
+      return NextResponse.json({ error: '未提供文件或URL' }, { status: 400 });
     }
 
     const filename = file.name;
@@ -288,6 +295,81 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ 
       error: `更新失败: ${error instanceof Error ? error.message : String(error)}` 
+    }, { status: 500 });
+  }
+}
+
+// 处理 URL 上传
+async function handleUrlUpload(url: string, request: NextRequest) {
+  const supabase = getSupabaseClient();
+  const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+  const config = new Config();
+  const fetchClient = new FetchClient(config, customHeaders);
+  
+  try {
+    // 使用 FetchClient 获取网页内容
+    const response = await fetchClient.fetch(url);
+    
+    if (response.status_code !== 0) {
+      return NextResponse.json({ 
+        error: `网页解析失败: ${response.status_message || '未知错误'}` 
+      }, { status: 400 });
+    }
+    
+    // 提取文本内容
+    const textContent = response.content
+      .filter((item): item is { type: 'text'; text: string } => item.type === 'text' && !!item.text)
+      .map(item => item.text)
+      .join('\n\n');
+    
+    if (!textContent.trim()) {
+      return NextResponse.json({ 
+        error: '网页内容为空' 
+      }, { status: 400 });
+    }
+    
+    // 创建文件记录
+    const fileId = uuidv4();
+    const title = response.title || new URL(url).hostname;
+    
+    // 保存文件上传记录
+    await supabase.from('file_uploads').insert({
+      id: fileId,
+      filename: title,
+      file_type: 'webpage',
+      file_size: textContent.length,
+      storage_url: url,
+      status: 'completed',
+      item_count: 1,
+    });
+    
+    // 创建知识条目
+    const itemId = uuidv4();
+    await supabase.from('knowledge_items').insert({
+      id: itemId,
+      modality: 'webpage',
+      title: title,
+      content: textContent.substring(0, 8000), // 限制内容长度
+      source: url,
+      metadata: {
+        url: url,
+        title: response.title,
+        publish_time: response.publish_time,
+        filetype: response.filetype,
+      },
+    });
+    
+    return NextResponse.json({
+      success: true,
+      message: `网页解析成功: ${title}`,
+      fileId,
+      itemCount: 1,
+      title,
+      contentLength: textContent.length,
+    });
+  } catch (error) {
+    return NextResponse.json({ 
+      error: `网页解析失败: ${error instanceof Error ? error.message : String(error)}` 
     }, { status: 500 });
   }
 }

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -79,6 +80,7 @@ export default function RagPage() {
     error?: string;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [urlInput, setUrlInput] = useState('');
   
   // 向量化状态
   const [embedStatus, setEmbedStatus] = useState<{
@@ -159,6 +161,37 @@ export default function RagPage() {
       }
     } catch (error) {
       setUploadResult({ success: false, error: '上传失败' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // URL 解析上传
+  const handleUrlUpload = async () => {
+    if (!urlInput.trim()) return;
+    
+    setUploading(true);
+    setUploadResult(null);
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: urlInput.trim() }),
+      });
+      const data = await res.json();
+      setUploadResult({
+        success: data.success,
+        filename: data.title || urlInput,
+        itemCount: data.itemCount || 0,
+        error: data.error,
+      });
+      if (data.success) {
+        setUrlInput('');
+        fetchEmbedStatus();
+      }
+    } catch (error) {
+      setUploadResult({ success: false, error: '网页解析失败' });
     } finally {
       setUploading(false);
     }
@@ -370,23 +403,44 @@ export default function RagPage() {
                   <Button 
                     onClick={() => fileInputRef.current?.click()} 
                     disabled={uploading}
-                    className="w-full h-12 text-base"
+                    className="w-full h-10 text-sm"
                   >
                     {uploading ? (
                       <>
-                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         上传中...
                       </>
                     ) : (
                       <>
-                        <Upload className="w-5 h-5 mr-2" />
+                        <Upload className="w-4 h-4 mr-2" />
                         选择文件
                       </>
                     )}
                   </Button>
-                  <p className="text-xs text-muted-foreground mt-2">
+                  <p className="text-xs text-muted-foreground mt-1">
                     支持 Excel、Word、PDF、PPT、图片、音频、JSON、MD
                   </p>
+                </div>
+
+                {/* URL 解析 */}
+                <div className="space-y-2">
+                  <Label className="text-sm">或输入网页链接</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="https://example.com/article"
+                      value={urlInput}
+                      onChange={(e) => setUrlInput(e.target.value)}
+                      className="flex-1 text-sm h-9"
+                    />
+                    <Button 
+                      onClick={handleUrlUpload}
+                      disabled={uploading || !urlInput.trim()}
+                      size="sm"
+                      className="h-9"
+                    >
+                      {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : '解析'}
+                    </Button>
+                  </div>
                 </div>
 
                 {/* 上传结果 */}
