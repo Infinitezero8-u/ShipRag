@@ -315,6 +315,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
     
+    // 导入航迹数据
+    if (action === 'import') {
+      const { data } = body;
+      if (!Array.isArray(data)) {
+        return NextResponse.json({ error: 'data 必须是数组' }, { status: 400 });
+      }
+      
+      const inserted = [];
+      for (const item of data) {
+        const record = {
+          mmsi: item.mmsi || item.MMSI || null,
+          start_port: item.start_port || item.startPort || item.StartPort || null,
+          end_port: item.end_port || item.endPort || item.EndPort || null,
+          geometry_wkt: item.geometry_wkt || item.geometry || item.WKT || null,
+          ai_description: item.ai_description || item.description || null,
+          behavior_code: item.behavior_code || item.behavior || null,
+          intent_code: item.intent_code || item.intent || null
+        };
+        
+        const { data: insertedRow, error } = await supabase
+          .from('trajectory_segments')
+          .insert(record)
+          .select()
+          .single();
+        
+        if (!error && insertedRow) {
+          inserted.push(insertedRow);
+        }
+      }
+      
+      return NextResponse.json({ success: true, imported: inserted.length });
+    }
+    
     // 单条智能标注
     // 获取航迹数据
     let trajData = trajectoryData;
