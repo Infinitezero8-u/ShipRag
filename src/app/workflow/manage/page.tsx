@@ -30,11 +30,29 @@ interface Workflow {
   updated_at: string;
 }
 
+// 默认工作流节点连线关系
+const DEFAULT_EDGES = [
+  { from: 0, to: 1 }, // 用户输入 -> 分类Prompt
+  { from: 1, to: 2 }, // 分类Prompt -> 分类LLM
+  { from: 2, to: 3 }, // 分类LLM -> 条件分支
+  { from: 3, to: 4 }, // 条件分支 -> Query优化 (RAG分支)
+  { from: 4, to: 5 }, // Query优化 -> 向量化
+  { from: 5, to: 6 }, // 向量化 -> 向量检索
+  { from: 6, to: 7 }, // 向量检索 -> 结果重排
+  { from: 7, to: 8 }, // 结果重排 -> Prompt组装
+  { from: 8, to: 9 }, // Prompt组装 -> LLM生成
+  { from: 9, to: 13 }, // LLM生成 -> 输出汇总
+  { from: 3, to: 10 }, // 条件分支 -> SQL生成 (SQL分支)
+  { from: 10, to: 11 }, // SQL生成 -> 数据库执行
+  { from: 11, to: 12 }, // 数据库执行 -> 结果润色
+  { from: 12, to: 13 }, // 结果润色 -> 输出汇总
+];
+
 // 系统内置工作流（当前使用的 RAG+SQL 工作流）
 const DEFAULT_WORKFLOW: Workflow = {
   id: 'default-rag-sql',
   name: '双分支 RAG+SQL 智能问答',
-  description: '标准双分支工作流：用户输入 → 意图分类 → 条件分支 → RAG分支/SQL分支/双分支并行 → 结果汇总输出。支持三路路由：RAG(文档查询)、SQL(统计查询)、ALL(双分支并行)',
+  description: '用户输入→意图分类→条件分支→RAG分支/SQL分支→结果汇总',
   nodes: [
     { type: 'chatInput', name: '用户输入' },
     { type: 'classifyPrompt', name: '分类Prompt' },
@@ -51,7 +69,7 @@ const DEFAULT_WORKFLOW: Workflow = {
     { type: 'sqlPolish', name: '结果润色' },
     { type: 'chatOutput', name: '输出汇总' },
   ],
-  edges: [],
+  edges: DEFAULT_EDGES,
   is_locked: true,
   is_active: true,
   created_at: new Date().toISOString(),
@@ -109,46 +127,6 @@ export default function WorkflowManagePage() {
     }
   };
   
-  const handleUpdate = async () => {
-    if (!editingWorkflow || !formData.name.trim()) return;
-    
-    try {
-      const res = await fetch('/api/workflow', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: editingWorkflow.id,
-          name: formData.name,
-          description: formData.description,
-        }),
-      });
-      
-      if (res.ok) {
-        setEditingWorkflow(null);
-        setFormData({ name: '', description: '' });
-        fetchWorkflows();
-      }
-    } catch (error) {
-      console.error('更新失败:', error);
-    }
-  };
-  
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定删除此工作流？')) return;
-    
-    try {
-      const res = await fetch(`/api/workflow?id=${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchWorkflows();
-      } else {
-        const data = await res.json();
-        alert(data.error || '删除失败');
-      }
-    } catch (error) {
-      console.error('删除失败:', error);
-    }
-  };
-  
   const handleCopy = async (id: string) => {
     try {
       const res = await fetch('/api/workflow/copy', {
@@ -165,35 +143,71 @@ export default function WorkflowManagePage() {
     }
   };
   
-  // 复制内置工作流
-  const handleCopyDefault = async (wf: Workflow) => {
+  const handleCopyDefault = async (workflow: Workflow) => {
     try {
+      // 复制内置工作流到数据库
       const res = await fetch('/api/workflow', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `${wf.name}-副本`,
-          description: wf.description,
-          nodes: wf.nodes,
-          edges: wf.edges,
+          name: workflow.name + '-副本',
+          description: workflow.description,
+          nodes: workflow.nodes,
+          edges: workflow.edges,
         }),
       });
       
       if (res.ok) {
         fetchWorkflows();
-      } else {
-        const data = await res.json();
-        alert(data.error || '复制失败');
       }
     } catch (error) {
       console.error('复制失败:', error);
     }
   };
   
-  const handleSetActive = async (id: string) => {
-    // 内置工作流已经是激活状态
-    if (id === DEFAULT_WORKFLOW.id) return;
+  const handleDelete = async (id: string) => {
+    if (!confirm('确定要删除此工作流吗？')) return;
     
+    try {
+      const res = await fetch('/api/workflow', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      
+      if (res.ok) {
+        fetchWorkflows();
+      }
+    } catch (error) {
+      console.error('删除失败:', error);
+    }
+  };
+  
+  const handleUpdate = async () => {
+    if (!editingWorkflow || !formData.name.trim()) return;
+    
+    try {
+      const res = await fetch('/api/workflow', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          id: editingWorkflow.id, 
+          name: formData.name, 
+          description: formData.description 
+        }),
+      });
+      
+      if (res.ok) {
+        setEditingWorkflow(null);
+        setFormData({ name: '', description: '' });
+        fetchWorkflows();
+      }
+    } catch (error) {
+      console.error('更新失败:', error);
+    }
+  };
+  
+  const handleSetActive = async (id: string) => {
     try {
       const res = await fetch('/api/workflow', {
         method: 'PUT',
@@ -237,31 +251,31 @@ export default function WorkflowManagePage() {
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      <div className="max-w-5xl mx-auto p-4 md:p-6">
+      <div className="max-w-5xl mx-auto p-3 md:p-4">
         {/* 顶部导航 */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
-            <a href="/" className="flex items-center gap-1 text-slate-600 hover:text-blue-600 transition-colors text-sm">
-              <ArrowLeft className="w-4 h-4" />
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <a href="/" className="flex items-center gap-1 text-slate-500 hover:text-blue-600 transition-colors text-xs">
+              <ArrowLeft className="w-3 h-3" />
               返回
             </a>
-            <div className="h-4 w-px bg-slate-300" />
-            <div className="flex items-center gap-2">
-              <Layers className="w-5 h-5 text-blue-600" />
-              <h1 className="text-xl font-semibold text-slate-800">工作流管理</h1>
+            <div className="h-3 w-px bg-slate-300" />
+            <div className="flex items-center gap-1.5">
+              <Layers className="w-4 h-4 text-blue-600" />
+              <h1 className="text-sm font-medium text-slate-700">工作流管理</h1>
             </div>
           </div>
-          <Button onClick={() => setShowCreate(true)} className="gap-1.5 shadow-sm">
-            <Plus className="w-4 h-4" />
-            新建工作流
+          <Button onClick={() => setShowCreate(true)} size="sm" className="gap-1 shadow-sm h-7 text-xs">
+            <Plus className="w-3 h-3" />
+            新建
           </Button>
         </div>
         
         {/* 工作流列表 */}
         {loading ? (
-          <div className="text-center py-12 text-slate-400">加载中...</div>
+          <div className="text-center py-8 text-slate-400 text-xs">加载中...</div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-2">
             {allWorkflows.map((wf) => {
               const isDefault = isDefaultWorkflow(wf.id);
               
@@ -270,68 +284,68 @@ export default function WorkflowManagePage() {
                   key={wf.id} 
                   className={`transition-all duration-200 ${
                     wf.is_active 
-                      ? 'border-blue-500/50 shadow-lg shadow-blue-100/50 bg-white' 
-                      : 'border-slate-200 bg-white/80 hover:shadow-md'
+                      ? 'border-blue-400/50 shadow-sm shadow-blue-100/50 bg-white' 
+                      : 'border-slate-200 bg-white/80 hover:shadow-sm'
                   } ${isDefault ? 'ring-1 ring-blue-200' : ''}`}
                 >
-                  <CardContent className="p-5">
-                    <div className="flex items-start justify-between gap-4">
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         {/* 标题和标签 */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-semibold text-slate-800 text-lg truncate">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h3 className="font-medium text-slate-800 text-xs truncate">
                             {wf.name}
                           </h3>
                           {wf.is_active && (
-                            <Badge variant="default" className="bg-blue-500 gap-1">
-                              <Check className="w-3 h-3" />
-                              当前使用
+                            <Badge variant="default" className="bg-blue-500 gap-0.5 h-4 px-1.5 text-[10px]">
+                              <Check className="w-2 h-2" />
+                              当前
                             </Badge>
                           )}
                           {isDefault && (
-                            <Badge variant="secondary" className="bg-slate-100 text-slate-600">
-                              系统内置
+                            <Badge variant="secondary" className="bg-slate-100 text-slate-600 h-4 px-1.5 text-[10px]">
+                              内置
                             </Badge>
                           )}
                           {wf.is_locked && !isDefault && (
-                            <Badge variant="outline" className="border-amber-300 text-amber-600 gap-1">
-                              <Lock className="w-3 h-3" />
-                              已锁定
+                            <Badge variant="outline" className="border-amber-300 text-amber-600 gap-0.5 h-4 px-1.5 text-[10px]">
+                              <Lock className="w-2 h-2" />
+                              锁定
                             </Badge>
                           )}
                         </div>
                         
                         {/* 描述 */}
                         {wf.description && (
-                          <p className="text-slate-500 text-sm mt-2 line-clamp-2">
+                          <p className="text-slate-500 text-[10px] mt-1 line-clamp-1">
                             {wf.description}
                           </p>
                         )}
                         
                         {/* 元信息 */}
-                        <div className="flex items-center gap-4 mt-3 text-xs text-slate-400">
-                          <span className="flex items-center gap-1">
-                            <GitBranch className="w-3 h-3" />
-                            {wf.nodes?.length || 0} 个节点
+                        <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-400">
+                          <span className="flex items-center gap-0.5">
+                            <GitBranch className="w-2.5 h-2.5" />
+                            {wf.nodes?.length || 0}节点
                           </span>
-                          <span>{wf.edges?.length || 0} 条连线</span>
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
+                          <span>{wf.edges?.length || 0}连线</span>
+                          <span className="flex items-center gap-0.5">
+                            <Clock className="w-2.5 h-2.5" />
                             {new Date(wf.updated_at).toLocaleDateString()}
                           </span>
                         </div>
                       </div>
                       
                       {/* 操作按钮 */}
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <div className="flex items-center gap-1 flex-shrink-0">
                         {!wf.is_active && !isDefault && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => handleSetActive(wf.id)}
-                            className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                            className="text-blue-600 border-blue-200 hover:bg-blue-50 h-6 px-2 text-[10px]"
                           >
-                            <Check className="w-3 h-3 mr-1" />
+                            <Check className="w-2.5 h-2.5 mr-0.5" />
                             设为当前
                           </Button>
                         )}
@@ -342,10 +356,10 @@ export default function WorkflowManagePage() {
                               variant="ghost"
                               size="sm"
                               asChild
-                              className="text-slate-600 hover:bg-slate-100"
+                              className="text-slate-500 hover:bg-slate-100 h-6 w-6 p-0"
                             >
                               <a href={`/workflow/edit?id=${wf.id}`}>
-                                <Edit2 className="w-4 h-4" />
+                                <Edit2 className="w-3 h-3" />
                               </a>
                             </Button>
                             
@@ -353,18 +367,18 @@ export default function WorkflowManagePage() {
                               variant="ghost"
                               size="sm"
                               onClick={() => handleCopy(wf.id)}
-                              className="text-slate-600 hover:bg-slate-100"
+                              className="text-slate-500 hover:bg-slate-100 h-6 w-6 p-0"
                             >
-                              <Copy className="w-4 h-4" />
+                              <Copy className="w-3 h-3" />
                             </Button>
                             
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => handleLock(wf.id, !wf.is_locked)}
-                              className={`${wf.is_locked ? 'text-green-600 hover:bg-green-50' : 'text-slate-600 hover:bg-slate-100'}`}
+                              className={`${wf.is_locked ? 'text-green-600 hover:bg-green-50' : 'text-slate-500 hover:bg-slate-100'} h-6 w-6 p-0`}
                             >
-                              {wf.is_locked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                              {wf.is_locked ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
                             </Button>
                             
                             {!wf.is_locked && (
@@ -372,9 +386,9 @@ export default function WorkflowManagePage() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleDelete(wf.id)}
-                                className="text-red-500 hover:bg-red-50 hover:text-red-600"
+                                className="text-red-500 hover:bg-red-50 hover:text-red-600 h-6 w-6 p-0"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3 h-3" />
                               </Button>
                             )}
                           </>
@@ -387,10 +401,10 @@ export default function WorkflowManagePage() {
                               variant="outline"
                               size="sm"
                               asChild
-                              className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                              className="text-blue-600 border-blue-200 hover:bg-blue-50 h-6 px-2 text-[10px]"
                             >
                               <a href="/workflow">
-                                <Edit2 className="w-3 h-3 mr-1" />
+                                <Edit2 className="w-2.5 h-2.5 mr-0.5" />
                                 查看
                               </a>
                             </Button>
@@ -399,9 +413,9 @@ export default function WorkflowManagePage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleCopyDefault(wf)}
-                              className="text-green-600 border-green-200 hover:bg-green-50"
+                              className="text-green-600 border-green-200 hover:bg-green-50 h-6 px-2 text-[10px]"
                             >
-                              <Copy className="w-3 h-3 mr-1" />
+                              <Copy className="w-2.5 h-2.5 mr-0.5" />
                               复制
                             </Button>
                           </>
@@ -416,35 +430,27 @@ export default function WorkflowManagePage() {
         )}
         
         {/* 说明 */}
-        <Card className="mt-8 bg-white/60 border-slate-200">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-700">使用说明</CardTitle>
+        <Card className="mt-4 bg-white/60 border-slate-200">
+          <CardHeader className="pb-1 pt-2 px-3">
+            <CardTitle className="text-xs font-medium text-slate-600">使用说明</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-600">
-              <div className="flex items-start gap-2">
-                <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                  <Check className="w-3 h-3 text-blue-600" />
-                </div>
-                <span><strong>设为当前</strong>：将此工作流设为问答系统使用的工作流</span>
+          <CardContent className="px-3 pb-2 pt-0">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] text-slate-500">
+              <div className="flex items-center gap-1">
+                <Check className="w-2.5 h-2.5 text-blue-500" />
+                <span><b>设为当前</b>：问答系统使用此工作流</span>
               </div>
-              <div className="flex items-start gap-2">
-                <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                  <Lock className="w-3 h-3 text-amber-600" />
-                </div>
-                <span><strong>锁定</strong>：锁定后不可修改和删除，防止误操作</span>
+              <div className="flex items-center gap-1">
+                <Lock className="w-2.5 h-2.5 text-amber-500" />
+                <span><b>锁定</b>：防止误操作修改删除</span>
               </div>
-              <div className="flex items-start gap-2">
-                <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
-                  <Copy className="w-3 h-3 text-slate-600" />
-                </div>
-                <span><strong>复制</strong>：创建工作流副本，副本默认不锁定</span>
+              <div className="flex items-center gap-1">
+                <Copy className="w-2.5 h-2.5 text-slate-400" />
+                <span><b>复制</b>：创建副本可自由编辑</span>
               </div>
-              <div className="flex items-start gap-2">
-                <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                  <Edit2 className="w-3 h-3 text-green-600" />
-                </div>
-                <span><strong>编辑</strong>：进入工作流画布编辑节点和连线</span>
+              <div className="flex items-center gap-1">
+                <Edit2 className="w-2.5 h-2.5 text-green-500" />
+                <span><b>编辑</b>：进入画布编辑节点连线</span>
               </div>
             </div>
           </CardContent>
@@ -454,38 +460,40 @@ export default function WorkflowManagePage() {
       {/* 新建弹窗 */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-md shadow-xl">
-            <CardHeader>
-              <CardTitle>新建工作流</CardTitle>
+          <Card className="w-full max-w-sm shadow-xl">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">新建工作流</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <div>
-                <label className="text-sm text-slate-500 block mb-1.5">名称 *</label>
+                <label className="text-[10px] text-slate-500 block mb-1">名称 *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-2 py-1.5 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="输入工作流名称"
                 />
               </div>
               <div>
-                <label className="text-sm text-slate-500 block mb-1.5">描述</label>
+                <label className="text-[10px] text-slate-500 block mb-1">描述</label>
                 <textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-2 py-1.5 border border-slate-200 rounded text-xs h-16 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="可选描述"
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2 pt-1">
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={() => { setShowCreate(false); setFormData({ name: '', description: '' }); }}
+                  className="h-7 text-xs"
                 >
                   取消
                 </Button>
-                <Button onClick={handleCreate} disabled={!formData.name.trim()}>
+                <Button size="sm" onClick={handleCreate} disabled={!formData.name.trim()} className="h-7 text-xs">
                   创建
                 </Button>
               </div>
@@ -497,36 +505,38 @@ export default function WorkflowManagePage() {
       {/* 编辑弹窗 */}
       {editingWorkflow && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-md shadow-xl">
-            <CardHeader>
-              <CardTitle>编辑工作流</CardTitle>
+          <Card className="w-full max-w-sm shadow-xl">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">编辑工作流</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <div>
-                <label className="text-sm text-slate-500 block mb-1.5">名称 *</label>
+                <label className="text-[10px] text-slate-500 block mb-1">名称 *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-2 py-1.5 border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
               <div>
-                <label className="text-sm text-slate-500 block mb-1.5">描述</label>
+                <label className="text-[10px] text-slate-500 block mb-1">描述</label>
                 <textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-2 py-1.5 border border-slate-200 rounded text-xs h-16 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2 pt-1">
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={() => { setEditingWorkflow(null); setFormData({ name: '', description: '' }); }}
+                  className="h-7 text-xs"
                 >
                   取消
                 </Button>
-                <Button onClick={handleUpdate} disabled={!formData.name.trim()}>
+                <Button size="sm" onClick={handleUpdate} disabled={!formData.name.trim()} className="h-7 text-xs">
                   保存
                 </Button>
               </div>

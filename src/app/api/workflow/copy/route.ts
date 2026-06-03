@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     const { data, error } = await supabase
       .from('workflows')
       .insert({
-        name: name || `${source.name} (副本)`,
+        name: name || `${source.name}-副本`,
         description: source.description,
         nodes: source.nodes,
         edges: source.edges,
