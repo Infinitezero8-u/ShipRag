@@ -103,6 +103,71 @@ export default function SeaChartPage() {
   const [customTrack, setCustomTrack] = useState<TrackPoint[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   
+  // 折叠状态
+  const [expandLayer, setExpandLayer] = useState(false);
+  const [expandView, setExpandView] = useState(false);
+  
+  // 数据库港口数据
+  const [dbPorts, setDbPorts] = useState<Port[]>([]);
+  const [loadingPorts, setLoadingPorts] = useState(false);
+  
+  // 从数据库获取港口数据
+  useEffect(() => {
+    const fetchPorts = async () => {
+      setLoadingPorts(true);
+      try {
+        const res = await fetch('/api/search?limit=1000');
+        const data = await res.json();
+        const items = data.items || [];
+        
+        // 解析港口数据
+        const ports: Port[] = [];
+        items.forEach((item: { 
+          id?: string; 
+          title?: string; 
+          content?: string; 
+          source?: string;
+          metadata?: Record<string, unknown>;
+        }) => {
+          const content = item.content || '';
+          // 解析格式: portCode: XXX, nameCn: XXX, lat: XXX, lon: XXX, ...
+          const portCodeMatch = content.match(/portCode:\s*([^,]+)/);
+          const nameCnMatch = content.match(/nameCn:\s*([^,]+)/);
+          const latMatch = content.match(/lat:\s*([\d.-]+)/);
+          const lonMatch = content.match(/lon:\s*([\d.-]+)/);
+          const ctryNameCnMatch = content.match(/ctryNameCn:\s*([^,]+)/);
+          
+          if (portCodeMatch && latMatch && lonMatch) {
+            const lat = parseFloat(latMatch[1]);
+            const lng = parseFloat(lonMatch[1]);
+            if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+              ports.push({
+                id: portCodeMatch[1].trim(),
+                name: nameCnMatch ? nameCnMatch[1].trim() : portCodeMatch[1].trim(),
+                lat,
+                lng,
+                country: ctryNameCnMatch ? ctryNameCnMatch[1].trim() : '',
+                type: '港口',
+              });
+            }
+          }
+        });
+        
+        setDbPorts(ports);
+        console.log(`加载了 ${ports.length} 个港口数据`);
+      } catch (error) {
+        console.error('获取港口数据失败:', error);
+      } finally {
+        setLoadingPorts(false);
+      }
+    };
+    
+    fetchPorts();
+  }, []);
+  
+  // 合并模拟港口和数据库港口
+  const allPorts = [...mockPorts, ...dbPorts];
+  
   // 图表数据
   const [portStats, setPortStats] = useState({
     throughput: [1200, 1800, 2100, 1900, 2400, 2800, 3200],
@@ -234,87 +299,106 @@ export default function SeaChartPage() {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
             {/* 控制面板 */}
             <div className="lg:col-span-1 space-y-4">
-              <div className="bg-white rounded-xl shadow-sm p-4">
-                <h3 className="font-semibold text-gray-900 mb-3">🗺️ 图层控制</h3>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showSeaMap}
-                      onChange={(e) => setShowSeaMap(e.target.checked)}
-                      className="w-4 h-4 rounded"
-                    />
-                    <span className="text-sm text-gray-700">海图叠加 (OpenSeaMap)</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showPorts}
-                      onChange={(e) => setShowPorts(e.target.checked)}
-                      className="w-4 h-4 rounded"
-                    />
-                    <span className="text-sm text-gray-700">港口标记</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showTrack}
-                      onChange={(e) => setShowTrack(e.target.checked)}
-                      className="w-4 h-4 rounded"
-                    />
-                    <span className="text-sm text-gray-700">航迹线</span>
-                  </label>
-                </div>
+              {/* 图层控制 - 可折叠 */}
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                <button 
+                  onClick={() => setExpandLayer(!expandLayer)}
+                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50"
+                >
+                  <h3 className="font-semibold text-gray-900">🗺️ 图层控制</h3>
+                  <span className="text-gray-400">{expandLayer ? '▼' : '▶'}</span>
+                </button>
+                {expandLayer && (
+                  <div className="px-4 pb-4 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showSeaMap}
+                        onChange={(e) => setShowSeaMap(e.target.checked)}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="text-sm text-gray-700">海图叠加 (OpenSeaMap)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showPorts}
+                        onChange={(e) => setShowPorts(e.target.checked)}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="text-sm text-gray-700">港口标记 ({allPorts.length}个)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showTrack}
+                        onChange={(e) => setShowTrack(e.target.checked)}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="text-sm text-gray-700">航迹线</span>
+                    </label>
+                    {loadingPorts && <p className="text-xs text-gray-400">加载港口数据中...</p>}
+                  </div>
+                )}
               </div>
 
-              <div className="bg-white rounded-xl shadow-sm p-4">
-                <h3 className="font-semibold text-gray-900 mb-3">📍 视图控制</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-xs text-gray-500">中心位置</label>
-                    <div className="flex gap-2 mt-1">
+              {/* 视图控制 - 可折叠 */}
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                <button 
+                  onClick={() => setExpandView(!expandView)}
+                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50"
+                >
+                  <h3 className="font-semibold text-gray-900">📍 视图控制</h3>
+                  <span className="text-gray-400">{expandView ? '▼' : '▶'}</span>
+                </button>
+                {expandView && (
+                  <div className="px-4 pb-4 space-y-3">
+                    <div>
+                      <label className="text-xs text-gray-500">中心位置</label>
+                      <div className="flex gap-2 mt-1">
+                        <input
+                          type="number"
+                          value={mapCenter[0]}
+                          onChange={(e) => setMapCenter([parseFloat(e.target.value) || 0, mapCenter[1]])}
+                          className="flex-1 px-2 py-1 border rounded text-sm"
+                          placeholder="纬度"
+                        />
+                        <input
+                          type="number"
+                          value={mapCenter[1]}
+                          onChange={(e) => setMapCenter([mapCenter[0], parseFloat(e.target.value) || 0])}
+                          className="flex-1 px-2 py-1 border rounded text-sm"
+                          placeholder="经度"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">缩放级别: {mapZoom}</label>
                       <input
-                        type="number"
-                        value={mapCenter[0]}
-                        onChange={(e) => setMapCenter([parseFloat(e.target.value) || 0, mapCenter[1]])}
-                        className="flex-1 px-2 py-1 border rounded text-sm"
-                        placeholder="纬度"
-                      />
-                      <input
-                        type="number"
-                        value={mapCenter[1]}
-                        onChange={(e) => setMapCenter([mapCenter[0], parseFloat(e.target.value) || 0])}
-                        className="flex-1 px-2 py-1 border rounded text-sm"
-                        placeholder="经度"
+                        type="range"
+                        min="1"
+                        max="18"
+                        value={mapZoom}
+                        onChange={(e) => setMapZoom(parseInt(e.target.value))}
+                        className="w-full mt-1"
                       />
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => { setMapCenter([31.2304, 121.4737]); setMapZoom(10); }}
+                        className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100"
+                      >
+                        上海港
+                      </button>
+                      <button
+                        onClick={() => { setMapCenter([1.2644, 103.8198]); setMapZoom(10); }}
+                        className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100"
+                      >
+                        新加坡
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-500">缩放级别: {mapZoom}</label>
-                    <input
-                      type="range"
-                      min="1"
-                      max="18"
-                      value={mapZoom}
-                      onChange={(e) => setMapZoom(parseInt(e.target.value))}
-                      className="w-full mt-1"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => { setMapCenter([31.2304, 121.4737]); setMapZoom(10); }}
-                      className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100"
-                    >
-                      上海港
-                    </button>
-                    <button
-                      onClick={() => { setMapCenter([1.2644, 103.8198]); setMapZoom(10); }}
-                      className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100"
-                    >
-                      新加坡
-                    </button>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* 航迹绘制控制 */}
@@ -404,12 +488,13 @@ export default function SeaChartPage() {
                   )}
 
                   {/* 港口标记 */}
-                  {showPorts && mockPorts.map((port) => (
+                  {showPorts && allPorts.map((port) => (
                     <Marker key={port.id} position={[port.lat, port.lng]} icon={portIcon}>
                       <Popup>
                         <div className="min-w-[150px]">
                           <h4 className="font-bold">{port.name}</h4>
                           <p className="text-sm text-gray-600">代码: {port.id}</p>
+                          {port.country && <p className="text-sm text-gray-600">国家: {port.country}</p>}
                           <p className="text-sm text-gray-600">国家: {port.country}</p>
                           <p className="text-sm text-gray-600">类型: {port.type}</p>
                         </div>
