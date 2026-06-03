@@ -144,10 +144,15 @@ export async function POST(request: NextRequest) {
       console.log(`[上传] 准备插入 ${itemsToInsert.length} 条条目，来源: ${filename}`);
       console.log(`[上传] 条目预览:`, itemsToInsert.map(i => ({ modality: i.modality, title: i.title?.substring(0, 30), contentLen: i.content?.length })));
       
-      const { data: insertedData, error: insertError } = await supabase
+      const { data: insertedData, error: insertError, count } = await supabase
         .from('knowledge_items')
         .insert(itemsToInsert)
         .select();
+
+      console.log(`[上传] 插入结果: data.length=${insertedData?.length}, count=${count}, error=${insertError?.message || 'null'}`);
+      if (insertedData && insertedData.length > 0) {
+        console.log(`[上传] 插入的第一条: id=${insertedData[0].id}, title=${insertedData[0].title}`);
+      }
 
       if (insertError) {
         console.error(`[上传] 插入失败:`, insertError);
