@@ -493,6 +493,22 @@ export default function RagPage() {
                   <ChevronRight className="w-5 h-5 text-muted-foreground" />
                 </CardContent>
               </Card>
+              
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
+                onClick={() => window.location.href = '/workflow/manage'}
+              >
+                <CardContent className="p-6 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
+                    <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-lg">⚙️ 工作流管理</h3>
+                    <p className="text-sm text-muted-foreground">管理和编辑 RAG 工作流</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
             </div>
           </div>
         ) : (
