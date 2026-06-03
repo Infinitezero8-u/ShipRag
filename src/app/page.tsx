@@ -284,7 +284,8 @@ export default function RagPage() {
         body: JSON.stringify({
           query: searchQuery,
           modality: searchModality || undefined,
-          topK: 10,
+          topK: 20,
+          threshold: 0.3,
         }),
       });
       const data = await res.json();

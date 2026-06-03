@@ -12,7 +12,7 @@ interface SearchParams {
 export async function POST(request: NextRequest) {
   try {
     const body: SearchParams = await request.json();
-    const { query, modality, topK = 5, threshold = 0.5 } = body;
+    const { query, modality, topK = 20, threshold = 0.3 } = body;
 
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: '查询内容不能为空' }, { status: 400 });
