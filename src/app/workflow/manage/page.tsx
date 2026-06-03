@@ -403,7 +403,7 @@ export default function WorkflowManagePage() {
                               asChild
                               className="text-blue-600 border-blue-200 hover:bg-blue-50 h-6 px-2 text-[10px]"
                             >
-                              <a href="/workflow">
+                              <a href={`/workflow/edit?id=${wf.id}`}>
                                 <Edit2 className="w-2.5 h-2.5 mr-0.5" />
                                 查看
                               </a>
