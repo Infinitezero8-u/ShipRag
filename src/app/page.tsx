@@ -512,6 +512,38 @@ export default function RagPage() {
                   <ChevronRight className="w-5 h-5 text-muted-foreground" />
                 </CardContent>
               </Card>
+              
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
+                onClick={() => window.location.href = '/segment-label'}
+              >
+                <CardContent className="p-6 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-cyan-100 flex items-center justify-center">
+                    <svg className="w-6 h-6 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-lg">🏷️ 航迹标注平台</h3>
+                    <p className="text-sm text-muted-foreground">航段行为和意图标注管理</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
+              
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
+                onClick={() => window.location.href = '/trajectory-training'}
+              >
+                <CardContent className="p-6 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center">
+                    <svg className="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.755-.988-2.386l-.548-.547z" /></svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-lg">🧠 航迹训练平台</h3>
+                    <p className="text-sm text-muted-foreground">分类模型训练、版本管理和推理</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
             </div>
           </div>
         ) : (
