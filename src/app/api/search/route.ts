@@ -546,6 +546,7 @@ export async function GET(request: NextRequest) {
     const source = searchParams.get('source');
     const status = searchParams.get('status');
     const tag = searchParams.get('tag'); // 标签过滤
+    const search = searchParams.get('search'); // 模糊搜索
 
     const supabase = getSupabaseClient();
     
@@ -572,6 +573,10 @@ export async function GET(request: NextRequest) {
     }
     if (tag) {
       countQuery = countQuery.contains('tags', [tag]);
+    }
+    if (search) {
+      // 模糊搜索：匹配 title 或 content
+      countQuery = countQuery.or(`title.ilike.%${search}%,content.ilike.%${search}%`);
     }
     
     const { count: total } = await countQuery;
@@ -601,6 +606,10 @@ export async function GET(request: NextRequest) {
     }
     if (tag) {
       query = query.contains('tags', [tag]);
+    }
+    if (search) {
+      // 模糊搜索：匹配 title 或 content
+      query = query.or(`title.ilike.%${search}%,content.ilike.%${search}%`);
     }
 
     const { data, error } = await query;

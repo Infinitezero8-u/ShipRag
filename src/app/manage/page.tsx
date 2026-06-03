@@ -42,6 +42,7 @@ export default function ManagePage() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterSource, setFilterSource] = useState('all');
   const [filterTag, setFilterTag] = useState('all');
+  const [filterSearch, setFilterSearch] = useState(''); // 模糊搜索
   const [sources, setSources] = useState<string[]>([]);
 
   // 分页
@@ -80,7 +81,7 @@ export default function ManagePage() {
 
   useEffect(() => {
     fetchItems();
-  }, [itemPage, filterModality, filterStatus, filterSource, filterTag]);
+  }, [itemPage, filterModality, filterStatus, filterSource, filterTag, filterSearch]);
 
   const fetchData = async () => {
     try {
@@ -111,6 +112,7 @@ export default function ManagePage() {
       if (filterStatus !== 'all') params.set('status', filterStatus);
       if (filterSource !== 'all') params.set('source', filterSource);
       if (filterTag !== 'all') params.set('tag', filterTag);
+      if (filterSearch.trim()) params.set('search', filterSearch.trim());
 
       const res = await fetch(`/api/search?${params}`);
       const data = await res.json();
@@ -609,11 +611,18 @@ export default function ManagePage() {
                   onChange={(e) => { setFilterSource(e.target.value); setItemPage(1); }}
                   className="px-2 py-1 border rounded text-sm"
                 >
-                  <option value="all">全部来源</option>
+                  <option value="all">全部来源文档</option>
                   {sources.map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
+                <input
+                  type="text"
+                  value={filterSearch}
+                  onChange={(e) => { setFilterSearch(e.target.value); setItemPage(1); }}
+                  placeholder="模糊搜索..."
+                  className="px-2 py-1 border rounded text-sm w-40"
+                />
                 <select
                   value={filterTag}
                   onChange={(e) => { setFilterTag(e.target.value); setItemPage(1); }}
