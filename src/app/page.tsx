@@ -118,6 +118,7 @@ export default function RagPage() {
   const [ragAnswer, setRagAnswer] = useState('');
   const [ragLoading, setRagLoading] = useState(false);
   const [ragTokenLimit, setRagTokenLimit] = useState(50000); // 用户可调整的 token 上限
+  const [ragSessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2)}`); // 会话ID
   const answerRef = useRef<HTMLDivElement>(null);
 
   // 获取向量化状态
@@ -383,7 +384,8 @@ export default function RagPage() {
         body: JSON.stringify({ 
           query: ragQuery, 
           topK: calculatedTopK,
-          noLimit: true 
+          noLimit: true,
+          sessionId: ragSessionId
         }),
       });
 

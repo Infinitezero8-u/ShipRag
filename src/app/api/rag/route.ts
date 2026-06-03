@@ -8,6 +8,45 @@ interface RagRequest {
   topK?: number;
   stream?: boolean;
   noLimit?: boolean; // 取消检索数量限制
+  sessionId?: string; // 会话ID，用于多轮上下文管理
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>; // 前端传递的历史消息
+}
+
+// 更新上下文（在AI回复后调用）
+async function updateContextAfterResponse(sessionId: string, query: string, answer: string): Promise<void> {
+  try {
+    const supabase = getSupabaseClient();
+    
+    // 获取当前上下文
+    const { data: existing } = await supabase
+      .from('conversation_contexts')
+      .select('messages, total_tokens')
+      .eq('session_id', sessionId)
+      .single();
+    
+    const messages = (existing?.messages as Array<{ role: string; content: string }>) || [];
+    
+    // 追加本轮问答
+    messages.push(
+      { role: 'user', content: query },
+      { role: 'assistant', content: answer }
+    );
+    
+    // 估算 token 数（简单估算：每 4 字符约 1 token）
+    const totalTokens = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+    
+    // 更新上下文
+    await supabase
+      .from('conversation_contexts')
+      .upsert({
+        session_id: sessionId,
+        messages,
+        total_tokens: totalTokens,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'session_id' });
+  } catch (error) {
+    console.error('更新上下文失败:', error);
+  }
 }
 
 // 统计问题识别
@@ -165,7 +204,7 @@ const SYSTEM_PROMPT = `你是一个智能问答助手，基于知识库进行回
 export async function POST(request: NextRequest) {
   try {
     const body: RagRequest = await request.json();
-    const { query, modality, topK, stream = true, noLimit = false } = body;
+    const { query, modality, topK, stream = true, noLimit = false, sessionId, history } = body;
     // 如果 noLimit 为 true，则不限制检索数量（最多返回 500 条）
     const actualTopK = noLimit ? 500 : (topK || 100);
 
@@ -176,13 +215,65 @@ export async function POST(request: NextRequest) {
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
     
+    // ========== 上下文管理（Coze 对话流架构）==========
+    let contextMessages: Array<{ role: 'user' | 'assistant'; content: string }> = history || [];
+    let contextSummary = '';
+    let effectiveQuery = query;
+    
+    if (sessionId) {
+      try {
+        // 1. 拼接新问题到历史对话
+        const newMessage = { role: 'user' as const, content: query };
+        contextMessages = [...contextMessages, newMessage];
+        
+        // 2. 计算上下文大小（估算 token 数，中文约 1.5 字符/token）
+        const contextText = contextMessages.map(m => m.content).join('');
+        const estimatedTokens = Math.ceil(contextText.length / 1.5);
+        const MAX_TOKENS = 128 * 1024; // 128k
+        
+        // 3. 如果超过 128k，调用大模型总结压缩
+        if (estimatedTokens > MAX_TOKENS) {
+          const llmClient = new LLMClient(new Config(), customHeaders);
+          const summaryPrompt = `请将以下历史对话压缩为原来的1/3长度，保留关键信息、用户意图和功能状态：
+
+${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}`).join('\n')}
+
+压缩后的摘要：`;
+
+          const summaryResult = await llmClient.invoke([
+            { role: 'user', content: summaryPrompt }
+          ]);
+          contextSummary = summaryResult.content || '';
+          
+          // 压缩后的摘要作为上下文
+          effectiveQuery = `[历史摘要]${contextSummary}\n\n[当前问题]${query}`;
+        }
+        
+        // 保存上下文到数据库
+        await supabase.from('conversation_contexts').upsert({
+          session_id: sessionId,
+          messages: JSON.parse(JSON.stringify(contextMessages)),
+          summary: contextSummary || null,
+          total_tokens: estimatedTokens,
+          is_compressed: estimatedTokens > MAX_TOKENS,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'session_id' });
+        
+      } catch (ctxError) {
+        console.error('上下文管理失败:', ctxError);
+        // 失败时继续使用原始查询
+      }
+    }
+    
+    // ========== 原有问答逻辑 ==========
+    
     // 问题分类：调用分类 API 判断走 SQL 还是 RAG
     let isStats = false;
     try {
       const classifyResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/classify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query: effectiveQuery }),
       });
       const classifyData = await classifyResponse.json();
       isStats = classifyData.route === 'SQL';
@@ -198,7 +289,7 @@ export async function POST(request: NextRequest) {
         const sqlResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/sql`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({ query: effectiveQuery }),
         });
         
         const sqlData = await sqlResponse.json();
@@ -316,6 +407,7 @@ ${context || '未找到相关信息'}
     // 5. 调用 LLM 生成回答
     if (stream) {
       // 流式响应
+      let fullAnswer = '';
       const encoder = new TextEncoder();
       const readable = new ReadableStream({
         async start(controller) {
@@ -327,8 +419,13 @@ ${context || '未找到相关信息'}
 
             for await (const chunk of llmStream) {
               if (chunk.content) {
+                fullAnswer += chunk.content.toString();
                 controller.enqueue(encoder.encode(chunk.content.toString()));
               }
+            }
+            // 流结束后更新上下文
+            if (sessionId) {
+              updateContextAfterResponse(sessionId, query, fullAnswer).catch(console.error);
             }
             controller.close();
           } catch (streamError) {
@@ -351,6 +448,11 @@ ${context || '未找到相关信息'}
         model: 'doubao-seed-1-8-251228',
         temperature: 0.7,
       });
+
+      // 更新上下文
+      if (sessionId) {
+        await updateContextAfterResponse(sessionId, query, response.content);
+      }
 
       return NextResponse.json({
         success: true,
