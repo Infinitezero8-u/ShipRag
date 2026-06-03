@@ -110,8 +110,8 @@ function MapController({ center, zoom }: { center: [number, number]; zoom: numbe
 
 export default function SeaChartPage() {
   const [activeTab, setActiveTab] = useState<'map' | 'track' | 'chart'>('map');
-  const [mapCenter, setMapCenter] = useState<[number, number]>([35, 105]);
-  const [mapZoom, setMapZoom] = useState(4);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([21, 106.5]);
+  const [mapZoom, setMapZoom] = useState(3);
   const [showSeaMap, setShowSeaMap] = useState(true);
   const [showPorts, setShowPorts] = useState(true);
   const [showTrack, setShowTrack] = useState(true);
@@ -408,6 +408,12 @@ export default function SeaChartPage() {
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => { setMapCenter([21, 106.5]); setMapZoom(3); }}
+                        className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100"
+                      >
+                        亚太区域
+                      </button>
                       <button
                         onClick={() => { setMapCenter([31.2304, 121.4737]); setMapZoom(10); }}
                         className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded text-xs hover:bg-blue-100"
