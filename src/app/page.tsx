@@ -69,7 +69,8 @@ interface Pagination {
 }
 
 export default function RagPage() {
-  const [activeTab, setActiveTab] = useState('upload');
+  const [showHome, setShowHome] = useState(false); // 是否显示首页
+  const [activeTab, setActiveTab] = useState('rag'); // 默认问答
   
   // 上传状态
   const [uploading, setUploading] = useState(false);
@@ -434,12 +435,79 @@ export default function RagPage() {
           </div>
         </div>
 
+        {/* 首页功能选择 */}
+        {showHome ? (
+          <div className="flex flex-col gap-6 mt-8">
+            <p className="text-center text-muted-foreground text-sm">选择功能开始使用</p>
+            <div className="grid grid-cols-1 gap-4">
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
+                onClick={() => { setShowHome(false); setActiveTab('rag'); }}
+              >
+                <CardContent className="p-6 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                    <MessageSquare className="w-6 h-6 text-green-600" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-lg">💬 智能问答</h3>
+                    <p className="text-sm text-muted-foreground">基于知识库的 RAG 智能问答</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
+              
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
+                onClick={() => { setShowHome(false); setActiveTab('upload'); }}
+              >
+                <CardContent className="p-6 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                    <Upload className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-lg">📤 文件上传</h3>
+                    <p className="text-sm text-muted-foreground">上传文件构建知识库</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
+              
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
+                onClick={() => { setShowHome(false); setActiveTab('search'); }}
+              >
+                <CardContent className="p-6 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
+                    <Search className="w-6 h-6 text-purple-600" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-lg">🔍 知识检索</h3>
+                    <p className="text-sm text-muted-foreground">语义搜索知识条目</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 mb-4">
-            <TabsTrigger value="upload" className="text-sm">📤 上传</TabsTrigger>
-            <TabsTrigger value="search" className="text-sm">🔍 检索</TabsTrigger>
-            <TabsTrigger value="rag" className="text-sm">💬 问答</TabsTrigger>
-          </TabsList>
+          <div className="flex items-center justify-between mb-4">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setShowHome(true)}
+              className="text-muted-foreground"
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              返回
+            </Button>
+            <TabsList className="grid grid-cols-3">
+              <TabsTrigger value="rag" className="text-sm">💬 问答</TabsTrigger>
+              <TabsTrigger value="upload" className="text-sm">📤 上传</TabsTrigger>
+              <TabsTrigger value="search" className="text-sm">🔍 检索</TabsTrigger>
+            </TabsList>
+            <div className="w-16" /> {/* 占位 */}
+          </div>
 
           {/* 文件上传 */}
           <TabsContent value="upload">
@@ -821,6 +889,7 @@ export default function RagPage() {
             </Card>
           </TabsContent>
         </Tabs>
+        )}
 
         {/* 预览弹窗 */}
         {previewItem && (
