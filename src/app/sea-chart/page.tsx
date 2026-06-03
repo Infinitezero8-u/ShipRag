@@ -83,7 +83,27 @@ interface Trajectory {
   bounds_min_lat: number;
   bounds_max_lat: number;
   source_file: string;
+  behavior_code?: string;
+  intent_code?: string;
+  is_split?: boolean;
+  parent_trajectory_id?: string;
   coordinates: [number, number][]; // 解析后的坐标数组
+}
+
+// 行为类型
+interface Behavior {
+  id: string;
+  code: string;
+  name: string;
+  color: string;
+}
+
+// 意图类型
+interface Intent {
+  id: string;
+  code: string;
+  name: string;
+  color: string;
 }
 
 // 模拟港口数据
@@ -158,6 +178,17 @@ export default function SeaChartPage() {
     seaArea: '',
   });
   const [showTrajectories, setShowTrajectories] = useState(true);
+  
+  // 行为和意图类型
+  const [behaviors, setBehaviors] = useState<Behavior[]>([]);
+  const [intents, setIntents] = useState<Intent[]>([]);
+  
+  // 分割模式
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitPoints, setSplitPoints] = useState<number[]>([]);
+  
+  // 标注弹窗
+  const [showLabelModal, setShowLabelModal] = useState(false);
   
   // 从数据库获取港口数据
   useEffect(() => {
@@ -256,15 +287,82 @@ export default function SeaChartPage() {
       console.log(`加载了 ${parsedTrajectories.length} 条航迹`);
     } catch (error) {
       console.error('加载航迹数据失败:', error);
-    } finally {
-      setLoadingTrajectories(false);
+    }
+    setLoadingTrajectories(false);
+  }, []);
+  
+  // 加载行为和意图类型
+  const loadBehaviorsAndIntents = useCallback(async () => {
+    try {
+      const [behaviorsRes, intentsRes] = await Promise.all([
+        fetch('/api/segment/behavior'),
+        fetch('/api/segment/intent')
+      ]);
+      const behaviorsData = await behaviorsRes.json();
+      const intentsData = await intentsRes.json();
+      setBehaviors(behaviorsData || []);
+      setIntents(intentsData || []);
+    } catch (error) {
+      console.error('加载行为意图类型失败:', error);
     }
   }, []);
   
-  // 初始加载航迹
+  // 分割航段
+  const handleSplitTrajectory = async () => {
+    if (!selectedTrajectory || splitPoints.length === 0) return;
+    
+    const sortedPoints = [...splitPoints].sort((a, b) => a - b);
+    
+    try {
+      for (const splitIndex of sortedPoints) {
+        await fetch('/api/trajectory/split', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trajectoryId: selectedTrajectory.id,
+            splitIndex
+          })
+        });
+      }
+      
+      alert(`已将航段分割为 ${sortedPoints.length + 1} 段`);
+      setSplitPoints([]);
+      setSplitMode(false);
+      loadTrajectories();
+    } catch (error) {
+      console.error('分割失败:', error);
+      alert('分割失败');
+    }
+  };
+  
+  // 标注航段
+  const handleLabelTrajectory = async (behaviorCode?: string, intentCode?: string) => {
+    if (!selectedTrajectory) return;
+    
+    try {
+      await fetch(`/api/trajectory/${selectedTrajectory.id}/label`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          behavior_code: behaviorCode,
+          intent_code: intentCode
+        })
+      });
+      
+      alert('标注成功');
+      setShowLabelModal(false);
+      loadTrajectories();
+    } catch (error) {
+      console.error('标注失败:', error);
+      alert('标注失败');
+    }
+  };
+  
+  // 初始加载航迹和行为意图类型
   useEffect(() => {
     loadTrajectories();
-  }, [loadTrajectories]);
+    loadBehaviorsAndIntents();
+  }, [loadTrajectories, loadBehaviorsAndIntents]);
   
   // 合并模拟港口和数据库港口
   const allPorts = [...mockPorts, ...dbPorts];
@@ -761,6 +859,107 @@ export default function SeaChartPage() {
                         <p className="text-gray-700 bg-gray-50 p-2 rounded">{selectedTrajectory.ai_description}</p>
                       </div>
                     )}
+                    
+                    {/* 行为和意图显示 */}
+                    {(selectedTrajectory.behavior_code || selectedTrajectory.intent_code) && (
+                      <div className="pt-2 border-t flex gap-2 flex-wrap">
+                        {selectedTrajectory.behavior_code && (
+                          <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
+                            行为: {behaviors.find(b => b.code === selectedTrajectory.behavior_code)?.name || selectedTrajectory.behavior_code}
+                          </span>
+                        )}
+                        {selectedTrajectory.intent_code && (
+                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">
+                            意图: {intents.find(i => i.code === selectedTrajectory.intent_code)?.name || selectedTrajectory.intent_code}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* 分割和标注按钮 */}
+                    <div className="pt-2 border-t flex gap-2 flex-wrap">
+                      <button
+                        onClick={() => setSplitMode(!splitMode)}
+                        className={`px-2 py-1 rounded text-xs ${splitMode ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}
+                      >
+                        {splitMode ? '取消分割' : '✂️ 分割'}
+                      </button>
+                      <button
+                        onClick={() => setShowLabelModal(true)}
+                        className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs"
+                      >
+                        🏷️ 标注
+                      </button>
+                      {splitMode && (
+                        <button
+                          onClick={handleSplitTrajectory}
+                          disabled={splitPoints.length === 0}
+                          className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs disabled:opacity-50"
+                        >
+                          确认分割 ({splitPoints.length}点)
+                        </button>
+                      )}
+                    </div>
+                    
+                    {splitMode && (
+                      <div className="pt-2 text-xs text-orange-600">
+                        点击航迹上的点选择分割位置
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* 标注弹窗 */}
+              {showLabelModal && selectedTrajectory && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4">
+                  <div className="bg-white rounded-lg shadow-xl w-full max-w-sm">
+                    <div className="p-4 border-b flex justify-between items-center">
+                      <h3 className="font-semibold">标注航段</h3>
+                      <button onClick={() => setShowLabelModal(false)} className="text-gray-500">✕</button>
+                    </div>
+                    <div className="p-4 space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">行为类型</label>
+                        <select 
+                          className="w-full px-3 py-2 border rounded-md text-sm"
+                          defaultValue={selectedTrajectory.behavior_code || ''}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value) handleLabelTrajectory(value, undefined);
+                          }}
+                        >
+                          <option value="">选择行为...</option>
+                          {behaviors.map(b => (
+                            <option key={b.code} value={b.code}>{b.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">意图类型</label>
+                        <select 
+                          className="w-full px-3 py-2 border rounded-md text-sm"
+                          defaultValue={selectedTrajectory.intent_code || ''}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value) handleLabelTrajectory(undefined, value);
+                          }}
+                        >
+                          <option value="">选择意图...</option>
+                          {intents.map(i => (
+                            <option key={i.code} value={i.code}>{i.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="p-4 border-t">
+                      <button
+                        onClick={() => setShowLabelModal(false)}
+                        className="w-full px-4 py-2 bg-gray-100 rounded-md text-sm"
+                      >
+                        关闭
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
