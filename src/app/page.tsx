@@ -9,7 +9,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
-import { ConversationFlowPanel } from '@/components/conversation-flow-panel';
 import { DataMaintainPanel } from '@/components/data-maintain-panel';
 import { 
   Upload, 
@@ -578,7 +577,6 @@ export default function RagPage() {
               <TabsTrigger value="search" className="text-xs">🔍 检索</TabsTrigger>
               <TabsTrigger value="upload" className="text-xs">📤 上传</TabsTrigger>
               <TabsTrigger value="maintain" className="text-xs">🗄️ 数据维护</TabsTrigger>
-              <TabsTrigger value="flow" className="text-xs">🔀 对话流</TabsTrigger>
             </TabsList>
             <div className="w-16" /> {/* 占位 */}
           </div>
@@ -1101,11 +1099,6 @@ export default function RagPage() {
                 <DataMaintainPanel />
               </CardContent>
             </Card>
-          </TabsContent>
-
-          {/* 对话流配置 */}
-          <TabsContent value="flow">
-            <ConversationFlowPanel />
           </TabsContent>
         </Tabs>
         )}
