@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient, loadEnv } from '@/storage/database/supabase-client';
+import { createClient } from '@supabase/supabase-js';
 import { parseFile, getFileType } from '@/lib/parsers';
 import { HeaderUtils, S3Storage, LLMClient, Config, FetchClient } from 'coze-coding-dev-sdk';
 import { v4 as uuidv4 } from 'uuid';
+
+// 直接创建 Supabase 客户端（绕过 createWrappedFetch）
+async function getDirectSupabaseClient() {
+  await loadEnv();
+  const url = process.env.COZE_SUPABASE_URL!;
+  const key = process.env.COZE_SUPABASE_SERVICE_ROLE_KEY!;
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+}
 
 // 初始化对象存储
 const storage = new S3Storage({
@@ -102,7 +113,7 @@ export async function POST(request: NextRequest) {
 
     // 获取 Supabase 客户端
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const supabase = getSupabaseClient();
+    const supabase = await getDirectSupabaseClient();
 
     // 创建文件上传记录
     const { data: uploadRecord, error: uploadError } = await supabase
@@ -219,7 +230,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = await getDirectSupabaseClient();
     
     // 获取所有上传记录
     const { data, error } = await supabase
@@ -250,7 +261,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: '需要提供 id 或 filename' }, { status: 400 });
     }
     
-    const supabase = getSupabaseClient();
+    const supabase = await getDirectSupabaseClient();
     
     // 获取文件记录
     let fileQuery = supabase.from('file_uploads').select('*');
@@ -326,7 +337,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: '缺少文件名' }, { status: 400 });
     }
     
-    const supabase = getSupabaseClient();
+    const supabase = await getDirectSupabaseClient();
     
     // 更新文件记录
     const { error: updateError } = await supabase
