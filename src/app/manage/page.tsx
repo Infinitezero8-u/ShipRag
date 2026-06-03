@@ -38,6 +38,10 @@ export default function ManagePage() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   
+  // 文件编辑状态
+  const [editingFile, setEditingFile] = useState<FileUpload | null>(null);
+  const [editFilename, setEditFilename] = useState('');
+  
   // 分页状态
   const [itemPage, setItemPage] = useState(1);
   const [itemTotal, setItemTotal] = useState(0);
@@ -129,6 +133,40 @@ export default function ManagePage() {
       setSelectedItems(new Set());
     } else {
       setSelectedItems(new Set(items.map(i => i.id)));
+    }
+  };
+
+  // 文件编辑功能
+  const openFileEdit = (file: FileUpload) => {
+    setEditingFile(file);
+    setEditFilename(file.filename);
+  };
+
+  const closeFileEdit = () => {
+    setEditingFile(null);
+    setEditFilename('');
+  };
+
+  const saveFileEdit = async () => {
+    if (!editingFile) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/upload?id=${editingFile.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: editFilename }),
+      });
+      if (res.ok) {
+        closeFileEdit();
+        fetchFiles();
+      } else {
+        alert('保存失败');
+      }
+    } catch (e) {
+      console.error('保存失败:', e);
+      alert('保存失败');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -266,12 +304,20 @@ export default function ManagePage() {
                         </div>
                       </div>
                     </div>
-                    <button
-                      onClick={() => deleteFile(file.id)}
-                      className="ml-2 px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
-                    >
-                      删除
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => openFileEdit(file)}
+                        className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => deleteFile(file.id)}
+                        className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
+                      >
+                        删除
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -453,6 +499,46 @@ export default function ManagePage() {
               </button>
               <button
                 onClick={saveEdit}
+                disabled={saving}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 文件编辑弹窗 */}
+      {editingFile && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div className="p-4 border-b">
+              <h3 className="font-medium text-gray-800">编辑文件</h3>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">文件名</label>
+                <input
+                  type="text"
+                  value={editFilename}
+                  onChange={(e) => setEditFilename(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                类型: {editingFile.file_type} · 大小: {formatFileSize(editingFile.file_size)} · 条目数: {editingFile.item_count}
+              </div>
+            </div>
+            <div className="p-4 border-t flex gap-2 justify-end">
+              <button
+                onClick={closeFileEdit}
+                className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={saveFileEdit}
                 disabled={saving}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
               >

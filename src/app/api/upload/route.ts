@@ -251,3 +251,43 @@ export async function DELETE(request: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// PATCH - 更新文件信息
+export async function PATCH(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    
+    if (!id) {
+      return NextResponse.json({ error: '缺少文件ID' }, { status: 400 });
+    }
+    
+    const body = await request.json();
+    const { filename } = body;
+    
+    if (!filename) {
+      return NextResponse.json({ error: '缺少文件名' }, { status: 400 });
+    }
+    
+    const supabase = getSupabaseClient();
+    
+    // 更新文件记录
+    const { error: updateError } = await supabase
+      .from('file_uploads')
+      .update({ filename })
+      .eq('id', id);
+    
+    if (updateError) {
+      return NextResponse.json({ error: `更新失败: ${updateError.message}` }, { status: 500 });
+    }
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: `文件名已更新为 ${filename}` 
+    });
+  } catch (error) {
+    return NextResponse.json({ 
+      error: `更新失败: ${error instanceof Error ? error.message : String(error)}` 
+    }, { status: 500 });
+  }
+}
