@@ -1,52 +1,28 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
+import dynamic from 'next/dynamic';
 import ReactECharts from 'echarts-for-react';
-import 'leaflet/dist/leaflet.css';
 
-// 修复 Leaflet 默认图标问题
-delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+// 动态导入地图组件，禁用 SSR
+const SeaMap = dynamic(() => import('./SeaMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="bg-white rounded-xl shadow-sm overflow-hidden flex items-center justify-center" style={{ height: '500px' }}>
+      <div className="text-gray-500">加载地图中...</div>
+    </div>
+  ),
 });
 
-// 港口图标 - 根据国家代码返回不同颜色
-const getPortIcon = (countryCode?: string) => {
-  let color = '#000'; // 默认黑色
-  let borderColor = '#333';
-  
-  if (countryCode) {
-    const code = countryCode.toUpperCase();
-    if (code === 'CN' || code === 'CHN' || code === '中国') {
-      color = '#ef4444'; // 中国红色
-      borderColor = '#dc2626';
-    } else if (code === 'US' || code === 'USA' || code === '美国') {
-      color = '#3b82f6'; // 美国蓝色
-      borderColor = '#2563eb';
-    }
+// 港口图标 - 根据国家代码返回不同颜色（用于非地图部分）
+const getPortIconColor = (countryCode?: string) => {
+  if (countryCode === 'CN' || countryCode === 'CHN') {
+    return '#ef4444'; // 红色
+  } else if (countryCode === 'US' || countryCode === 'USA') {
+    return '#3b82f6'; // 蓝色
   }
-  
-  return new L.DivIcon({
-    className: 'custom-port-marker',
-    html: `<div style="width:8px;height:8px;background:${color};border-radius:50%;border:1px solid ${borderColor};"></div>`,
-    iconSize: [8, 8],
-    iconAnchor: [4, 4],
-  });
+  return '#000'; // 默认黑色
 };
-
-// 船舶图标
-const shipIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
-});
 
 // 航迹点类型
 interface TrackPoint {
@@ -127,25 +103,6 @@ const mockTrack: TrackPoint[] = [
   { lat: 1.2644, lng: 103.8198, time: '2024-01-04 12:00', speed: 11.0, heading: 180 },
 ];
 
-// 地图点击处理组件
-function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
-  useMapEvents({
-    click: (e) => {
-      onMapClick(e.latlng.lat, e.latlng.lng);
-    },
-  });
-  return null;
-}
-
-// 地图控制器组件
-function MapController({ center, zoom }: { center: [number, number]; zoom: number }) {
-  const map = useMap();
-  useEffect(() => {
-    map.setView(center, zoom);
-  }, [center, zoom, map]);
-  return null;
-}
-
 export default function SeaChartPage() {
   const [activeTab, setActiveTab] = useState<'map' | 'track' | 'chart'>('map');
   const [mapCenter, setMapCenter] = useState<[number, number]>([21, 106.5]);
@@ -155,6 +112,9 @@ export default function SeaChartPage() {
   const [showTrack, setShowTrack] = useState(true);
   const [customTrack, setCustomTrack] = useState<TrackPoint[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
+  
+  // 客户端渲染标志
+  const [mounted, setMounted] = useState(false);
   
   // 折叠状态
   const [expandLayer, setExpandLayer] = useState(false);
@@ -189,6 +149,11 @@ export default function SeaChartPage() {
   
   // 标注弹窗
   const [showLabelModal, setShowLabelModal] = useState(false);
+  
+  // 客户端渲染
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   
   // 从数据库获取港口数据
   useEffect(() => {
@@ -499,155 +464,23 @@ export default function SeaChartPage() {
 
       <div className="max-w-7xl mx-auto p-4">
         {/* 地图/海图展示 */}
-        {(activeTab === 'map' || activeTab === 'track') && (
+        {mounted && (activeTab === 'map' || activeTab === 'track') && (
           <div className="space-y-4">
             {/* 地图区域 */}
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              <MapContainer
-                center={mapCenter}
-                zoom={mapZoom}
-                style={{ height: '500px', width: '100%' }}
-              >
-                <MapController center={mapCenter} zoom={mapZoom} />
-                <MapClickHandler onMapClick={handleMapClick} />
-                
-                {/* 基础地图 - 高德地图（国内稳定） */}
-                <TileLayer
-                  attribution='&copy; 高德地图'
-                  url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
-                  subdomains={['1', '2', '3', '4']}
-                  maxZoom={18}
-                />
-                
-                {/* 海图叠加 - OpenSeaMap */}
-                {showSeaMap && (
-                  <TileLayer
-                    attribution='&copy; <a href="https://www.openseamap.org">OpenSeaMap</a>'
-                    url="https://{s}.tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
-                    subdomains={['a', 'b', 'c']}
-                    maxZoom={19}
-                  />
-                )}
-
-                {/* 港口标记 */}
-                {showPorts && allPorts.map((port) => {
-                  // 从 port 中获取国家代码
-                  const countryCode = (port as any).ctryCode || (port as any).countryCode || '';
-                  return (
-                  <Marker key={port.id} position={[port.lat, port.lng]} icon={getPortIcon(countryCode)}>
-                    <Popup>
-                      <div className="min-w-[75px] text-xs">
-                        <h4 className="font-bold text-xs">{port.name}</h4>
-                        <p className="text-xs text-gray-600">代码: {port.id}</p>
-                        {port.country && <p className="text-xs text-gray-600">国家: {port.country}</p>}
-                      </div>
-                    </Popup>
-                  </Marker>
-                  );
-                })}
-
-                {/* 模拟航迹线 */}
-                {showTrack && mockTrack.length > 1 && (
-                  <Polyline
-                    positions={mockTrack.map(p => [p.lat, p.lng])}
-                    pathOptions={{ color: '#3b82f6', weight: 3, opacity: 0.8 }}
-                  />
-                )}
-
-                {/* 航迹起点 */}
-                {showTrack && mockTrack.length > 0 && (
-                  <Marker position={[mockTrack[0].lat, mockTrack[0].lng]} icon={shipIcon}>
-                    <Popup>
-                      <div>
-                        <h4 className="font-bold">起点: 上海港</h4>
-                        <p className="text-sm text-gray-600">时间: {mockTrack[0].time}</p>
-                      </div>
-                    </Popup>
-                  </Marker>
-                )}
-
-                {/* 航迹终点 */}
-                {showTrack && mockTrack.length > 0 && (
-                  <Marker position={[mockTrack[mockTrack.length - 1].lat, mockTrack[mockTrack.length - 1].lng]} icon={shipIcon}>
-                    <Popup>
-                      <div>
-                        <h4 className="font-bold">终点: 新加坡港</h4>
-                        <p className="text-sm text-gray-600">时间: {mockTrack[mockTrack.length - 1].time}</p>
-                      </div>
-                    </Popup>
-                  </Marker>
-                )}
-
-                {/* 自定义航迹 */}
-                {customTrack.length > 1 && (
-                  <Polyline
-                    positions={customTrack.map(p => [p.lat, p.lng])}
-                    pathOptions={{ color: '#ef4444', weight: 2, opacity: 0.8, dashArray: '5, 10' }}
-                  />
-                )}
-                
-                {/* 数据库航迹可视化 */}
-                {showTrajectories && trajectories.map((trajectory) => {
-                  const isSelected = selectedTrajectory?.id === trajectory.id;
-                  return (
-                    <Polyline
-                      key={trajectory.id}
-                      positions={trajectory.coordinates.map(([lng, lat]) => [lat, lng])}
-                      pathOptions={{ 
-                        color: isSelected ? '#ef4444' : '#3b82f6', 
-                        weight: isSelected ? 4 : 2, 
-                        opacity: 0.8 
-                      }}
-                      eventHandlers={{
-                        click: () => {
-                          setSelectedTrajectory(trajectory);
-                        },
-                      }}
-                    />
-                  );
-                })}
-                
-                {/* 选中航迹的起止点标记 */}
-                {selectedTrajectory && (
-                  <>
-                    {/* 起点 */}
-                    <Marker 
-                      position={[selectedTrajectory.coordinates[0][1], selectedTrajectory.coordinates[0][0]]}
-                      icon={new L.DivIcon({
-                        className: 'trajectory-start-marker',
-                        html: '<div style="width:12px;height:12px;background:#ef4444;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,0.3);"></div>',
-                        iconSize: [12, 12],
-                        iconAnchor: [6, 6],
-                      })}
-                    >
-                      <Popup>
-                        <div className="min-w-[120px] text-xs">
-                          <h4 className="font-bold">起点</h4>
-                          <p>港口: {selectedTrajectory.start_port || '未知'}</p>
-                        </div>
-                      </Popup>
-                    </Marker>
-                    {/* 终点 */}
-                    <Marker 
-                      position={[selectedTrajectory.coordinates[selectedTrajectory.coordinates.length - 1][1], selectedTrajectory.coordinates[selectedTrajectory.coordinates.length - 1][0]]}
-                      icon={new L.DivIcon({
-                        className: 'trajectory-end-marker',
-                        html: '<div style="width:12px;height:12px;background:#10b981;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,0.3);"></div>',
-                        iconSize: [12, 12],
-                        iconAnchor: [6, 6],
-                      })}
-                    >
-                      <Popup>
-                        <div className="min-w-[120px] text-xs">
-                          <h4 className="font-bold">终点</h4>
-                          <p>港口: {selectedTrajectory.end_port || '未知'}</p>
-                        </div>
-                      </Popup>
-                    </Marker>
-                  </>
-                )}
-              </MapContainer>
-            </div>
+            <SeaMap
+              mapCenter={mapCenter}
+              mapZoom={mapZoom}
+              showSeaMap={showSeaMap}
+              showPorts={showPorts}
+              showTrack={showTrack}
+              showTrajectories={showTrajectories}
+              allPorts={allPorts}
+              mockTrack={mockTrack}
+              customTrack={customTrack}
+              trajectories={trajectories}
+              selectedTrajectory={selectedTrajectory}
+              onMapClick={handleMapClick}
+            />
 
             {/* 控制面板 - 水平排列 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1041,94 +874,6 @@ export default function SeaChartPage() {
               </div>
             </div>
 
-            {/* 地图区域 - 在上方 */}
-            <div className="w-full">
-              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-                <MapContainer
-                  center={mapCenter}
-                  zoom={mapZoom}
-                  style={{ height: '500px', width: '100%' }}
-                >
-                  <MapController center={mapCenter} zoom={mapZoom} />
-                  <MapClickHandler onMapClick={handleMapClick} />
-                  
-                  {/* 基础地图 - 高德地图（国内稳定） */}
-                  <TileLayer
-                    attribution='&copy; 高德地图'
-                    url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
-                    subdomains={['1', '2', '3', '4']}
-                    maxZoom={18}
-                  />
-                  
-                  {/* 海图叠加 - OpenSeaMap */}
-                  {showSeaMap && (
-                    <TileLayer
-                      attribution='&copy; <a href="https://www.openseamap.org">OpenSeaMap</a>'
-                      url="https://{s}.tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
-                      subdomains={['a', 'b', 'c']}
-                      maxZoom={19}
-                    />
-                  )}
-
-                  {/* 港口标记 */}
-                  {showPorts && allPorts.map((port) => {
-                    // 从 port 中获取国家代码
-                    const countryCode = (port as any).ctryCode || (port as any).countryCode || '';
-                    return (
-                    <Marker key={port.id} position={[port.lat, port.lng]} icon={getPortIcon(countryCode)}>
-                      <Popup>
-                        <div className="min-w-[75px] text-xs">
-                          <h4 className="font-bold text-xs">{port.name}</h4>
-                          <p className="text-xs text-gray-600">代码: {port.id}</p>
-                          {port.country && <p className="text-xs text-gray-600">国家: {port.country}</p>}
-                        </div>
-                      </Popup>
-                    </Marker>
-                    );
-                  })}
-
-                  {/* 模拟航迹线 */}
-                  {showTrack && mockTrack.length > 1 && (
-                    <Polyline
-                      positions={mockTrack.map(p => [p.lat, p.lng])}
-                      pathOptions={{ color: '#3b82f6', weight: 3, opacity: 0.8 }}
-                    />
-                  )}
-
-                  {/* 航迹起点 */}
-                  {showTrack && mockTrack.length > 0 && (
-                    <Marker position={[mockTrack[0].lat, mockTrack[0].lng]} icon={shipIcon}>
-                      <Popup>
-                        <div>
-                          <h4 className="font-bold">起点: 上海港</h4>
-                          <p className="text-sm text-gray-600">时间: {mockTrack[0].time}</p>
-                        </div>
-                      </Popup>
-                    </Marker>
-                  )}
-
-                  {/* 航迹终点 */}
-                  {showTrack && mockTrack.length > 0 && (
-                    <Marker position={[mockTrack[mockTrack.length - 1].lat, mockTrack[mockTrack.length - 1].lng]} icon={shipIcon}>
-                      <Popup>
-                        <div>
-                          <h4 className="font-bold">终点: 新加坡港</h4>
-                          <p className="text-sm text-gray-600">时间: {mockTrack[mockTrack.length - 1].time}</p>
-                        </div>
-                      </Popup>
-                    </Marker>
-                  )}
-
-                  {/* 自定义航迹 */}
-                  {customTrack.length > 1 && (
-                    <Polyline
-                      positions={customTrack.map(p => [p.lat, p.lng])}
-                      pathOptions={{ color: '#ef4444', weight: 2, opacity: 0.8, dashArray: '5, 10' }}
-                    />
-                  )}
-                </MapContainer>
-              </div>
-            </div>
           </div>
         )}
 
