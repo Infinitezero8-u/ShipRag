@@ -422,21 +422,20 @@ export async function POST(request: NextRequest) {
         const text = `港口代码:${port.port_code},中文港名:${port.name_cn},国家:${port.ctry_name_cn}(${port.ctry_name_en}),全拼音:${port.name_pinyin},拼音简码:${port.name_py},时区偏移:${port.tz_offset}小时,港口类型:${port.port_type},经度:${port.lon},纬度:${port.lat},大洲:${port.continent_name_cn}(${port.continent_name_en})`;
 
         try {
-          const embedResult = await embeddingClient.embed([text]);
-          const vector = embedResult as unknown as number[];
+          const vector = await embeddingClient.embedText(text);
 
-          if (!vector) throw new Error('向量化失败');
+          if (!vector || !Array.isArray(vector)) throw new Error('向量化返回结果无效');
 
           // 存入knowledge_items表
           const { error: insertError } = await supabase.from('knowledge_items').insert({
             title: port.name_cn,
             content: text,
             modality: 'port',
-            source_file: 'port_data',
+            source: 'port_data',
             embedding: vector
           });
 
-          if (insertError) throw insertError;
+          if (insertError) throw new Error(`数据库插入失败: ${insertError.message}`);
 
           await supabase
             .from('port_data')
@@ -447,7 +446,8 @@ export async function POST(request: NextRequest) {
             success: true,
             message: formatOutput('向量化', portCode, '成功', '向量化成功')
           });
-        } catch (vecError) {
+        } catch (vecError: unknown) {
+          const errMsg = vecError instanceof Error ? vecError.message : String(vecError);
           await supabase
             .from('port_data')
             .update({ vector_status: '向量化失败' })
@@ -455,7 +455,7 @@ export async function POST(request: NextRequest) {
 
           return NextResponse.json({
             success: false,
-            message: formatOutput('向量化', portCode, `失败：${String(vecError)}`, '向量化失败')
+            message: formatOutput('向量化', portCode, `失败：${errMsg}`, '向量化失败')
           });
         }
       }
@@ -497,21 +497,20 @@ export async function POST(request: NextRequest) {
         const text = `航线:起运港${OrigPort}到目的港${DestPort},航线坐标:${coordPreview}`;
 
         try {
-          const embedResult = await embeddingClient.embed([text]);
-          const vector = embedResult as unknown as number[];
+          const vector = await embeddingClient.embedText(text);
 
-          if (!vector) throw new Error('向量化失败');
+          if (!vector || !Array.isArray(vector)) throw new Error('向量化失败');
 
           const { error: insertError } = await supabase.from('knowledge_items').insert({
             title: `${OrigPort}-${DestPort}`,
             content: text,
             modality: 'route',
-            source_file: 'route_data',
+            source: 'route_data',
             embedding: vector,
             metadata: { orig_port: OrigPort, dest_port: DestPort, geometry_wkt: route.geometry_wkt }
           });
 
-          if (insertError) throw insertError;
+          if (insertError) throw new Error(`数据库插入失败: ${insertError.message}`);
 
           await supabase
             .from('route_data')
@@ -523,7 +522,8 @@ export async function POST(request: NextRequest) {
             success: true,
             message: formatOutput('向量化', `${OrigPort}-${DestPort}`, '成功', '向量化成功')
           });
-        } catch (vecError) {
+        } catch (vecError: unknown) {
+          const errMsg = vecError instanceof Error ? vecError.message : String(vecError);
           await supabase
             .from('route_data')
             .update({ vector_status: '向量化失败' })
@@ -532,7 +532,7 @@ export async function POST(request: NextRequest) {
 
           return NextResponse.json({
             success: false,
-            message: formatOutput('向量化', `${OrigPort}-${DestPort}`, `失败：${String(vecError)}`, '向量化失败')
+            message: formatOutput('向量化', `${OrigPort}-${DestPort}`, `失败：${errMsg}`, '向量化失败')
           });
         }
       }

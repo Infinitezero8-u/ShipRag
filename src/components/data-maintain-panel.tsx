@@ -416,6 +416,31 @@ function EditDataModal({ type, data, onClose, onSuccess, setMessage }: {
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
 
+  // 初始化表单数据
+  useEffect(() => {
+    if (type === 'port') {
+      setFormData({
+        nameCn: String(data.name_cn || ''),
+        ctryCode: String(data.ctry_code || ''),
+        ctryNameCn: String(data.ctry_name_cn || ''),
+        ctryNameEn: String(data.ctry_name_en || ''),
+        namePinyin: String(data.name_pinyin || ''),
+        namePy: String(data.name_py || ''),
+        tzOffset: String(data.tz_offset || ''),
+        portType: String(data.port_type || ''),
+        lon: String(data.lon || ''),
+        lat: String(data.lat || ''),
+        continentCode: String(data.continent_code || ''),
+        continentNameCn: String(data.continent_name_cn || ''),
+        continentNameEn: String(data.continent_name_en || '')
+      });
+    } else {
+      setFormData({
+        geometry_wkt: String(data.geometry_wkt || '')
+      });
+    }
+  }, [type, data]);
+
   const handleSubmit = async () => {
     setLoading(true);
     const body = type === 'port'
