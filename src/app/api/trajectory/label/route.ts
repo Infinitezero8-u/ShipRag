@@ -315,6 +315,107 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
     
+    // 标签管理操作
+    if (action === 'addLabel') {
+      const { type, code, name, description } = body;
+      if (!type || !code || !name) {
+        return NextResponse.json({ error: '缺少type/code/name参数' }, { status: 400 });
+      }
+      if (type !== 'behavior' && type !== 'intent') {
+        return NextResponse.json({ error: 'type必须是behavior或intent' }, { status: 400 });
+      }
+      
+      // 获取最大排序号
+      const { data: maxSort } = await supabase
+        .from('trajectory_labels')
+        .select('sort_order')
+        .eq('type', type)
+        .order('sort_order', { ascending: false })
+        .limit(1);
+      
+      const sortOrder = (maxSort?.[0]?.sort_order || 0) + 1;
+      
+      const { data, error } = await supabase
+        .from('trajectory_labels')
+        .insert({
+          type,
+          code,
+          name,
+          description: description || '',
+          sort_order: sortOrder,
+          is_active: true
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, label: data });
+    }
+    
+    if (action === 'updateLabel') {
+      const { code, name, description } = body;
+      if (!code) {
+        return NextResponse.json({ error: '缺少code参数' }, { status: 400 });
+      }
+      
+      const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (name) updateData.name = name;
+      if (description !== undefined) updateData.description = description;
+      
+      const { data, error } = await supabase
+        .from('trajectory_labels')
+        .update(updateData)
+        .eq('code', code)
+        .select()
+        .single();
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, label: data });
+    }
+    
+    if (action === 'deleteLabel') {
+      const { code } = body;
+      if (!code) {
+        return NextResponse.json({ error: '缺少code参数' }, { status: 400 });
+      }
+      
+      // 软删除：设置is_active为false
+      const { error } = await supabase
+        .from('trajectory_labels')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('code', code);
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, message: `标签 ${code} 已删除` });
+    }
+    
+    if (action === 'restoreLabel') {
+      const { code } = body;
+      if (!code) {
+        return NextResponse.json({ error: '缺少code参数' }, { status: 400 });
+      }
+      
+      const { error } = await supabase
+        .from('trajectory_labels')
+        .update({ is_active: true, updated_at: new Date().toISOString() })
+        .eq('code', code);
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, message: `标签 ${code} 已恢复` });
+    }
+    
     // 导入航迹数据
     if (action === 'import') {
       const { data } = body;
@@ -406,10 +507,65 @@ export async function GET(request: NextRequest) {
   const action = searchParams.get('action');
   
   if (action === 'labels') {
-    return NextResponse.json({
-      behaviors: BEHAVIOR_LABELS,
-      intents: INTENT_LABELS
-    });
+    try {
+      const supabase = getSupabaseClient();
+      
+      // 从数据库获取标签
+      const { data: dbLabels, error } = await supabase
+        .from('trajectory_labels')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      
+      if (error || !dbLabels) {
+        // 如果数据库失败，返回默认标签
+        return NextResponse.json({
+          behaviors: BEHAVIOR_LABELS,
+          intents: INTENT_LABELS
+        });
+      }
+      
+      // 分离行为和意图标签
+      const behaviors = dbLabels
+        .filter(l => l.type === 'behavior')
+        .map(l => ({ code: l.code, name: l.name, description: l.description }));
+      
+      const intents = dbLabels
+        .filter(l => l.type === 'intent')
+        .map(l => ({ code: l.code, name: l.name, description: l.description }));
+      
+      return NextResponse.json({ behaviors, intents });
+    } catch {
+      return NextResponse.json({
+        behaviors: BEHAVIOR_LABELS,
+        intents: INTENT_LABELS
+      });
+    }
+  }
+  
+  // 获取单个标签详情
+  if (action === 'labelDetail') {
+    const code = searchParams.get('code');
+    if (!code) {
+      return NextResponse.json({ error: '缺少code参数' }, { status: 400 });
+    }
+    
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('trajectory_labels')
+        .select('*')
+        .eq('code', code)
+        .single();
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, label: data });
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
   }
   
   // 获取待标注航迹列表
