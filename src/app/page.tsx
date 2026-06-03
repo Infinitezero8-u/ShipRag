@@ -558,31 +558,47 @@ export default function RagPage() {
                   {searchResults.map((result, index) => (
                     <div 
                       key={result.id || index} 
-                      className="p-3 bg-muted rounded-lg cursor-pointer hover:bg-muted/80"
+                      className="p-2 bg-muted rounded-lg cursor-pointer hover:bg-muted/80"
                       onClick={() => setPreviewItem(result)}
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="outline" className="text-xs">
-                          {modalityLabels[result.modality as Modality] || result.modality}
-                        </Badge>
-                        <span className="font-medium text-sm truncate flex-1">{result.title}</span>
-                        {result.similarity !== undefined && (
-                          <span className="text-xs text-green-600 font-bold">
-                            {((result.similarity) * 100).toFixed(0)}%
-                          </span>
+                      <div className="flex gap-2">
+                        {/* 图片缩略图 */}
+                        {result.modality === 'image' && result.metadata && 'storageUrl' in result.metadata && (
+                          <img 
+                            src={result.metadata.storageUrl as string} 
+                            alt={result.title}
+                            className="w-16 h-16 object-cover rounded border shrink-0"
+                          />
                         )}
-                        <Eye className="w-4 h-4 text-muted-foreground" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1 mb-1">
+                            <Badge variant="outline" className="text-xs shrink-0">
+                              {modalityLabels[result.modality as Modality] || result.modality}
+                            </Badge>
+                            <span className="font-medium text-xs truncate">{result.title}</span>
+                            {result.similarity !== undefined && (
+                              <span className="text-xs text-green-600 font-bold ml-auto shrink-0">
+                                {(result.similarity * 100).toFixed(0)}%
+                              </span>
+                            )}
+                            <Eye className="w-3 h-3 text-muted-foreground shrink-0" />
+                          </div>
+                          {/* 图片描述摘要 */}
+                          {result.modality === 'image' ? (
+                            <p className="text-xs text-blue-600 line-clamp-2">
+                              📷 {getImageDescription(result) || '暂无描述'}
+                            </p>
+                          ) : result.modality === 'excel' ? (
+                            <p className="text-xs text-muted-foreground line-clamp-2">
+                              📊 {result.content?.substring(0, 100)}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground line-clamp-2">
+                              {result.content?.substring(0, 100)}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      {/* 图片显示摘要描述 */}
-                      {result.modality === 'image' ? (
-                        <p className="text-xs text-blue-600 line-clamp-2">
-                          📷 {getImageDescription(result)}
-                        </p>
-                      ) : (
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {result.content?.substring(0, 150)}
-                        </p>
-                      )}
                     </div>
                   ))}
                 </div>
@@ -681,42 +697,83 @@ export default function RagPage() {
 
         {/* 预览弹窗 */}
         {previewItem && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setPreviewItem(null)}>
-            <div className="bg-background rounded-lg max-w-lg w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-              <div className="p-4 border-b flex justify-between items-center">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-2 z-50" onClick={() => setPreviewItem(null)}>
+            <div 
+              ref={(el) => { if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+              className="bg-background rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto" 
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-3 border-b flex justify-between items-center sticky top-0 bg-background">
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">
                     {modalityLabels[previewItem.modality as Modality] || previewItem.modality}
                   </Badge>
-                  <span className="font-medium">{previewItem.title}</span>
+                  <span className="font-medium text-sm">{previewItem.title}</span>
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => setPreviewItem(null)}>
                   <X className="w-4 h-4" />
                 </Button>
               </div>
-              <div className="p-4 space-y-3">
-                {previewItem.modality === 'image' && previewItem.metadata && 'storageUrl' in previewItem.metadata && (
-                  <img 
-                    src={previewItem.metadata.storageUrl as string} 
-                    alt={previewItem.title}
-                    className="w-full rounded-lg"
-                  />
-                )}
+              <div className="p-3 space-y-3">
+                {/* 图片附件 */}
                 {previewItem.modality === 'image' && (
-                  <div className="p-3 bg-blue-50 rounded-lg">
-                    <p className="text-sm text-blue-800 font-medium mb-1">📷 图片描述</p>
-                    <p className="text-sm text-blue-700">{getImageDescription(previewItem)}</p>
+                  <div className="space-y-2">
+                    {previewItem.metadata && 'storageUrl' in previewItem.metadata && (
+                      <div className="relative">
+                        <img 
+                          src={previewItem.metadata.storageUrl as string} 
+                          alt={previewItem.title}
+                          className="w-full max-h-64 object-contain rounded-lg border"
+                        />
+                        <Badge className="absolute top-2 left-2" variant="secondary">📷 附件</Badge>
+                      </div>
+                    )}
+                    <div className="p-2 bg-blue-50 rounded-lg">
+                      <p className="text-xs text-blue-800 font-medium mb-1">图片描述</p>
+                      <p className="text-sm text-blue-700">{getImageDescription(previewItem) || '暂无描述'}</p>
+                    </div>
                   </div>
                 )}
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">来源: {previewItem.source}</p>
+                
+                {/* Excel 表格展示 */}
+                {previewItem.modality === 'excel' && (
+                  <div className="space-y-2">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border-collapse">
+                        <tbody>
+                          {(() => {
+                            // 解析 content 为表格
+                            const fields = previewItem.content.split(', ').map(f => f.split(': '));
+                            return fields.map((field, i) => (
+                              <tr key={i} className={i % 2 === 0 ? 'bg-muted/50' : ''}>
+                                <td className="border px-2 py-1 font-medium w-1/3">{field[0]}</td>
+                                <td className="border px-2 py-1">{field[1]}</td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex gap-2">
+                      <Badge variant="outline" className="text-xs">📊 表格数据</Badge>
+                      <Badge variant="outline" className="text-xs">{previewItem.source}</Badge>
+                    </div>
+                  </div>
+                )}
+                
+                {/* 其他类型内容 */}
+                {previewItem.modality !== 'image' && previewItem.modality !== 'excel' && (
+                  <div className="p-2 bg-muted rounded-lg">
+                    <p className="text-xs font-medium mb-1">内容</p>
+                    <p className="text-sm whitespace-pre-wrap break-all">{previewItem.content}</p>
+                  </div>
+                )}
+                
+                <div className="flex justify-between text-xs text-muted-foreground pt-2 border-t">
+                  <span>来源: {previewItem.source}</span>
                   {previewItem.similarity !== undefined && (
-                    <p className="text-xs text-green-600">相似度: {((previewItem.similarity) * 100).toFixed(1)}%</p>
+                    <span className="text-green-600 font-medium">相似度: {(previewItem.similarity * 100).toFixed(1)}%</span>
                   )}
-                </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-xs font-medium mb-1">内容</p>
-                  <p className="text-sm whitespace-pre-wrap break-all">{previewItem.content}</p>
                 </div>
               </div>
             </div>
