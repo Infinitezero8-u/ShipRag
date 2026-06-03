@@ -141,11 +141,16 @@ export async function POST(request: NextRequest) {
     }));
 
     if (itemsToInsert.length > 0) {
-      const { error: insertError } = await supabase
+      console.log(`[上传] 准备插入 ${itemsToInsert.length} 条条目，来源: ${filename}`);
+      console.log(`[上传] 条目预览:`, itemsToInsert.map(i => ({ modality: i.modality, title: i.title?.substring(0, 30), contentLen: i.content?.length })));
+      
+      const { data: insertedData, error: insertError } = await supabase
         .from('knowledge_items')
-        .insert(itemsToInsert);
+        .insert(itemsToInsert)
+        .select();
 
       if (insertError) {
+        console.error(`[上传] 插入失败:`, insertError);
         // 更新上传状态为失败
         await supabase
           .from('file_uploads')
@@ -154,6 +159,10 @@ export async function POST(request: NextRequest) {
         
         return NextResponse.json({ error: `插入知识条目失败: ${insertError.message}` }, { status: 500 });
       }
+      
+      console.log(`[上传] 成功插入 ${insertedData?.length || 0} 条条目`);
+    } else {
+      console.log(`[上传] 警告: 解析出 0 条条目，来源: ${filename}`);
     }
 
     // 更新上传状态为完成
