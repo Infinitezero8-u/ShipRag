@@ -508,83 +508,64 @@ export default function SeaChartPage() {
                       />
                       <span className="text-sm text-gray-700">海图叠加 (OpenSeaMap)</span>
                     </label>
-                    {/* 港口显隐 - 单选框 */}
-                    <div className="border-t pt-2 mt-2">
-                      <label className="text-xs text-gray-500 font-medium">港口</label>
-                      <div className="mt-1 space-y-1 text-xs">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="showPorts"
-                            checked={showPorts}
-                            onChange={() => setShowPorts(true)}
-                            className="w-3 h-3"
-                          />
-                          <span className="text-gray-700">显示港口</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="showPorts"
-                            checked={!showPorts}
-                            onChange={() => setShowPorts(false)}
-                            className="w-3 h-3"
-                          />
-                          <span className="text-gray-700">隐藏港口</span>
-                        </label>
-                      </div>
-                    </div>
+                    {/* 港口显隐 - 复选框 */}
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showPorts}
+                        onChange={(e) => setShowPorts(e.target.checked)}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="text-sm text-gray-700">港口</span>
+                    </label>
                     {/* 国家筛选 - 复选框 */}
                     {showPorts && (
-                      <div className="border-t pt-2 mt-2">
-                        <label className="text-xs text-gray-500 font-medium">国家分类</label>
-                        <div className="mt-1 space-y-1 text-xs">
-                          <label className="flex items-center gap-1 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={selectedCountries.includes('CN')}
-                              onChange={() => {
-                                setSelectedCountries(prev => 
-                                  prev.includes('CN') ? prev.filter(c => c !== 'CN') : [...prev, 'CN']
-                                );
-                              }}
-                              className="w-3 h-3 rounded"
-                            />
-                            <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                            <span className="text-gray-700">中国 ({allPorts.filter(p => p.ctryCode === 'CN' || p.ctryCode === 'CHN' || p.country === '中国').length}个)</span>
-                          </label>
-                          <label className="flex items-center gap-1 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={selectedCountries.includes('US')}
-                              onChange={() => {
-                                setSelectedCountries(prev => 
-                                  prev.includes('US') ? prev.filter(c => c !== 'US') : [...prev, 'US']
-                                );
-                              }}
-                              className="w-3 h-3 rounded"
-                            />
-                            <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                            <span className="text-gray-700">美国 ({allPorts.filter(p => p.ctryCode === 'US' || p.ctryCode === 'USA' || p.country === '美国').length}个)</span>
-                          </label>
-                          <label className="flex items-center gap-1 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={selectedCountries.includes('OTHER')}
-                              onChange={() => {
-                                setSelectedCountries(prev => 
-                                  prev.includes('OTHER') ? prev.filter(c => c !== 'OTHER') : [...prev, 'OTHER']
-                                );
-                              }}
-                              className="w-3 h-3 rounded"
-                            />
-                            <span className="w-2 h-2 rounded-full bg-gray-500"></span>
-                            <span className="text-gray-700">其他 ({allPorts.filter(p => 
-                              !['CN', 'CHN', 'US', 'USA'].includes(p.ctryCode || '') && 
-                              !['中国', '美国'].includes(p.country)
-                            ).length}个)</span>
-                          </label>
-                        </div>
+                      <div className="ml-6 space-y-1 text-xs">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedCountries.includes('CN')}
+                            onChange={() => {
+                              setSelectedCountries(prev => 
+                                prev.includes('CN') ? prev.filter(c => c !== 'CN') : [...prev, 'CN']
+                              );
+                            }}
+                            className="w-3 h-3 rounded"
+                          />
+                          <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                          <span className="text-gray-700">中国 ({allPorts.filter(p => p.ctryCode === 'CN' || p.ctryCode === 'CHN' || p.country === '中国').length}个)</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedCountries.includes('US')}
+                            onChange={() => {
+                              setSelectedCountries(prev => 
+                                prev.includes('US') ? prev.filter(c => c !== 'US') : [...prev, 'US']
+                              );
+                            }}
+                            className="w-3 h-3 rounded"
+                          />
+                          <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                          <span className="text-gray-700">美国 ({allPorts.filter(p => p.ctryCode === 'US' || p.ctryCode === 'USA' || p.country === '美国').length}个)</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedCountries.includes('OTHER')}
+                            onChange={() => {
+                              setSelectedCountries(prev => 
+                                prev.includes('OTHER') ? prev.filter(c => c !== 'OTHER') : [...prev, 'OTHER']
+                              );
+                            }}
+                            className="w-3 h-3 rounded"
+                          />
+                          <span className="w-2 h-2 rounded-full bg-gray-500"></span>
+                          <span className="text-gray-700">其他 ({allPorts.filter(p => 
+                            !['CN', 'CHN', 'US', 'USA'].includes(p.ctryCode || '') && 
+                            !['中国', '美国'].includes(p.country)
+                          ).length}个)</span>
+                        </label>
                       </div>
                     )}
                     <label className="flex items-center gap-2 cursor-pointer">
