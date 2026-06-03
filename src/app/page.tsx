@@ -17,11 +17,13 @@ import {
   FileSpreadsheet,
   Loader2,
   Send,
-  ChevronDown,
-  ChevronUp,
   Play,
   Pause,
-  X
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Settings
 } from 'lucide-react';
 
 type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory';
@@ -57,6 +59,14 @@ interface KnowledgeItem {
   metadata?: Record<string, unknown>;
 }
 
+interface Pagination {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
 export default function RagPage() {
   const [activeTab, setActiveTab] = useState('upload');
   
@@ -77,8 +87,6 @@ export default function RagPage() {
     pending: number;
   } | null>(null);
   const [embedding, setEmbedding] = useState(false);
-  
-  // 自动向量化状态
   const [autoEmbedding, setAutoEmbedding] = useState(false);
   const [embedProgress, setEmbedProgress] = useState({ processed: 0, failed: 0 });
   
@@ -86,9 +94,6 @@ export default function RagPage() {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [detailItems, setDetailItems] = useState<KnowledgeItem[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailPage, setDetailPage] = useState(1);
-  const [detailTotal, setDetailTotal] = useState(0);
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState('');
@@ -96,11 +101,17 @@ export default function RagPage() {
   const [searchMode, setSearchMode] = useState<'fuzzy' | 'exact'>('fuzzy');
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<KnowledgeItem[]>([]);
+  const [searchPagination, setSearchPagination] = useState<Pagination | null>(null);
+  const [searchPage, setSearchPage] = useState(1);
+  
+  // 预览状态
+  const [previewItem, setPreviewItem] = useState<KnowledgeItem | null>(null);
   
   // RAG 状态
   const [ragQuery, setRagQuery] = useState('');
   const [ragAnswer, setRagAnswer] = useState('');
   const [ragLoading, setRagLoading] = useState(false);
+  const [ragTokenLimit, setRagTokenLimit] = useState(50000); // 用户可调整的 token 上限
   const answerRef = useRef<HTMLDivElement>(null);
 
   // 获取向量化状态
@@ -208,14 +219,12 @@ export default function RagPage() {
   };
 
   // 获取详情列表
-  const fetchDetailItems = async (type: 'embedded' | 'pending' | 'all', page: number = 1) => {
+  const fetchDetailItems = async (type: 'embedded' | 'pending' | 'all') => {
     setDetailLoading(true);
     try {
-      const res = await fetch(`/api/search?type=${type}&limit=20&offset=${(page - 1) * 20}`);
+      const res = await fetch(`/api/search?type=${type}&limit=20`);
       const data = await res.json();
       setDetailItems(data.items || []);
-      setDetailTotal(data.total || 0);
-      setDetailPage(page);
     } finally {
       setDetailLoading(false);
     }
@@ -250,47 +259,28 @@ export default function RagPage() {
     }
   };
 
-  // 取消选中
-  const handleCancelSelected = async () => {
-    if (selectedItems.size === 0) return;
-    if (!confirm(`确定要删除选中的 ${selectedItems.size} 条条目吗？`)) return;
-    try {
-      const res = await fetch('/api/embed', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: Array.from(selectedItems) }),
-      });
-      const data = await res.json();
-      alert(`已删除 ${data.deleted} 条条目`);
-      setSelectedItems(new Set());
-      fetchEmbedStatus();
-      if (expandedSection === 'pending') {
-        fetchDetailItems('pending');
-      }
-    } catch (error) {
-      alert('取消失败');
-    }
-  };
-
   // 搜索
-  const handleSearch = async () => {
+  const handleSearch = async (page: number = 1) => {
     if (!searchQuery.trim()) return;
     setSearching(true);
-    setSearchResults([]);
+    setSearchPage(page);
     try {
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: searchQuery,
-          topK: 50,
+          topK: 500, // 获取更多结果用于分页
           threshold: 0.3,
           mode: searchMode,
           filter: searchModality ? { modality: searchModality } : undefined,
+          page,
+          pageSize: 10,
         }),
       });
       const data = await res.json();
       setSearchResults(data.results || []);
+      setSearchPagination(data.pagination || null);
     } finally {
       setSearching(false);
     }
@@ -303,10 +293,17 @@ export default function RagPage() {
     setRagAnswer('');
 
     try {
+      // 计算 topK 基于用户设置的 token 上限（假设每条约 200 tokens）
+      const calculatedTopK = Math.floor(ragTokenLimit / 200);
+      
       const res = await fetch('/api/rag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: ragQuery, noLimit: true }),
+        body: JSON.stringify({ 
+          query: ragQuery, 
+          topK: calculatedTopK,
+          noLimit: true 
+        }),
       });
 
       const reader = res.body?.getReader();
@@ -322,6 +319,17 @@ export default function RagPage() {
     } finally {
       setRagLoading(false);
     }
+  };
+
+  // 获取图片描述
+  const getImageDescription = (item: KnowledgeItem): string => {
+    if (item.metadata?.description) {
+      return item.metadata.description as string;
+    }
+    if (item.content && item.content.length > 0) {
+      return item.content.substring(0, 150);
+    }
+    return '图片已向量化，暂无描述';
   };
 
   return (
@@ -429,7 +437,6 @@ export default function RagPage() {
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-medium">
                         {expandedSection === 'all' ? '全部' : expandedSection === 'embedded' ? '已向量化' : '待处理'}
-                        ({detailTotal})
                       </span>
                       <Button variant="ghost" size="sm" onClick={() => setExpandedSection(null)}>
                         <X className="w-4 h-4" />
@@ -496,7 +503,7 @@ export default function RagPage() {
                     placeholder="输入检索内容..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch(1)}
                     className="h-11 text-base"
                   />
                   
@@ -523,7 +530,7 @@ export default function RagPage() {
                     </select>
                   </div>
                   
-                  <Button onClick={handleSearch} disabled={searching} className="w-full h-11">
+                  <Button onClick={() => handleSearch(1)} disabled={searching} className="w-full h-11">
                     {searching ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -538,32 +545,72 @@ export default function RagPage() {
                   </Button>
                 </div>
 
+                {/* 分页信息 */}
+                {searchPagination && searchPagination.totalCount > 0 && (
+                  <div className="flex justify-between items-center text-sm text-muted-foreground px-1">
+                    <span>共 {searchPagination.totalCount} 条结果</span>
+                    <span>第 {searchPagination.page}/{searchPagination.totalPages} 页</span>
+                  </div>
+                )}
+
                 {/* 搜索结果 */}
                 <div className="space-y-2">
-                  {searchResults.length > 0 && (
-                    <div className="text-sm text-muted-foreground">
-                      找到 {searchResults.length} 条结果
-                    </div>
-                  )}
                   {searchResults.map((result, index) => (
-                    <div key={result.id || index} className="p-3 bg-muted rounded-lg">
+                    <div 
+                      key={result.id || index} 
+                      className="p-3 bg-muted rounded-lg cursor-pointer hover:bg-muted/80"
+                      onClick={() => setPreviewItem(result)}
+                    >
                       <div className="flex items-center gap-2 mb-1">
                         <Badge variant="outline" className="text-xs">
                           {modalityLabels[result.modality as Modality] || result.modality}
                         </Badge>
                         <span className="font-medium text-sm truncate flex-1">{result.title}</span>
-                        <span className="text-xs text-green-600 font-bold">
-                          {((result.similarity || 0) * 100).toFixed(0)}%
-                        </span>
+                        {result.similarity !== undefined && (
+                          <span className="text-xs text-green-600 font-bold">
+                            {((result.similarity) * 100).toFixed(0)}%
+                          </span>
+                        )}
+                        <Eye className="w-4 h-4 text-muted-foreground" />
                       </div>
-                      <p className="text-xs text-muted-foreground line-clamp-2">
-                        {result.modality === 'image' 
-                          ? (result.metadata?.description as string) || result.content?.substring(0, 100)
-                          : result.content?.substring(0, 150)}
-                      </p>
+                      {/* 图片显示摘要描述 */}
+                      {result.modality === 'image' ? (
+                        <p className="text-xs text-blue-600 line-clamp-2">
+                          📷 {getImageDescription(result)}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {result.content?.substring(0, 150)}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
+
+                {/* 分页按钮 */}
+                {searchPagination && searchPagination.totalPages > 1 && (
+                  <div className="flex justify-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={searchPage <= 1 || searching}
+                      onClick={() => handleSearch(searchPage - 1)}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+                    <span className="flex items-center px-3 text-sm">
+                      {searchPage} / {searchPagination.totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!searchPagination.hasMore || searching}
+                      onClick={() => handleSearch(searchPage + 1)}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -575,6 +622,24 @@ export default function RagPage() {
                 <CardTitle className="text-base">RAG 智能问答</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                {/* Token 上限设置 */}
+                <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
+                  <Settings className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">Token上限:</span>
+                  <input
+                    type="range"
+                    min="10000"
+                    max="100000"
+                    step="5000"
+                    value={ragTokenLimit}
+                    onChange={(e) => setRagTokenLimit(Number(e.target.value))}
+                    className="flex-1 h-2"
+                  />
+                  <span className="text-xs font-medium w-16 text-right">
+                    {(ragTokenLimit / 1000).toFixed(0)}K
+                  </span>
+                </div>
+
                 <div className="space-y-2">
                   <Textarea
                     placeholder="输入您的问题..."
@@ -613,6 +678,50 @@ export default function RagPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* 预览弹窗 */}
+        {previewItem && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setPreviewItem(null)}>
+            <div className="bg-background rounded-lg max-w-lg w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <div className="p-4 border-b flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">
+                    {modalityLabels[previewItem.modality as Modality] || previewItem.modality}
+                  </Badge>
+                  <span className="font-medium">{previewItem.title}</span>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setPreviewItem(null)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="p-4 space-y-3">
+                {previewItem.modality === 'image' && previewItem.metadata && 'storageUrl' in previewItem.metadata && (
+                  <img 
+                    src={previewItem.metadata.storageUrl as string} 
+                    alt={previewItem.title}
+                    className="w-full rounded-lg"
+                  />
+                )}
+                {previewItem.modality === 'image' && (
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm text-blue-800 font-medium mb-1">📷 图片描述</p>
+                    <p className="text-sm text-blue-700">{getImageDescription(previewItem)}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">来源: {previewItem.source}</p>
+                  {previewItem.similarity !== undefined && (
+                    <p className="text-xs text-green-600">相似度: {((previewItem.similarity) * 100).toFixed(1)}%</p>
+                  )}
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <p className="text-xs font-medium mb-1">内容</p>
+                  <p className="text-sm whitespace-pre-wrap break-all">{previewItem.content}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

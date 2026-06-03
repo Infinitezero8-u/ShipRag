@@ -9,12 +9,23 @@ interface SearchParams {
   threshold?: number; // 相似度阈值
   filter?: { [key: string]: string }; // 可选：按字段过滤，如 { ctryNameCn: '日本' }
   mode?: 'exact' | 'fuzzy'; // 搜索模式：exact=精确搜索(关键词匹配)，fuzzy=模糊搜索(语义搜索)
+  page?: number; // 分页：页码（从1开始）
+  pageSize?: number; // 分页：每页数量
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: SearchParams = await request.json();
-    const { query, modality, topK = 20, threshold = 0.3, filter, mode = 'fuzzy' } = body;
+    const { 
+      query, 
+      modality, 
+      topK = 100, 
+      threshold = 0.3, 
+      filter, 
+      mode = 'fuzzy',
+      page = 1,
+      pageSize = 20 
+    } = body;
 
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: '查询内容不能为空' }, { status: 400 });
@@ -25,7 +36,7 @@ export async function POST(request: NextRequest) {
 
     // 精确搜索模式：使用关键词匹配
     if (mode === 'exact') {
-      return await exactSearch(supabase, query, modality, topK, filter);
+      return await exactSearch(supabase, query, modality, topK, filter, page, pageSize);
     }
 
     // 模糊搜索模式：使用语义搜索
@@ -69,11 +80,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // 分页处理
+    const totalCount = filteredResults.length;
+    const totalPages = Math.ceil(totalCount / pageSize);
+    const startIndex = (page - 1) * pageSize;
+    const paginatedResults = filteredResults.slice(startIndex, startIndex + pageSize);
+
     return NextResponse.json({
       success: true,
       query,
-      results: filteredResults,
-      count: filteredResults.length,
+      results: paginatedResults,
+      count: paginatedResults.length,
+      pagination: {
+        page,
+        pageSize,
+        totalCount,
+        totalPages,
+        hasMore: page < totalPages,
+      },
     });
   } catch (error) {
     console.error('检索失败:', error);
@@ -156,12 +180,14 @@ async function exactSearch(
   query: string,
   modality?: string,
   topK?: number,
-  filter?: { [key: string]: string }
+  filter?: { [key: string]: string },
+  page: number = 1,
+  pageSize: number = 20
 ) {
   // 构建搜索查询
   let searchQuery = supabase
     .from('knowledge_items')
-    .select('id, modality, title, content, source, metadata, created_at')
+    .select('id, modality, title, content, source, metadata, created_at', { count: 'exact' })
     .not('embedding', 'is', null); // 只搜索已向量化的条目
   
   // 添加关键词搜索条件（搜索 title 和 content）
@@ -173,9 +199,9 @@ async function exactSearch(
   }
   
   // 限制返回数量
-  searchQuery = searchQuery.limit(topK || 50);
+  searchQuery = searchQuery.limit(topK || 100);
   
-  const { data: results, error } = await searchQuery;
+  const { data: results, error, count } = await searchQuery;
   
   if (error) {
     return NextResponse.json({ error: `精确搜索失败: ${error.message}` }, { status: 500 });
@@ -212,12 +238,25 @@ async function exactSearch(
     similarity: 1.0, // 精确匹配相似度为 1
   }));
   
+  // 分页处理
+  const totalCount = resultsWithStatus.length;
+  const totalPages = Math.ceil(totalCount / pageSize);
+  const startIndex = (page - 1) * pageSize;
+  const paginatedResults = resultsWithStatus.slice(startIndex, startIndex + pageSize);
+  
   return NextResponse.json({
     success: true,
     query,
     mode: 'exact',
-    results: resultsWithStatus,
-    count: resultsWithStatus.length,
+    results: paginatedResults,
+    count: paginatedResults.length,
+    pagination: {
+      page,
+      pageSize,
+      totalCount,
+      totalPages,
+      hasMore: page < totalPages,
+    },
   });
 }
 
