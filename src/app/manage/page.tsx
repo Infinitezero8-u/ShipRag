@@ -266,12 +266,29 @@ export default function ManagePage() {
   // 标签操作
   const renameTag = async (oldName: string, newName: string) => {
     if (!newName.trim() || oldName === newName) return;
+    
+    // 检查新标签是否已存在
+    const existingTag = tags.find(t => t.name === newName);
+    if (existingTag) {
+      const confirmMerge = confirm(`标签 "${newName}" 已存在。是否合并这两个标签？\n\n选择"确定"：将 "${oldName}" 的条目合并到 "${newName}"\n选择"取消"：取消操作`);
+      if (!confirmMerge) {
+        setEditingTagName(null);
+        return;
+      }
+    }
+    
     try {
-      await fetch('/api/search', {
+      const res = await fetch('/api/search', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'renameTag', oldTag: oldName, newTag: newName }),
       });
+      const data = await res.json();
+      
+      if (data.merged) {
+        alert(`标签已合并！影响了 ${data.affectedCount} 个条目。`);
+      }
+      
       setEditingTagName(null);
       fetchTags();
       fetchItems();

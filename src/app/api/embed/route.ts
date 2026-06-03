@@ -474,6 +474,64 @@ export async function PATCH(request: NextRequest) {
       });
     }
     
+    // 标签向量化
+    if (action === 'vectorizeTags') {
+      const { tagNames } = body;
+      
+      if (!tagNames || !Array.isArray(tagNames) || tagNames.length === 0) {
+        return NextResponse.json({ error: '请提供标签列表' }, { status: 400 });
+      }
+      
+      const embeddingClient = new EmbeddingClient();
+      const processed: string[] = [];
+      const errors: string[] = [];
+      
+      for (const tagName of tagNames) {
+        try {
+          // 生成标签文本的向量
+          const embedding = await embeddingClient.embedText(tagName);
+          
+          if (!embedding || embedding.length === 0) {
+            errors.push(`标签 "${tagName}" 向量化失败`);
+            continue;
+          }
+          
+          // 获取该标签的条目数量
+          const { data: tagItems } = await supabase
+            .from('knowledge_items')
+            .select('id')
+            .contains('tags', [tagName]);
+          
+          const count = tagItems?.length || 0;
+          
+          // 插入或更新标签向量
+          const { error: upsertError } = await supabase
+            .from('tag_vectors')
+            .upsert({
+              name: tagName,
+              embedding: `[${embedding.join(',')}]`,
+              count,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'name' });
+          
+          if (upsertError) {
+            errors.push(`保存标签 "${tagName}" 失败: ${upsertError.message}`);
+          } else {
+            processed.push(tagName);
+          }
+        } catch (e) {
+          errors.push(`处理标签 "${tagName}" 失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      
+      return NextResponse.json({
+        success: true,
+        processed,
+        total: tagNames.length,
+        errors: errors.length > 0 ? errors : undefined
+      });
+    }
+    
     return NextResponse.json({ error: '未知操作' }, { status: 400 });
   } catch (error) {
     console.error('重新处理失败:', error);

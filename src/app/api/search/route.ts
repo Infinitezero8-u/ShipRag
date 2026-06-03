@@ -111,13 +111,105 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
     try {
       const body = await request.json();
-      const { id, title, content, metadata, tags } = body;
+      const { id, title, content, metadata, tags, action } = body;
 
+      const supabase = getSupabaseClient();
+
+      // 标签操作
+      if (action === 'renameTag') {
+        const { oldTag, newTag } = body;
+        if (!oldTag || !newTag) {
+          return NextResponse.json({ error: '缺少标签参数' }, { status: 400 });
+        }
+
+        // 检查新标签是否已存在
+        const { data: existingItems } = await supabase
+          .from('knowledge_items')
+          .select('id')
+          .contains('tags', [newTag])
+          .limit(1);
+
+        const tagExists = existingItems && existingItems.length > 0;
+
+        // 获取所有包含旧标签的条目
+        const { data: items, error: fetchError } = await supabase
+          .from('knowledge_items')
+          .select('id, tags')
+          .contains('tags', [oldTag]);
+
+        if (fetchError) {
+          return NextResponse.json({ error: `查询失败: ${fetchError.message}` }, { status: 500 });
+        }
+
+        if (!items || items.length === 0) {
+          return NextResponse.json({ success: true, message: '未找到需要重命名的条目' });
+        }
+
+        // 批量更新标签
+        for (const item of items) {
+          let newTags = (item.tags as string[]).filter(t => t !== oldTag);
+          
+          // 如果新标签已存在且不是当前条目的标签，则合并（不重复添加）
+          if (tagExists && !newTags.includes(newTag)) {
+            newTags.push(newTag);
+          } else if (!tagExists) {
+            newTags.push(newTag);
+          }
+
+          await supabase
+            .from('knowledge_items')
+            .update({ tags: newTags, updated_at: new Date().toISOString() })
+            .eq('id', item.id);
+        }
+
+        // 更新标签向量表
+        await supabase.from('tag_vectors').update({ name: newTag }).eq('name', oldTag);
+
+        return NextResponse.json({ 
+          success: true, 
+          message: tagExists ? '标签已合并' : '标签已重命名',
+          merged: tagExists,
+          affectedCount: items.length
+        });
+      }
+
+      if (action === 'deleteTag') {
+        const { tag } = body;
+        if (!tag) {
+          return NextResponse.json({ error: '缺少标签参数' }, { status: 400 });
+        }
+
+        // 获取所有包含该标签的条目
+        const { data: items, error: fetchError } = await supabase
+          .from('knowledge_items')
+          .select('id, tags')
+          .contains('tags', [tag]);
+
+        if (fetchError) {
+          return NextResponse.json({ error: `查询失败: ${fetchError.message}` }, { status: 500 });
+        }
+
+        // 批量删除标签
+        if (items) {
+          for (const item of items) {
+            const newTags = (item.tags as string[]).filter(t => t !== tag);
+            await supabase
+              .from('knowledge_items')
+              .update({ tags: newTags, updated_at: new Date().toISOString() })
+              .eq('id', item.id);
+          }
+        }
+
+        // 删除标签向量
+        await supabase.from('tag_vectors').delete().eq('name', tag);
+
+        return NextResponse.json({ success: true, message: '标签已删除' });
+      }
+
+      // 更新条目
       if (!id) {
         return NextResponse.json({ error: '缺少 id 参数' }, { status: 400 });
       }
-
-      const supabase = getSupabaseClient();
       
       const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if (title !== undefined) updateData.title = title;
