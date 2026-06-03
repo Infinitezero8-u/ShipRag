@@ -14,14 +14,12 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-// 港口图标
-const portIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+// 港口图标 - 黑色小圆点
+const portIcon = new L.DivIcon({
+  className: 'custom-port-marker',
+  html: '<div style="width:8px;height:8px;background:#000;border-radius:50%;border:1px solid #333;"></div>',
+  iconSize: [8, 8],
+  iconAnchor: [4, 4],
 });
 
 // 船舶图标
@@ -106,6 +104,7 @@ export default function SeaChartPage() {
   // 折叠状态
   const [expandLayer, setExpandLayer] = useState(false);
   const [expandView, setExpandView] = useState(false);
+  const [expandTrackInfo, setExpandTrackInfo] = useState(false);
   
   // 数据库港口数据
   const [dbPorts, setDbPorts] = useState<Port[]>([]);
@@ -262,7 +261,12 @@ export default function SeaChartPage() {
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between h-14">
-            <h1 className="text-lg font-bold text-gray-900">🗺️ 海图可视化平台</h1>
+            <a href="/" className="flex items-center gap-2 text-gray-700 hover:text-blue-600">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              <span className="text-sm font-medium">首页</span>
+            </a>
             <div className="flex gap-2">
               <button
                 onClick={() => setActiveTab('map')}
@@ -437,9 +441,16 @@ export default function SeaChartPage() {
               )}
 
               {/* 航迹信息 */}
-              <div className="bg-white rounded-xl shadow-sm p-4">
-                <h3 className="font-semibold text-gray-900 mb-3">📊 航迹信息</h3>
-                <div className="space-y-2 text-sm">
+              <div className="bg-white rounded-xl shadow-sm">
+                <div 
+                  className="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50"
+                  onClick={() => setExpandTrackInfo(!expandTrackInfo)}
+                >
+                  <h3 className="font-semibold text-gray-900 text-sm">📊 航迹信息</h3>
+                  <span className="text-gray-400">{expandTrackInfo ? '▼' : '▶'}</span>
+                </div>
+                {expandTrackInfo && (
+                  <div className="px-3 pb-3 space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-gray-500">航迹点数</span>
                     <span className="font-medium">{mockTrack.length}</span>
@@ -458,7 +469,8 @@ export default function SeaChartPage() {
                     <span className="text-gray-500">港口数量</span>
                     <span className="font-medium">{mockPorts.length}</span>
                   </div>
-                </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -491,12 +503,10 @@ export default function SeaChartPage() {
                   {showPorts && allPorts.map((port) => (
                     <Marker key={port.id} position={[port.lat, port.lng]} icon={portIcon}>
                       <Popup>
-                        <div className="min-w-[150px]">
-                          <h4 className="font-bold">{port.name}</h4>
-                          <p className="text-sm text-gray-600">代码: {port.id}</p>
-                          {port.country && <p className="text-sm text-gray-600">国家: {port.country}</p>}
-                          <p className="text-sm text-gray-600">国家: {port.country}</p>
-                          <p className="text-sm text-gray-600">类型: {port.type}</p>
+                        <div className="min-w-[75px] text-xs">
+                          <h4 className="font-bold text-xs">{port.name}</h4>
+                          <p className="text-xs text-gray-600">代码: {port.id}</p>
+                          {port.country && <p className="text-xs text-gray-600">国家: {port.country}</p>}
                         </div>
                       </Popup>
                     </Marker>
