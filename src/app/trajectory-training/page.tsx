@@ -1,17 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { 
   Database, Play, RefreshCw, Check, X, AlertTriangle, 
-  Upload, Download, Settings, Brain, Target, Layers
+  Upload, Download, Settings, Brain, Target, Layers,
+  History, TrendingUp, BarChart3, PieChart, Zap,
+  FileJson, Box, ArrowRightLeft, Sparkles
 } from 'lucide-react';
 import Link from 'next/link';
 
+// 类型定义
 interface TrainingData {
   id: string;
   trajectory_id: string;
@@ -38,6 +43,40 @@ interface TrainingJob {
   completed_at: string | null;
 }
 
+interface ModelVersion {
+  id: string;
+  version_name: string;
+  model_type: string;
+  is_active: boolean;
+  metrics: any;
+  train_samples: number;
+  val_samples: number;
+  is_incremental: boolean;
+  base_version_id: string | null;
+  created_at: string;
+}
+
+interface TrainingLog {
+  epoch: number;
+  step: number;
+  train_loss: number;
+  val_loss: number;
+  train_acc: number;
+  val_acc: number;
+}
+
+interface AnomalySample {
+  id: string;
+  trajectory_id: string;
+  segment_id: string;
+  predicted_behavior: string;
+  predicted_intent: string;
+  actual_behavior: string;
+  actual_intent: string;
+  confidence: number;
+  is_corrected: boolean;
+}
+
 interface Stats {
   total: number;
   labeled: number;
@@ -51,613 +90,820 @@ export default function TrajectoryTrainingPage() {
   const [activeTab, setActiveTab] = useState('dataset');
   const [trainingData, setTrainingData] = useState<TrainingData[]>([]);
   const [jobs, setJobs] = useState<TrainingJob[]>([]);
+  const [versions, setVersions] = useState<ModelVersion[]>([]);
+  const [anomalies, setAnomalies] = useState<AnomalySample[]>([]);
+  const [logs, setLogs] = useState<TrainingLog[]>([]);
   const [stats, setStats] = useState<Stats>({
     total: 0, labeled: 0, unlabeled: 0, train: 0, val: 0, needsReview: 0
   });
   const [loading, setLoading] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  
+  // 训练配置
+  const [trainConfig, setTrainConfig] = useState({
+    modelType: 'ensemble',
+    useAugmentation: true,
+    isIncremental: false,
+    baseVersionId: ''
+  });
+  
+  // 数据增强配置
+  const [augConfig, setAugConfig] = useState({
+    spatialPerturb: true,
+    textSynonym: true,
+    perturbScale: 0.001,
+    synonymCount: 2
+  });
+  
+  const logRef = useRef<HTMLDivElement>(null);
 
+  // 加载数据
   useEffect(() => {
-    fetchTrainingData();
-    fetchJobs();
     fetchStats();
+    fetchJobs();
+    fetchVersions();
+    fetchAnomalies();
   }, []);
 
-  const fetchTrainingData = async () => {
+  // 轮询训练日志
+  useEffect(() => {
+    const runningJob = jobs.find(j => j.status === 'running');
+    if (runningJob) {
+      const interval = setInterval(() => fetchLogs(runningJob.id), 2000);
+      return () => clearInterval(interval);
+    }
+  }, [jobs]);
+
+  const fetchStats = async () => {
     try {
-      const res = await fetch('/api/trajectory/training/data');
-      if (res.ok) {
-        const data = await res.json();
-        setTrainingData(data.data || []);
-      }
+      const res = await fetch('/api/trajectory/training/stats');
+      const data = await res.json();
+      setStats(data);
     } catch (e) {
-      console.error('Failed to fetch training data:', e);
+      console.error('Failed to fetch stats:', e);
     }
   };
 
   const fetchJobs = async () => {
     try {
       const res = await fetch('/api/trajectory/training/jobs');
-      if (res.ok) {
-        setJobs(await res.json());
-      }
+      const data = await res.json();
+      setJobs(data.jobs || []);
     } catch (e) {
       console.error('Failed to fetch jobs:', e);
     }
   };
 
-  const fetchStats = async () => {
+  const fetchVersions = async () => {
     try {
-      const res = await fetch('/api/trajectory/training/stats');
-      if (res.ok) {
-        setStats(await res.json());
-      }
+      const res = await fetch('/api/trajectory/training/versions');
+      const data = await res.json();
+      setVersions(data.versions || []);
     } catch (e) {
-      console.error('Failed to fetch stats:', e);
+      console.error('Failed to fetch versions:', e);
     }
   };
 
-  // 从标注平台导入数据
-  const importFromLabels = async () => {
+  const fetchAnomalies = async () => {
+    try {
+      const res = await fetch('/api/trajectory/training/anomalies');
+      const data = await res.json();
+      setAnomalies(data.anomalies || []);
+    } catch (e) {
+      console.error('Failed to fetch anomalies:', e);
+    }
+  };
+
+  const fetchLogs = async (jobId: string) => {
+    try {
+      const res = await fetch(`/api/trajectory/training/logs?job_id=${jobId}`);
+      const data = await res.json();
+      setLogs(data.logs || []);
+      // 自动滚动到底部
+      if (logRef.current) {
+        logRef.current.scrollTop = logRef.current.scrollHeight;
+      }
+    } catch (e) {
+      console.error('Failed to fetch logs:', e);
+    }
+  };
+
+  const handleImportFromLabel = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/trajectory/training/import', { method: 'POST' });
-      if (res.ok) {
-        const result = await res.json();
-        alert(`导入成功！训练集: ${result.train_count}条，验证集: ${result.val_count}条`);
-        fetchTrainingData();
-        fetchStats();
-      } else {
-        const err = await res.json();
-        alert(`导入失败: ${err.error}`);
-      }
+      const data = await res.json();
+      alert(`导入成功：${data.imported} 条，跳过（已存在）：${data.skipped} 条`);
+      fetchStats();
+      fetchData();
     } catch (e) {
       alert('导入失败');
     }
     setLoading(false);
   };
 
-  // 拆分数据集
-  const splitDataset = async () => {
+  const handleSplit = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/trajectory/training/split', { method: 'POST' });
-      if (res.ok) {
-        const result = await res.json();
-        alert(`拆分完成！训练集: ${result.train_count}条，验证集: ${result.val_count}条`);
-        fetchStats();
-      }
+      const data = await res.json();
+      alert(`拆分完成：训练集 ${data.train} 条，验证集 ${data.val} 条`);
+      fetchStats();
+      fetchData();
     } catch (e) {
       alert('拆分失败');
     }
     setLoading(false);
   };
 
-  // KMeans 聚类预分类
-  const runClustering = async () => {
+  const handleAugment = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/trajectory/training/cluster', { method: 'POST' });
-      if (res.ok) {
-        const result = await res.json();
-        alert(`聚类完成！共 ${result.cluster_count} 个簇，${result.clustered_count} 条数据已预分类`);
-        fetchTrainingData();
-      }
+      const res = await fetch('/api/trajectory/training/augment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(augConfig)
+      });
+      const data = await res.json();
+      alert(`数据增强完成：新增 ${data.augmented} 条`);
+      fetchStats();
+      fetchData();
     } catch (e) {
-      alert('聚类失败');
+      alert('数据增强失败');
     }
     setLoading(false);
   };
 
-  // 开始训练
-  const startTraining = async (modelType: string) => {
+  const handleTrain = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/trajectory/training/train', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_type: modelType })
+        body: JSON.stringify(trainConfig)
       });
-      if (res.ok) {
-        const result = await res.json();
-        alert(`训练任务已创建！任务ID: ${result.job_id}`);
-        fetchJobs();
-      }
+      const data = await res.json();
+      alert(`训练任务已创建：${data.job_id}`);
+      fetchJobs();
     } catch (e) {
-      alert('启动训练失败');
+      alert('训练启动失败');
     }
     setLoading(false);
   };
 
-  // 质量校验
-  const runValidation = async () => {
-    setLoading(true);
+  const handleToggleVersion = async (versionId: string, activate: boolean) => {
     try {
-      const res = await fetch('/api/trajectory/training/validate', { method: 'POST' });
-      if (res.ok) {
-        const result = await res.json();
-        alert(`校验完成！通过: ${result.passed_count}条，需修改: ${result.review_count}条`);
-        fetchTrainingData();
-        fetchStats();
-      }
+      await fetch('/api/trajectory/training/versions/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version_id: versionId, activate })
+      });
+      fetchVersions();
     } catch (e) {
-      alert('校验失败');
+      alert('切换失败');
     }
-    setLoading(false);
   };
 
-  // 推理分类
-  const runInference = async () => {
-    setLoading(true);
+  const handleExportDataset = async () => {
     try {
-      const res = await fetch('/api/trajectory/training/inference', { method: 'POST' });
-      if (res.ok) {
-        const result = await res.json();
-        alert(`推理完成！已分类: ${result.inferred_count}条航迹`);
-      }
+      const res = await fetch('/api/trajectory/training/export?format=json');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `trajectory_dataset_${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      window.URL.revokeObjectURL(url);
     } catch (e) {
-      alert('推理失败');
+      alert('导出失败');
     }
-    setLoading(false);
   };
 
-  const getBehaviorLabel = (code: string | null) => {
-    const labels: Record<string, string> = {
-      'DOCKING': '码头靠泊', 'ANCHORING': '锚泊', 'BUOY_MOORING': '浮筒系泊',
-      'DRIFTING': '原地漂泊', 'STEADY_SAILING': '匀速直航', 'CHANNEL_TURNING': '航道转向',
-      'VARIABLE_SAILING': '变速航行', 'TURNING_BACK': '原地掉头', 'LOITERING': '原地徘徊',
-      'AVOIDING': '船舶避让', 'CROSSING_CHANNEL': '横穿航道', 'DEVIATION': '违规偏航',
-      'AIS_OFF': 'AIS关机失联', 'SUSPICIOUS_LOITERING': '无目的低速游荡'
-    };
-    return code ? labels[code] || code : '-';
+  const handleExportModel = async (versionId: string) => {
+    try {
+      const res = await fetch(`/api/trajectory/training/export-model?version_id=${versionId}`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `lora_weights_${versionId}.bin`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('导出模型失败');
+    }
   };
 
-  const getIntentLabel = (code: string | null) => {
-    const labels: Record<string, string> = {
-      'INBOUND': '船舶进港', 'OUTBOUND': '船舶出港', 'WAITING_ANCHORAGE': '锚地候泊',
-      'INTER_PORT_TRANSIT': '跨港干线运输', 'INTERMEDIATE_CALL': '中途挂靠港口',
-      'PILOTAGE': '接驳引水', 'ENGINEERING_WORK': '水上工程作业', 'FISHING': '渔船捕捞',
-      'MEETING_AVOIDANCE': '会船避让', 'EMERGENCY_SHELTER': '故障临时避险',
-      'SUSPICIOUS_SMUGGLING': '可疑走私航行', 'RESTRICTED_ENTRY': '违规闯入禁航'
-    };
-    return code ? labels[code] || code : '-';
+  const handleGoToLabel = (trajectoryIds: string[]) => {
+    // 跳转到标注页面，带上需要标注的轨迹ID
+    const ids = trajectoryIds.join(',');
+    window.open(`/segment-label?trajectories=${ids}`, '_blank');
   };
+
+  const fetchData = async () => {
+    try {
+      const res = await fetch('/api/trajectory/training/data?limit=100');
+      const data = await res.json();
+      setTrainingData(data.data || []);
+    } catch (e) {
+      console.error('Failed to fetch data:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'dataset') {
+      fetchData();
+    }
+  }, [activeTab]);
+
+  // 计算混淆矩阵数据
+  const getConfusionMatrix = () => {
+    // 简化的混淆矩阵展示
+    const behaviors = ['DOCKING', 'ANCHORING', 'STEADY_SAILING', 'CHANNEL_TURNING'];
+    const matrix: number[][] = behaviors.map(() => behaviors.map(() => 0));
+    
+    // 这里应该从实际数据计算
+    // 暂时返回模拟数据
+    return { behaviors, matrix };
+  };
+
+  const { behaviors, matrix } = getConfusionMatrix();
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Brain className="w-7 h-7 text-purple-600" />
-            航迹分类训练平台
-          </h1>
-          <p className="text-gray-600 mt-1">
-            多模态航迹分类模型训练，支持文本+空间特征融合
-          </p>
+    <div className="container mx-auto p-4 max-w-7xl">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">航迹分类训练平台</h1>
+          <p className="text-muted-foreground">训练航迹行为/意图分类模型</p>
         </div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
-          <Card>
-            <CardContent className="p-3 text-center">
-              <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
-              <div className="text-xs text-gray-500">总数据</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <div className="text-2xl font-bold text-green-600">{stats.labeled}</div>
-              <div className="text-xs text-gray-500">已标注</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <div className="text-2xl font-bold text-orange-600">{stats.unlabeled}</div>
-              <div className="text-xs text-gray-500">未标注</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <div className="text-2xl font-bold text-blue-600">{stats.train}</div>
-              <div className="text-xs text-gray-500">训练集</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <div className="text-2xl font-bold text-purple-600">{stats.val}</div>
-              <div className="text-xs text-gray-500">验证集</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <div className="text-2xl font-bold text-red-600">{stats.needsReview}</div>
-              <div className="text-xs text-gray-500">待修改</div>
-            </CardContent>
-          </Card>
+        <div className="flex gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/segment-label">前往标注平台</Link>
+          </Button>
+          <Button variant="outline" onClick={handleExportDataset}>
+            <Download className="w-4 h-4 mr-2" />
+            导出数据集
+          </Button>
         </div>
+      </div>
 
-        {/* Main Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-4">
-            <TabsTrigger value="dataset"><Database className="w-4 h-4 mr-1" />数据集</TabsTrigger>
-            <TabsTrigger value="cluster"><Layers className="w-4 h-4 mr-1" />聚类预分类</TabsTrigger>
-            <TabsTrigger value="train"><Play className="w-4 h-4 mr-1" />模型训练</TabsTrigger>
-            <TabsTrigger value="validate"><Target className="w-4 h-4 mr-1" />质量校验</TabsTrigger>
-          </TabsList>
-
-          {/* 数据集 Tab */}
-          <TabsContent value="dataset">
-            <Card>
-              <CardHeader>
-                <CardTitle>训练数据集管理</CardTitle>
-                <CardDescription>
-                  从标注平台导入数据，自动 7:3 拆分训练/验证集
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-3 mb-4">
-                  <Button onClick={importFromLabels} disabled={loading}>
-                    <Upload className="w-4 h-4 mr-1" />
-                    从标注平台导入
-                  </Button>
-                  <Button variant="outline" onClick={splitDataset} disabled={loading}>
-                    <RefreshCw className="w-4 h-4 mr-1" />
-                    重新拆分 (7:3)
-                  </Button>
-                  <Link href="/segment-label">
-                    <Button variant="outline">
-                      去标注平台补全
-                    </Button>
-                  </Link>
-                </div>
-
-                {/* 数据列表 */}
-                <div className="border rounded-lg overflow-hidden">
-                  <div className="overflow-x-auto max-h-96">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-100 sticky top-0">
-                        <tr>
-                          <th className="px-3 py-2 text-left">航段ID</th>
-                          <th className="px-3 py-2 text-left">描述</th>
-                          <th className="px-3 py-2 text-left">行为</th>
-                          <th className="px-3 py-2 text-left">意图</th>
-                          <th className="px-3 py-2 text-left">数据集</th>
-                          <th className="px-3 py-2 text-left">校验分</th>
-                          <th className="px-3 py-2 text-left">状态</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {trainingData.map((item) => (
-                          <tr key={item.id} className="border-t hover:bg-gray-50">
-                            <td className="px-3 py-2 font-mono text-xs">{item.segment_id?.slice(0, 12)}...</td>
-                            <td className="px-3 py-2 max-w-xs truncate">{item.ai_description?.slice(0, 30)}...</td>
-                            <td className="px-3 py-2">
-                              {item.behavior_code ? (
-                                <Badge variant="secondary" className="text-xs">{getBehaviorLabel(item.behavior_code)}</Badge>
-                              ) : <span className="text-gray-400">-</span>}
-                            </td>
-                            <td className="px-3 py-2">
-                              {item.intent_code ? (
-                                <Badge variant="outline" className="text-xs">{getIntentLabel(item.intent_code)}</Badge>
-                              ) : <span className="text-gray-400">-</span>}
-                            </td>
-                            <td className="px-3 py-2">
-                              <Badge variant={item.dataset_type === 'train' ? 'default' : 'outline'} className="text-xs">
-                                {item.dataset_type === 'train' ? '训练' : item.dataset_type === 'val' ? '验证' : '未分配'}
-                              </Badge>
-                            </td>
-                            <td className="px-3 py-2">
-                              {item.validation_score !== null ? (
-                                <span className={item.validation_score >= 0.6 ? 'text-green-600' : 'text-red-600'}>
-                                  {item.validation_score.toFixed(2)}
-                                </span>
-                              ) : '-'}
-                            </td>
-                            <td className="px-3 py-2">
-                              {item.needs_review ? (
-                                <Badge variant="destructive" className="text-xs">待修改</Badge>
-                              ) : item.is_labeled ? (
-                                <Badge variant="default" className="text-xs bg-green-600">已标注</Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-xs">未标注</Badge>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                        {trainingData.length === 0 && (
-                          <tr>
-                            <td colSpan={7} className="px-3 py-8 text-center text-gray-500">
-                              暂无数据，请从标注平台导入
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 聚类预分类 Tab */}
-          <TabsContent value="cluster">
-            <Card>
-              <CardHeader>
-                <CardTitle>KMeans 聚类预分类</CardTitle>
-                <CardDescription>
-                  对无标签航迹进行 KMeans 聚类 (n_clusters=8)，辅助人工标注
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    <h3 className="font-medium mb-2">聚类参数</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <span className="text-gray-500">聚类数量:</span>
-                        <span className="ml-2 font-mono">8</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">特征维度:</span>
-                        <span className="ml-2 font-mono">文本+空间</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">向量模型:</span>
-                        <span className="ml-2 font-mono">bge-base-zh</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">空间特征:</span>
-                        <span className="ml-2 font-mono">Shapely</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <Button onClick={runClustering} disabled={loading}>
-                    <Layers className="w-4 h-4 mr-1" />
-                    执行聚类
-                  </Button>
-                  
-                  <p className="text-sm text-gray-500">
-                    聚类完成后，可前往 <Link href="/segment-label" className="text-blue-600 hover:underline">标注平台</Link> 查看聚类结果并进行人工校准
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 模型训练 Tab */}
-          <TabsContent value="train">
-            <div className="grid md:grid-cols-2 gap-4">
-              {/* 文本分类模型 */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Brain className="w-5 h-5 text-blue-600" />
-                    文本分类模型
-                  </CardTitle>
-                  <CardDescription>BGE-base-zh + LoRA 微调</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">Epochs:</span> 4
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">Batch:</span> 16
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">LR:</span> 2e-4
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">LoRA Rank:</span> 8
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded col-span-2">
-                      <span className="text-gray-500">LoRA Alpha:</span> 16
-                    </div>
-                  </div>
-                  <Button onClick={() => startTraining('text_classifier')} disabled={loading || stats.train < 10}>
-                    <Play className="w-4 h-4 mr-1" />
-                    开始训练
-                  </Button>
-                  {stats.train < 10 && (
-                    <p className="text-xs text-orange-600">训练集数据不足，请先导入数据</p>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* 空间特征模型 */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Target className="w-5 h-5 text-green-600" />
-                    空间特征模型
-                  </CardTitle>
-                  <CardDescription>XGBoost 分类器</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">N Estimators:</span> 120
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">Max Depth:</span> 6
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded col-span-2">
-                      <span className="text-gray-500">LR:</span> 0.1
-                    </div>
-                  </div>
-                  <div className="p-2 bg-blue-50 rounded text-sm">
-                    <span className="text-blue-600">空间特征:</span> 航线长度、曲率、转向角、航程范围
-                  </div>
-                  <Button onClick={() => startTraining('spatial_classifier')} disabled={loading || stats.train < 10}>
-                    <Play className="w-4 h-4 mr-1" />
-                    开始训练
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* 融合模型 */}
-              <Card className="md:col-span-2">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Settings className="w-5 h-5 text-purple-600" />
-                    融合模型
-                  </CardTitle>
-                  <CardDescription>文本权重 0.7 + 空间权重 0.3</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-3 gap-2 text-sm">
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">文本权重:</span> 0.7
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">空间权重:</span> 0.3
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded">
-                      <span className="text-gray-500">融合策略:</span> 加权平均
-                    </div>
-                  </div>
-                  <Button onClick={() => startTraining('ensemble')} disabled={loading || stats.train < 10}>
-                    <Play className="w-4 h-4 mr-1" />
-                    训练融合模型
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* 训练任务列表 */}
-            <Card className="mt-4">
-              <CardHeader>
-                <CardTitle>训练任务</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {jobs.map((job) => (
-                    <div key={job.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div>
-                        <div className="font-medium">{job.name}</div>
-                        <div className="text-xs text-gray-500">
-                          {job.model_type} · 训练:{job.train_count} 验证:{job.val_count}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={
-                          job.status === 'completed' ? 'default' :
-                          job.status === 'running' ? 'secondary' :
-                          job.status === 'failed' ? 'destructive' : 'outline'
-                        }>
-                          {job.status === 'completed' ? '已完成' :
-                           job.status === 'running' ? '运行中' :
-                           job.status === 'failed' ? '失败' : '待执行'}
-                        </Badge>
-                        {job.metrics && (
-                          <span className="text-sm text-green-600">F1: {job.metrics.f1?.toFixed(3)}</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {jobs.length === 0 && (
-                    <p className="text-center text-gray-500 py-4">暂无训练任务</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 质量校验 Tab */}
-          <TabsContent value="validate">
-            <Card>
-              <CardHeader>
-                <CardTitle>质量校验</CardTitle>
-                <CardDescription>
-                  使用 bge-reranker-base 校验标注质量，匹配分数低于 0.6 的数据退回标注修改
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <h3 className="font-medium mb-2">校验流程</h3>
-                  <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
-                    <li>计算航迹描述与行为/意图标签的语义匹配分数</li>
-                    <li>分数 ≥ 0.6 视为通过，分数 &lt; 0.6 标记为需修改</li>
-                    <li>需修改的数据需返回标注平台重新标注</li>
-                  </ol>
-                </div>
-                
-                <div className="flex gap-3">
-                  <Button onClick={runValidation} disabled={loading}>
-                    <Target className="w-4 h-4 mr-1" />
-                    执行校验
-                  </Button>
-                  <Button variant="outline" onClick={runInference} disabled={loading}>
-                    <RefreshCw className="w-4 h-4 mr-1" />
-                    推理分类
-                  </Button>
-                </div>
-
-                {stats.needsReview > 0 && (
-                  <div className="p-3 bg-orange-50 rounded-lg flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-orange-600" />
-                    <span className="text-orange-800">
-                      有 {stats.needsReview} 条数据需要修改，请前往
-                      <Link href="/segment-label" className="text-blue-600 hover:underline mx-1">标注平台</Link>
-                      进行修正
-                    </span>
-                  </div>
-                )}
-
-                <div className="p-4 bg-green-50 rounded-lg">
-                  <h3 className="font-medium mb-2 text-green-800">训练完成后的自动流程</h3>
-                  <ol className="list-decimal list-inside space-y-1 text-sm text-green-700">
-                    <li>新导入/新标注的航迹自动推理分类标签</li>
-                    <li>分类结果存入元数据</li>
-                    <li>执行向量化入库</li>
-                    <li>海图和检索页面可按分类筛选</li>
-                  </ol>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-
-        {/* 模型参数说明 */}
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-base">模型参数配置</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-3 gap-4 text-sm">
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <h4 className="font-medium text-blue-600 mb-1">文本分类</h4>
-                <ul className="space-y-1 text-gray-600">
-                  <li>模型: bge-base-zh</li>
-                  <li>微调: LoRA (rank=8, alpha=16)</li>
-                  <li>Epoch: 4, Batch: 16</li>
-                  <li>LR: 2e-4</li>
-                </ul>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <h4 className="font-medium text-green-600 mb-1">空间特征</h4>
-                <ul className="space-y-1 text-gray-600">
-                  <li>模型: XGBoost</li>
-                  <li>N_estimators: 120</li>
-                  <li>Max_depth: 6, LR: 0.1</li>
-                  <li>特征: Shapely 提取</li>
-                </ul>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <h4 className="font-medium text-purple-600 mb-1">融合策略</h4>
-                <ul className="space-y-1 text-gray-600">
-                  <li>文本权重: 0.7</li>
-                  <li>空间权重: 0.3</li>
-                  <li>聚类: KMeans (k=8)</li>
-                  <li>校验: bge-reranker-base</li>
-                </ul>
-              </div>
-            </div>
+      {/* 统计卡片 */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+        <Card>
+          <CardContent className="pt-4">
+            <div className="text-2xl font-bold">{stats.total}</div>
+            <div className="text-xs text-muted-foreground">总样本</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="text-2xl font-bold text-green-600">{stats.labeled}</div>
+            <div className="text-xs text-muted-foreground">已标注</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="text-2xl font-bold text-orange-600">{stats.unlabeled}</div>
+            <div className="text-xs text-muted-foreground">待标注</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="text-2xl font-bold text-blue-600">{stats.train}</div>
+            <div className="text-xs text-muted-foreground">训练集</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="text-2xl font-bold text-purple-600">{stats.val}</div>
+            <div className="text-xs text-muted-foreground">验证集</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="text-2xl font-bold text-red-600">{stats.needsReview}</div>
+            <div className="text-xs text-muted-foreground">待复核</div>
           </CardContent>
         </Card>
       </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid grid-cols-5 mb-4">
+          <TabsTrigger value="dataset">数据集</TabsTrigger>
+          <TabsTrigger value="augment">数据增强</TabsTrigger>
+          <TabsTrigger value="train">模型训练</TabsTrigger>
+          <TabsTrigger value="versions">版本管理</TabsTrigger>
+          <TabsTrigger value="anomalies">异常样本</TabsTrigger>
+        </TabsList>
+
+        {/* 数据集管理 */}
+        <TabsContent value="dataset">
+          <Card>
+            <CardHeader>
+              <CardTitle>数据集管理</CardTitle>
+              <CardDescription>导入标注数据并拆分训练/验证集</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={handleImportFromLabel} disabled={loading}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  从标注平台导入
+                </Button>
+                <Button variant="secondary" onClick={handleSplit} disabled={loading || stats.labeled < 10}>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  7:3 拆分数据集
+                </Button>
+              </div>
+
+              <div className="text-sm text-muted-foreground">
+                当前：训练集 {stats.train} 条，验证集 {stats.val} 条（比例 7:3）
+              </div>
+
+              {/* 数据列表 */}
+              <div className="border rounded-lg max-h-96 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left">航段ID</th>
+                      <th className="p-2 text-left">描述</th>
+                      <th className="p-2 text-left">行为</th>
+                      <th className="p-2 text-left">意图</th>
+                      <th className="p-2 text-left">类型</th>
+                      <th className="p-2 text-left">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trainingData.map((item) => (
+                      <tr key={item.id} className="border-t hover:bg-muted/50">
+                        <td className="p-2 font-mono text-xs">{item.segment_id?.slice(0, 12)}...</td>
+                        <td className="p-2 max-w-xs truncate">{item.ai_description?.slice(0, 30)}...</td>
+                        <td className="p-2">
+                          {item.behavior_code && (
+                            <Badge variant="outline" className="text-xs">{item.behavior_code}</Badge>
+                          )}
+                        </td>
+                        <td className="p-2">
+                          {item.intent_code && (
+                            <Badge variant="outline" className="text-xs">{item.intent_code}</Badge>
+                          )}
+                        </td>
+                        <td className="p-2">
+                          <Badge variant={item.dataset_type === 'train' ? 'default' : 'secondary'}>
+                            {item.dataset_type || '未分配'}
+                          </Badge>
+                        </td>
+                        <td className="p-2">
+                          {item.needs_review ? (
+                            <Badge variant="destructive">待复核</Badge>
+                          ) : item.is_labeled ? (
+                            <Badge variant="default">已标注</Badge>
+                          ) : (
+                            <Badge variant="outline">未标注</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 数据增强 */}
+        <TabsContent value="augment">
+          <Card>
+            <CardHeader>
+              <CardTitle>数据增强</CardTitle>
+              <CardDescription>扩充训练样本，提升模型泛化能力</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* 空间扰动 */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">航线坐标扰动</CardTitle>
+                      <Switch 
+                        checked={augConfig.spatialPerturb}
+                        onCheckedChange={(v) => setAugConfig({...augConfig, spatialPerturb: v})}
+                      />
+                    </div>
+                    <CardDescription>对航线坐标添加微量随机扰动</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">扰动比例：</span>
+                      <input 
+                        type="range" 
+                        min="0.0001" 
+                        max="0.01" 
+                        step="0.0001"
+                        value={augConfig.perturbScale}
+                        onChange={(e) => setAugConfig({...augConfig, perturbScale: parseFloat(e.target.value)})}
+                        className="flex-1"
+                      />
+                      <span className="text-sm font-mono">{augConfig.perturbScale.toFixed(4)}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 文本改写 */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">描述文本改写</CardTitle>
+                      <Switch 
+                        checked={augConfig.textSynonym}
+                        onCheckedChange={(v) => setAugConfig({...augConfig, textSynonym: v})}
+                      />
+                    </div>
+                    <CardDescription>使用 LLM 同义改写描述文本</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">改写数量：</span>
+                      <Select 
+                        value={String(augConfig.synonymCount)}
+                        onValueChange={(v) => setAugConfig({...augConfig, synonymCount: parseInt(v)})}
+                      >
+                        <SelectTrigger className="w-20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="1">1</SelectItem>
+                          <SelectItem value="2">2</SelectItem>
+                          <SelectItem value="3">3</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span className="text-sm text-muted-foreground">条/样本</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Button onClick={handleAugment} disabled={loading || (!augConfig.spatialPerturb && !augConfig.textSynonym)}>
+                <Sparkles className="w-4 h-4 mr-2" />
+                执行数据增强
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 模型训练 */}
+        <TabsContent value="train">
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* 训练配置 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>训练配置</CardTitle>
+                <CardDescription>固定模型参数，可选增量训练</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">模型类型</label>
+                  <Select 
+                    value={trainConfig.modelType}
+                    onValueChange={(v) => setTrainConfig({...trainConfig, modelType: v})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text_classifier">文本分类 (BGE + LoRA)</SelectItem>
+                      <SelectItem value="spatial_classifier">空间特征 (XGBoost)</SelectItem>
+                      <SelectItem value="ensemble">融合模型 (0.7 文本 + 0.3 空间)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium">使用数据增强</label>
+                    <p className="text-xs text-muted-foreground">扩充训练样本</p>
+                  </div>
+                  <Switch 
+                    checked={trainConfig.useAugmentation}
+                    onCheckedChange={(v) => setTrainConfig({...trainConfig, useAugmentation: v})}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium">增量训练</label>
+                    <p className="text-xs text-muted-foreground">基于当前上线模型微调</p>
+                  </div>
+                  <Switch 
+                    checked={trainConfig.isIncremental}
+                    onCheckedChange={(v) => setTrainConfig({...trainConfig, isIncremental: v})}
+                  />
+                </div>
+
+                {/* 固定参数展示 */}
+                <div className="bg-muted p-3 rounded-lg text-xs space-y-1">
+                  <div className="font-medium mb-2">固定参数</div>
+                  {trainConfig.modelType === 'text_classifier' && (
+                    <>
+                      <div>模型：bge-base-zh + LoRA</div>
+                      <div>Epoch: 4, Batch: 16, LR: 2e-4</div>
+                      <div>LoRA Rank: 8, Alpha: 16</div>
+                    </>
+                  )}
+                  {trainConfig.modelType === 'spatial_classifier' && (
+                    <>
+                      <div>模型：XGBoost</div>
+                      <div>n_estimators: 120, max_depth: 6</div>
+                      <div>Learning Rate: 0.1</div>
+                    </>
+                  )}
+                  {trainConfig.modelType === 'ensemble' && (
+                    <>
+                      <div>文本权重: 0.7, 空间权重: 0.3</div>
+                      <div>文本：bge-base-zh + LoRA</div>
+                      <div>空间：XGBoost</div>
+                    </>
+                  )}
+                </div>
+
+                <Button onClick={handleTrain} disabled={loading || stats.train < 10} className="w-full">
+                  <Play className="w-4 h-4 mr-2" />
+                  开始训练
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* 训练监控 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>训练监控</CardTitle>
+                <CardDescription>实时 Loss 和准确率</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {jobs.find(j => j.status === 'running') ? (
+                  <div className="space-y-4">
+                    {/* Loss 曲线 */}
+                    <div className="h-40 border rounded-lg p-2" ref={logRef}>
+                      <div className="text-xs text-muted-foreground mb-2">Loss 曲线</div>
+                      <div className="h-28 flex items-end gap-1">
+                        {logs.slice(-30).map((log, i) => (
+                          <div key={i} className="flex-1 flex flex-col gap-0.5">
+                            <div 
+                              className="bg-blue-500 rounded-t" 
+                              style={{height: `${Math.min(log.train_loss * 20, 100)}%`}}
+                            />
+                            <div 
+                              className="bg-orange-500 rounded-b" 
+                              style={{height: `${Math.min(log.val_loss * 20, 100)}%`}}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 准确率 */}
+                    <div className="grid grid-cols-2 gap-4 text-center">
+                      <div className="p-3 bg-muted rounded-lg">
+                        <div className="text-2xl font-bold text-blue-600">
+                          {logs.length > 0 ? (logs[logs.length - 1].train_acc * 100).toFixed(1) : 0}%
+                        </div>
+                        <div className="text-xs text-muted-foreground">训练准确率</div>
+                      </div>
+                      <div className="p-3 bg-muted rounded-lg">
+                        <div className="text-2xl font-bold text-orange-600">
+                          {logs.length > 0 ? (logs[logs.length - 1].val_acc * 100).toFixed(1) : 0}%
+                        </div>
+                        <div className="text-xs text-muted-foreground">验证准确率</div>
+                      </div>
+                    </div>
+
+                    <Progress value={logs.length > 0 ? (logs[logs.length - 1].epoch / 4) * 100 : 0} />
+                    <div className="text-sm text-center text-muted-foreground">
+                      Epoch {logs.length > 0 ? logs[logs.length - 1].epoch : 0} / 4
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-60 flex items-center justify-center text-muted-foreground">
+                    {jobs.find(j => j.status === 'pending') ? '等待训练...' : '暂无进行中的训练任务'}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* 混淆矩阵 */}
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>混淆矩阵</CardTitle>
+              <CardDescription>分类结果可视化</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr>
+                      <th className="p-2"></th>
+                      {behaviors.map((b) => (
+                        <th key={b} className="p-2 text-center">{b.slice(0, 6)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {behaviors.map((row, i) => (
+                      <tr key={row}>
+                        <td className="p-2 font-medium">{row.slice(0, 6)}</td>
+                        {behaviors.map((col, j) => (
+                          <td 
+                            key={col} 
+                            className="p-2 text-center"
+                            style={{
+                              backgroundColor: i === j ? '#22c55e33' : matrix[i]?.[j] ? '#ef444422' : 'transparent'
+                            }}
+                          >
+                            {matrix[i]?.[j] || 0}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 训练历史 */}
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>训练历史</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {jobs.map((job) => (
+                  <div key={job.id} className="flex items-center justify-between p-2 border rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Badge variant={
+                        job.status === 'completed' ? 'default' :
+                        job.status === 'running' ? 'secondary' :
+                        job.status === 'failed' ? 'destructive' : 'outline'
+                      }>
+                        {job.status}
+                      </Badge>
+                      <span className="font-medium">{job.name}</span>
+                      <span className="text-xs text-muted-foreground">{job.model_type}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span>训练: {job.train_count}</span>
+                      <span>验证: {job.val_count}</span>
+                      {job.metrics?.accuracy && (
+                        <span>准确率: {(job.metrics.accuracy * 100).toFixed(1)}%</span>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(job.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 版本管理 */}
+        <TabsContent value="versions">
+          <Card>
+            <CardHeader>
+              <CardTitle>模型版本管理</CardTitle>
+              <CardDescription>管理训练生成的模型版本，切换上线/下线</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {versions.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-8">
+                    暂无模型版本，请先训练模型
+                  </div>
+                ) : (
+                  versions.map((version) => (
+                    <div key={version.id} className={`p-4 border rounded-lg ${version.is_active ? 'border-green-500 bg-green-50' : ''}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {version.is_active && (
+                            <Badge className="bg-green-500">当前上线</Badge>
+                          )}
+                          <span className="font-medium">{version.version_name}</span>
+                          <Badge variant="outline">{version.model_type}</Badge>
+                          {version.is_incremental && (
+                            <Badge variant="secondary">增量训练</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button 
+                            variant={version.is_active ? "outline" : "default"}
+                            size="sm"
+                            onClick={() => handleToggleVersion(version.id, !version.is_active)}
+                          >
+                            {version.is_active ? '下线' : '上线'}
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => handleExportModel(version.id)}
+                          >
+                            <Download className="w-3 h-3 mr-1" />
+                            导出
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-muted-foreground flex gap-4">
+                        <span>训练样本: {version.train_samples}</span>
+                        <span>验证样本: {version.val_samples}</span>
+                        {version.metrics?.accuracy && (
+                          <span>准确率: {(version.metrics.accuracy * 100).toFixed(1)}%</span>
+                        )}
+                        <span>创建时间: {new Date(version.created_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 异常样本 */}
+        <TabsContent value="anomalies">
+          <Card>
+            <CardHeader>
+              <CardTitle>异常样本管理</CardTitle>
+              <CardDescription>预测结果与实际标签差异较大的样本（置信度 &lt; 0.6）</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex justify-between mb-4">
+                <div className="text-sm text-muted-foreground">
+                  共 {anomalies.length} 条异常样本，{anomalies.filter(a => !a.is_corrected).length} 条待订正
+                </div>
+                <Button 
+                  variant="outline"
+                  onClick={() => handleGoToLabel(anomalies.filter(a => !a.is_corrected).map(a => a.trajectory_id))}
+                  disabled={anomalies.filter(a => !a.is_corrected).length === 0}
+                >
+                  <ArrowRightLeft className="w-4 h-4 mr-2" />
+                  批量跳转标注订正
+                </Button>
+              </div>
+
+              <div className="border rounded-lg max-h-96 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left">航段ID</th>
+                      <th className="p-2 text-left">预测行为</th>
+                      <th className="p-2 text-left">实际行为</th>
+                      <th className="p-2 text-left">预测意图</th>
+                      <th className="p-2 text-left">实际意图</th>
+                      <th className="p-2 text-left">置信度</th>
+                      <th className="p-2 text-left">状态</th>
+                      <th className="p-2 text-left">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {anomalies.map((item) => (
+                      <tr key={item.id} className="border-t hover:bg-muted/50">
+                        <td className="p-2 font-mono text-xs">{item.segment_id?.slice(0, 10)}...</td>
+                        <td className="p-2"><Badge variant="outline">{item.predicted_behavior}</Badge></td>
+                        <td className="p-2"><Badge variant="outline">{item.actual_behavior}</Badge></td>
+                        <td className="p-2"><Badge variant="outline">{item.predicted_intent}</Badge></td>
+                        <td className="p-2"><Badge variant="outline">{item.actual_intent}</Badge></td>
+                        <td className="p-2">
+                          <span className={item.confidence < 0.4 ? 'text-red-500' : 'text-orange-500'}>
+                            {item.confidence.toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="p-2">
+                          {item.is_corrected ? (
+                            <Badge variant="default">已订正</Badge>
+                          ) : (
+                            <Badge variant="destructive">待订正</Badge>
+                          )}
+                        </td>
+                        <td className="p-2">
+                          {!item.is_corrected && (
+                            <Button 
+                              variant="link" 
+                              size="sm"
+                              onClick={() => handleGoToLabel([item.trajectory_id])}
+                            >
+                              去订正
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
