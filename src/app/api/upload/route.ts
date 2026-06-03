@@ -111,18 +111,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `创建上传记录失败: ${uploadError.message}` }, { status: 500 });
     }
 
-    // 插入解析出的条目到知识库
-    const itemsToInsert = parseResult.items.map(item => ({
-      modality: item.modality,
-      title: item.title,
-      content: item.modality === 'image' && imageDescription ? imageDescription : item.content,
-      source: filename,
-      metadata: {
-        ...item.metadata,
-        ...(imageUrl && { imageUrl }),
-        ...(storageKey && { storageKey }),
-        ...(imageDescription && { imageDescription }),
-      },
+    // 插入解析出的条目到知识库（带自动标签）
+    const itemsToInsert = await Promise.all(parseResult.items.map(async (item) => {
+      const autoTags = await generateAutoTags(item.title, item.content?.substring(0, 2000) || '', item.modality);
+      return {
+        modality: item.modality,
+        title: item.title,
+        content: item.modality === 'image' && imageDescription ? imageDescription : item.content,
+        source: filename,
+        metadata: {
+          ...item.metadata,
+          ...(imageUrl && { imageUrl }),
+          ...(storageKey && { storageKey }),
+          ...(imageDescription && { imageDescription }),
+        },
+        tags: autoTags,
+      };
     }));
 
     if (itemsToInsert.length > 0) {
@@ -343,6 +347,9 @@ async function handleUrlUpload(url: string, request: NextRequest) {
       item_count: 1,
     });
     
+    // 自动生成标签
+    const tags = await generateAutoTags(title, textContent.substring(0, 2000), 'webpage');
+    
     // 创建知识条目
     const itemId = uuidv4();
     await supabase.from('knowledge_items').insert({
@@ -357,6 +364,7 @@ async function handleUrlUpload(url: string, request: NextRequest) {
         publish_time: response.publish_time,
         filetype: response.filetype,
       },
+      tags: tags,
     });
     
     return NextResponse.json({
@@ -372,4 +380,57 @@ async function handleUrlUpload(url: string, request: NextRequest) {
       error: `网页解析失败: ${error instanceof Error ? error.message : String(error)}` 
     }, { status: 500 });
   }
+}
+
+// 自动生成标签
+async function generateAutoTags(title: string, content: string, modality: string): Promise<string[]> {
+  const tags: string[] = [];
+  
+  // 基于模态类型的默认标签
+  const modalityTags: Record<string, string> = {
+    'excel': '表格数据',
+    'image': '图片',
+    'pdf': 'PDF文档',
+    'word': 'Word文档',
+    'ppt': 'PPT演示',
+    'audio': '音频',
+    'webpage': '网页',
+    'text': '文本',
+    'json': 'JSON数据',
+    'markdown': 'Markdown',
+  };
+  
+  if (modalityTags[modality]) {
+    tags.push(modalityTags[modality]);
+  }
+  
+  // 基于内容的关键词提取
+  const contentLower = (title + ' ' + content).toLowerCase();
+  
+  // 常见主题关键词
+  const keywordPatterns: [RegExp, string][] = [
+    [/港口|port|码头|dock/i, '港口'],
+    [/船|ship|vessel|航运/i, '航运'],
+    [/物流|logistics|运输/i, '物流'],
+    [/日本|japan|jp/i, '日本'],
+    [/中国|china|cn/i, '中国'],
+    [/美国|usa|america/i, '美国'],
+    [/欧洲|europe|eu/i, '欧洲'],
+    [/亚洲|asia/i, '亚洲'],
+    [/数据|data|统计/i, '数据'],
+    [/代码|code|编程/i, '编程'],
+    [/api|接口/i, 'API'],
+    [/配置|config|设置/i, '配置'],
+    [/报告|report|报表/i, '报告'],
+    [/技术|tech|技术文档/i, '技术'],
+  ];
+  
+  for (const [pattern, tag] of keywordPatterns) {
+    if (pattern.test(contentLower) && !tags.includes(tag)) {
+      tags.push(tag);
+    }
+  }
+  
+  // 最多返回 5 个标签
+  return tags.slice(0, 5);
 }

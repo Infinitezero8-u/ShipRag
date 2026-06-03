@@ -109,36 +109,37 @@ export async function POST(request: NextRequest) {
 
 // 更新条目信息
 export async function PATCH(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { id, title, content, metadata } = body;
+    try {
+      const body = await request.json();
+      const { id, title, content, metadata, tags } = body;
 
-    if (!id) {
-      return NextResponse.json({ error: '缺少 id 参数' }, { status: 400 });
+      if (!id) {
+        return NextResponse.json({ error: '缺少 id 参数' }, { status: 400 });
+      }
+
+      const supabase = getSupabaseClient();
+      
+      const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (title !== undefined) updateData.title = title;
+      if (content !== undefined) updateData.content = content;
+      if (metadata !== undefined) updateData.metadata = metadata;
+      if (tags !== undefined) updateData.tags = tags;
+
+      const { error } = await supabase
+        .from('knowledge_items')
+        .update(updateData)
+        .eq('id', id);
+
+      if (error) {
+        return NextResponse.json({ error: `更新失败: ${error.message}` }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true, message: '更新成功' });
+    } catch (error) {
+      console.error('更新条目失败:', error);
+      return NextResponse.json({ error: '更新失败' }, { status: 500 });
     }
-
-    const supabase = getSupabaseClient();
-    
-    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (title !== undefined) updateData.title = title;
-    if (content !== undefined) updateData.content = content;
-    if (metadata !== undefined) updateData.metadata = metadata;
-
-    const { error } = await supabase
-      .from('knowledge_items')
-      .update(updateData)
-      .eq('id', id);
-
-    if (error) {
-      return NextResponse.json({ error: `更新失败: ${error.message}` }, { status: 500 });
-    }
-
-    return NextResponse.json({ success: true, message: '更新成功' });
-  } catch (error) {
-    console.error('更新条目失败:', error);
-    return NextResponse.json({ error: '更新失败' }, { status: 500 });
   }
-}
 
 // 备用搜索方法：直接查询并计算相似度
 async function fallbackSearch(
@@ -354,7 +355,7 @@ export async function GET(request: NextRequest) {
     // 获取知识条目列表
     let query = supabase
       .from('knowledge_items')
-      .select('id, modality, title, content, source, metadata, created_at, embedding')
+      .select('id, modality, title, content, source, metadata, created_at, embedding, tags')
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -389,6 +390,7 @@ export async function GET(request: NextRequest) {
       content: item.content,
       source: item.source,
       metadata: item.metadata,
+      tags: item.tags,
       status: item.embedding ? 'embedded' : 'pending',
       created_at: item.created_at,
     }));
@@ -397,6 +399,42 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json({ 
       error: `查询失败: ${error instanceof Error ? error.message : String(error)}` 
+    }, { status: 500 });
+  }
+}
+
+// 获取所有标签
+export async function HEAD(request: NextRequest) {
+  try {
+    const supabase = getSupabaseClient();
+    
+    // 获取所有条目的标签
+    const { data, error } = await supabase
+      .from('knowledge_items')
+      .select('tags')
+      .not('tags', 'is', null);
+    
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    
+    // 统计标签频率
+    const tagCounts: Record<string, number> = {};
+    for (const item of data || []) {
+      for (const tag of item.tags || []) {
+        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+      }
+    }
+    
+    // 按频率排序
+    const tags = Object.entries(tagCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+    
+    return NextResponse.json({ success: true, tags });
+  } catch (error) {
+    return NextResponse.json({ 
+      error: `获取标签失败: ${error instanceof Error ? error.message : String(error)}` 
     }, { status: 500 });
   }
 }

@@ -3,124 +3,191 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
-type FileUpload = {
+interface FileUpload {
   id: string;
   filename: string;
   file_type: string;
   file_size: string;
-  storage_url: string | null;
-  status: string;
   item_count: string;
+  status: string;
   created_at: string;
-};
+}
 
-type KnowledgeItem = {
+interface KnowledgeItem {
   id: string;
-  modality: string;
   title: string;
   content: string;
+  modality: string;
   source: string;
-  metadata: Record<string, unknown>;
   status: string;
+  tags?: string[];
   created_at: string;
-};
+}
+
+interface Tag {
+  name: string;
+  count: number;
+}
 
 export default function ManagePage() {
-  const [activeTab, setActiveTab] = useState<'files' | 'items'>('files');
   const [files, setFiles] = useState<FileUpload[]>([]);
   const [items, setItems] = useState<KnowledgeItem[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [stats, setStats] = useState({ totalFiles: 0, totalItems: 0, embedded: 0, pending: 0 });
+  const [activeTab, setActiveTab] = useState<'files' | 'items' | 'tags'>('files');
   const [loading, setLoading] = useState(false);
+
+  // 筛选
+  const [filterModality, setFilterModality] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterSource, setFilterSource] = useState('all');
+  const [filterTag, setFilterTag] = useState('all');
+  const [sources, setSources] = useState<string[]>([]);
+
+  // 分页
+  const [itemPage, setItemPage] = useState(1);
+  const [itemTotal, setItemTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
+  // 批量操作
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  
-  // 编辑状态
+
+  // 编辑条目
   const [editingItem, setEditingItem] = useState<KnowledgeItem | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
+  const [editTags, setEditTags] = useState<string[]>([]);
+  const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
-  
-  // 文件编辑状态
+
+  // 编辑文件
   const [editingFile, setEditingFile] = useState<FileUpload | null>(null);
   const [editFilename, setEditFilename] = useState('');
-  
-  // 分页状态
-  const [itemPage, setItemPage] = useState(1);
-  const [itemTotal, setItemTotal] = useState(0);
-  const pageSize = 20;
 
-  // 筛选状态
-  const [filterModality, setFilterModality] = useState<string>('all');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterSource, setFilterSource] = useState<string>('all');
+  // 编辑标签
+  const [editingTagName, setEditingTagName] = useState<string | null>(null);
+  const [newTagName, setNewTagName] = useState('');
 
   useEffect(() => {
-    fetchFiles();
-    fetchItems();
+    fetchData();
+    fetchTags();
   }, []);
 
   useEffect(() => {
     fetchItems();
-  }, [itemPage, filterModality, filterStatus, filterSource]);
+  }, [itemPage, filterModality, filterStatus, filterSource, filterTag]);
 
-  const fetchFiles = async () => {
+  const fetchData = async () => {
     try {
       const res = await fetch('/api/upload');
       const data = await res.json();
-      setFiles(data.uploads || []);
-    } catch (e) {
-      console.error('获取文件列表失败:', e);
+      if (data.success) {
+        setFiles(data.uploads || []);
+        setStats({
+          totalFiles: data.uploads?.length || 0,
+          totalItems: 0,
+          embedded: 0,
+          pending: 0,
+        });
+      }
+    } catch (err) {
+      console.error('获取数据失败:', err);
     }
   };
 
   const fetchItems = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        type: 'all',
-        limit: String(pageSize),
-        offset: String((itemPage - 1) * pageSize),
-      });
-      if (filterModality !== 'all') params.append('modality', filterModality);
-      if (filterStatus !== 'all') params.append('status', filterStatus);
-      if (filterSource !== 'all') params.append('source', filterSource);
-      
+      const params = new URLSearchParams();
+      params.set('type', 'all');
+      params.set('limit', '20');
+      params.set('offset', String((itemPage - 1) * 20));
+      if (filterModality !== 'all') params.set('modality', filterModality);
+      if (filterStatus !== 'all') params.set('status', filterStatus);
+      if (filterSource !== 'all') params.set('source', filterSource);
+      if (filterTag !== 'all') params.set('tag', filterTag);
+
       const res = await fetch(`/api/search?${params}`);
       const data = await res.json();
-      setItems(data.items || []);
-      setItemTotal(data.total || 0);
-    } catch (e) {
-      console.error('获取条目列表失败:', e);
-    } finally {
-      setLoading(false);
+      if (data.success) {
+        setItems(data.items || []);
+        setItemTotal(data.total || 0);
+        setTotalPages(Math.ceil((data.total || 0) / 20));
+        setSources(data.sources || []);
+        
+        const embedded = (data.items || []).filter((i: KnowledgeItem) => i.status === 'embedded').length;
+        setStats(prev => ({
+          ...prev,
+          totalItems: data.total || 0,
+          embedded: prev.embedded || embedded,
+          pending: (data.total || 0) - embedded,
+        }));
+      }
+    } catch (err) {
+      console.error('获取条目失败:', err);
+    }
+    setLoading(false);
+  };
+
+  const fetchTags = async () => {
+    try {
+      const res = await fetch('/api/search?action=tags');
+      const data = await res.json();
+      if (data.success) {
+        setTags(data.tags || []);
+      }
+    } catch (err) {
+      console.error('获取标签失败:', err);
     }
   };
 
+  const formatFileSize = (size: string) => {
+    const bytes = parseInt(size);
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  };
+
+  // 文件操作
   const deleteFile = async (id: string) => {
     if (!confirm('确定删除此文件？相关条目也会被删除。')) return;
     try {
       await fetch(`/api/upload?id=${id}`, { method: 'DELETE' });
-      fetchFiles();
+      fetchData();
       fetchItems();
-    } catch (e) {
-      console.error('删除失败:', e);
+    } catch (err) {
+      console.error('删除失败:', err);
     }
   };
 
-  const deleteItems = async () => {
-    if (selectedItems.size === 0) return;
-    if (!confirm(`确定删除选中的 ${selectedItems.size} 条目？`)) return;
+  const openFileEdit = (file: FileUpload) => {
+    setEditingFile(file);
+    setEditFilename(file.filename);
+  };
+
+  const closeFileEdit = () => {
+    setEditingFile(null);
+    setEditFilename('');
+  };
+
+  const saveFileEdit = async () => {
+    if (!editingFile) return;
+    setSaving(true);
     try {
-      await fetch('/api/embed', {
-        method: 'DELETE',
+      await fetch('/api/upload', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemIds: Array.from(selectedItems) }),
+        body: JSON.stringify({ id: editingFile.id, filename: editFilename }),
       });
-      setSelectedItems(new Set());
-      fetchItems();
-    } catch (e) {
-      console.error('删除失败:', e);
+      closeFileEdit();
+      fetchData();
+    } catch (err) {
+      console.error('保存失败:', err);
     }
+    setSaving(false);
   };
 
+  // 条目操作
   const toggleSelect = (id: string) => {
     const newSet = new Set(selectedItems);
     if (newSet.has(id)) newSet.delete(id);
@@ -136,113 +203,110 @@ export default function ManagePage() {
     }
   };
 
-  // 文件编辑功能
-  const openFileEdit = (file: FileUpload) => {
-    setEditingFile(file);
-    setEditFilename(file.filename);
-  };
-
-  const closeFileEdit = () => {
-    setEditingFile(null);
-    setEditFilename('');
-  };
-
-  const saveFileEdit = async () => {
-    if (!editingFile) return;
-    setSaving(true);
+  const deleteItems = async () => {
+    if (!confirm(`确定删除 ${selectedItems.size} 个条目？`)) return;
     try {
-      const res = await fetch(`/api/upload?id=${editingFile.id}`, {
-        method: 'PATCH',
+      await fetch('/api/search', {
+        method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: editFilename }),
+        body: JSON.stringify({ ids: Array.from(selectedItems) }),
       });
-      if (res.ok) {
-        closeFileEdit();
-        fetchFiles();
-      } else {
-        alert('保存失败');
-      }
-    } catch (e) {
-      console.error('保存失败:', e);
-      alert('保存失败');
-    } finally {
-      setSaving(false);
+      setSelectedItems(new Set());
+      fetchItems();
+      fetchTags();
+    } catch (err) {
+      console.error('删除失败:', err);
     }
   };
 
-  // 编辑功能
   const openEdit = (item: KnowledgeItem) => {
     setEditingItem(item);
     setEditTitle(item.title);
-    setEditContent(item.content || '');
+    setEditContent(item.content);
+    setEditTags(item.tags || []);
   };
 
   const closeEdit = () => {
     setEditingItem(null);
     setEditTitle('');
     setEditContent('');
+    setEditTags([]);
+    setNewTag('');
+  };
+
+  const addTag = () => {
+    if (newTag.trim() && !editTags.includes(newTag.trim())) {
+      setEditTags([...editTags, newTag.trim()]);
+      setNewTag('');
+    }
+  };
+
+  const removeTag = (tag: string) => {
+    setEditTags(editTags.filter(t => t !== tag));
   };
 
   const saveEdit = async () => {
     if (!editingItem) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/search', {
+      await fetch('/api/search', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: editingItem.id,
-          title: editTitle,
-          content: editContent,
-        }),
+        body: JSON.stringify({ id: editingItem.id, title: editTitle, content: editContent, tags: editTags }),
       });
-      const data = await res.json();
-      if (data.success) {
-        closeEdit();
-        fetchItems();
-      } else {
-        alert('保存失败: ' + data.error);
-      }
-    } catch (e) {
-      console.error('保存失败:', e);
-      alert('保存失败');
-    } finally {
-      setSaving(false);
+      closeEdit();
+      fetchItems();
+      fetchTags();
+    } catch (err) {
+      console.error('保存失败:', err);
+    }
+    setSaving(false);
+  };
+
+  // 标签操作
+  const renameTag = async (oldName: string, newName: string) => {
+    if (!newName.trim() || oldName === newName) return;
+    try {
+      await fetch('/api/search', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'renameTag', oldTag: oldName, newTag: newName }),
+      });
+      setEditingTagName(null);
+      fetchTags();
+      fetchItems();
+    } catch (err) {
+      console.error('重命名失败:', err);
     }
   };
 
-  // 获取唯一的来源列表
-  const sources = Array.from(new Set(items.map(i => i.source)));
-  
-  // 统计信息
-  const stats = {
-    totalFiles: files.length,
-    totalItems: itemTotal,
-    embedded: items.filter(i => i.status === 'embedded').length,
-    pending: items.filter(i => i.status === 'pending').length,
+  const deleteTag = async (name: string) => {
+    if (!confirm(`确定删除标签 "${name}"？此操作不会删除条目。`)) return;
+    try {
+      await fetch('/api/search', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deleteTag', tag: name }),
+      });
+      fetchTags();
+      fetchItems();
+    } catch (err) {
+      console.error('删除失败:', err);
+    }
   };
-
-  const formatFileSize = (bytes: string) => {
-    const num = parseInt(bytes);
-    if (num < 1024) return num + ' B';
-    if (num < 1024 * 1024) return (num / 1024).toFixed(1) + ' KB';
-    return (num / 1024 / 1024).toFixed(1) + ' MB';
-  };
-
-  const totalPages = Math.ceil(itemTotal / pageSize);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-3">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-gray-100 p-4">
+      <div className="max-w-2xl mx-auto">
         {/* 头部 */}
-        <div className="bg-white rounded-lg shadow p-4 mb-3">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg font-bold text-gray-800">📚 知识库管理</h1>
-            <Link href="/" className="text-sm text-blue-600 hover:underline">← 返回主页</Link>
-          </div>
-          
-          {/* 统计 */}
-          <div className="grid grid-cols-4 gap-2 mt-3">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-xl font-bold text-gray-800">知识库管理</h1>
+          <Link href="/" className="text-blue-600 text-sm">← 返回首页</Link>
+        </div>
+
+        {/* 统计 */}
+        <div className="bg-white rounded-lg shadow p-3 mb-3">
+          <div className="grid grid-cols-4 gap-2">
             <div className="bg-blue-50 rounded p-2 text-center">
               <div className="text-xl font-bold text-blue-600">{stats.totalFiles}</div>
               <div className="text-xs text-gray-500">文件</div>
@@ -270,7 +334,7 @@ export default function ManagePage() {
               activeTab === 'files' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600'
             }`}
           >
-            📁 文件列表 ({files.length})
+            📁 文件 ({files.length})
           </button>
           <button
             onClick={() => setActiveTab('items')}
@@ -278,7 +342,15 @@ export default function ManagePage() {
               activeTab === 'items' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600'
             }`}
           >
-            📝 条目列表 ({itemTotal})
+            📝 条目 ({itemTotal})
+          </button>
+          <button
+            onClick={() => setActiveTab('tags')}
+            className={`flex-1 py-2 rounded-lg font-medium ${
+              activeTab === 'tags' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600'
+            }`}
+          >
+            🏷️ 标签 ({tags.length})
           </button>
         </div>
 
@@ -295,7 +367,8 @@ export default function ManagePage() {
                       <span className="text-2xl">
                         {file.file_type === 'image' ? '📷' : 
                          file.file_type === 'excel' ? '📊' : 
-                         file.file_type === 'pdf' ? '📕' : '📄'}
+                         file.file_type === 'pdf' ? '📕' : 
+                         file.file_type === 'url' ? '🌐' : '📄'}
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-gray-800 truncate">{file.filename}</div>
@@ -342,6 +415,7 @@ export default function ManagePage() {
                   <option value="text">文本</option>
                   <option value="pdf">PDF</option>
                   <option value="json">JSON</option>
+                  <option value="url">网页</option>
                 </select>
                 <select
                   value={filterStatus}
@@ -360,6 +434,16 @@ export default function ManagePage() {
                   <option value="all">全部来源</option>
                   {sources.map(s => (
                     <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                <select
+                  value={filterTag}
+                  onChange={(e) => { setFilterTag(e.target.value); setItemPage(1); }}
+                  className="px-2 py-1 border rounded text-sm"
+                >
+                  <option value="all">全部标签</option>
+                  {tags.map(t => (
+                    <option key={t.name} value={t.name}>{t.name} ({t.count})</option>
                   ))}
                 </select>
                 {selectedItems.size > 0 && (
@@ -403,13 +487,18 @@ export default function ManagePage() {
                           className="mt-1"
                         />
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-medium text-gray-800">{item.title}</span>
                             <span className={`text-xs px-1 rounded ${
                               item.status === 'embedded' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'
                             }`}>
                               {item.status === 'embedded' ? '已向量化' : '待处理'}
                             </span>
+                            {(item.tags || []).map(tag => (
+                              <span key={tag} className="text-xs px-1 rounded bg-blue-100 text-blue-600">
+                                {tag}
+                              </span>
+                            ))}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
                             {item.modality} · {item.source}
@@ -457,9 +546,66 @@ export default function ManagePage() {
             </div>
           </>
         )}
+
+        {/* 标签管理 */}
+        {activeTab === 'tags' && (
+          <div className="bg-white rounded-lg shadow">
+            {tags.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">
+                暂无标签<br/>
+                <span className="text-xs">上传文件时会自动生成标签，或手动为条目添加标签</span>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {tags.map((tag) => (
+                  <div key={tag.name} className="p-3 flex items-center justify-between">
+                    {editingTagName === tag.name ? (
+                      <input
+                        type="text"
+                        defaultValue={tag.name}
+                        autoFocus
+                        onBlur={(e) => renameTag(tag.name, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') renameTag(tag.name, (e.target as HTMLInputElement).value);
+                          if (e.key === 'Escape') setEditingTagName(null);
+                        }}
+                        className="flex-1 px-2 py-1 border rounded text-sm mr-2"
+                      />
+                    ) : (
+                      <div 
+                        className="flex-1 cursor-pointer"
+                        onClick={() => {
+                          setFilterTag(tag.name);
+                          setActiveTab('items');
+                        }}
+                      >
+                        <span className="font-medium text-gray-800">{tag.name}</span>
+                        <span className="text-sm text-gray-500 ml-2">({tag.count} 条目)</span>
+                      </div>
+                    )}
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setEditingTagName(tag.name)}
+                        className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded"
+                      >
+                        重命名
+                      </button>
+                      <button
+                        onClick={() => deleteTag(tag.name)}
+                        className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* 编辑弹窗 */}
+      {/* 编辑条目弹窗 */}
       {editingItem && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-auto">
@@ -482,9 +628,36 @@ export default function ManagePage() {
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
-                  rows={8}
+                  rows={6}
                   className="w-full px-3 py-2 border rounded-lg text-sm resize-none"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">标签</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {editTags.map(tag => (
+                    <span key={tag} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-sm flex items-center gap-1">
+                      {tag}
+                      <button onClick={() => removeTag(tag)} className="text-blue-500 hover:text-blue-700">×</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newTag}
+                    onChange={(e) => setNewTag(e.target.value)}
+                    placeholder="输入新标签"
+                    className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                    onKeyDown={(e) => e.key === 'Enter' && addTag()}
+                  />
+                  <button
+                    onClick={addTag}
+                    className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm"
+                  >
+                    添加
+                  </button>
+                </div>
               </div>
               <div className="text-xs text-gray-500">
                 类型: {editingItem.modality} · 来源: {editingItem.source}
@@ -509,7 +682,7 @@ export default function ManagePage() {
         </div>
       )}
 
-      {/* 文件编辑弹窗 */}
+      {/* 编辑文件弹窗 */}
       {editingFile && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
