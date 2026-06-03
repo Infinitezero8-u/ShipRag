@@ -523,7 +523,9 @@ export default function SeaChartPage() {
                   {showSeaMap && (
                     <TileLayer
                       attribution='&copy; <a href="https://www.openseamap.org">OpenSeaMap</a>'
-                      url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
+                      url="https://{s}.tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
+                      subdomains={['a', 'b', 'c']}
+                      maxZoom={19}
                     />
                   )}
 
