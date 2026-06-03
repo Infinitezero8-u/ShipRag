@@ -111,6 +111,8 @@ export default function WorkflowPage() {
   const [workflowName, setWorkflowName] = useState('默认RAG');
   const [showPanel, setShowPanel] = useState(false);
   const [showSave, setShowSave] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [showEdit, setShowEdit] = useState(false);
 
   useEffect(() => {
     const keys = Object.keys(localStorage).filter(k => k.startsWith('workflow_'));
@@ -161,6 +163,34 @@ export default function WorkflowPage() {
     setNodes(initialNodes);
     setEdges(initialEdges);
     setShowPanel(false);
+    setShowEdit(false);
+    setSelectedNode(null);
+  };
+
+  // 节点点击处理
+  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+    setShowEdit(true);
+  }, []);
+
+  // 更新节点数据
+  const updateNodeData = (key: string, value: unknown) => {
+    if (!selectedNode) return;
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === selectedNode.id ? { ...n, data: { ...n.data, [key]: value } } : n
+      )
+    );
+    setSelectedNode((prev) => prev ? { ...prev, data: { ...prev.data, [key]: value } } : null);
+  };
+
+  // 删除选中节点
+  const deleteSelectedNode = () => {
+    if (!selectedNode) return;
+    setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
+    setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
+    setShowEdit(false);
+    setSelectedNode(null);
   };
 
   return (
@@ -189,6 +219,7 @@ export default function WorkflowPage() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.2 }}
@@ -273,6 +304,115 @@ export default function WorkflowPage() {
                 保存
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 节点编辑面板 */}
+      {showEdit && selectedNode && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-2xl shadow-lg max-h-[70vh] overflow-auto">
+          <div className="p-4 border-b sticky top-0 bg-white flex justify-between items-center">
+            <div className="font-bold">编辑: {selectedNode.data.label}</div>
+            <button onClick={() => setShowEdit(false)} className="text-gray-500">✕</button>
+          </div>
+          <div className="p-4 space-y-4">
+            {/* 通用属性 */}
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">节点名称</label>
+              <input
+                type="text"
+                value={selectedNode.data.label || ''}
+                onChange={(e) => updateNodeData('label', e.target.value)}
+                className="border rounded-lg px-3 py-2 w-full text-sm"
+              />
+            </div>
+
+            {/* 节点类型特定属性 */}
+            {selectedNode.data.type === 'input' && (
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">输入提示</label>
+                <input
+                  type="text"
+                  value={selectedNode.data.placeholder || '请输入问题'}
+                  onChange={(e) => updateNodeData('placeholder', e.target.value)}
+                  className="border rounded-lg px-3 py-2 w-full text-sm"
+                />
+              </div>
+            )}
+
+            {selectedNode.data.type === 'retrieval' && (
+              <>
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">Top K</label>
+                  <input
+                    type="number"
+                    value={selectedNode.data.topK || 5}
+                    onChange={(e) => updateNodeData('topK', parseInt(e.target.value))}
+                    className="border rounded-lg px-3 py-2 w-full text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">相似度阈值</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={selectedNode.data.threshold || 0.3}
+                    onChange={(e) => updateNodeData('threshold', parseFloat(e.target.value))}
+                    className="border rounded-lg px-3 py-2 w-full text-sm"
+                  />
+                </div>
+              </>
+            )}
+
+            {selectedNode.data.type === 'llm' && (
+              <>
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">模型</label>
+                  <select
+                    value={selectedNode.data.model || 'doubao-seed-2-0-lite-260215'}
+                    onChange={(e) => updateNodeData('model', e.target.value)}
+                    className="border rounded-lg px-3 py-2 w-full text-sm"
+                  >
+                    <option value="doubao-seed-2-0-lite-260215">Doubao Lite</option>
+                    <option value="doubao-seed-2-0-pro-260215">Doubao Pro</option>
+                    <option value="deepseek-v3-2-251201">DeepSeek V3</option>
+                    <option value="kimi-k2-5-260127">Kimi K2</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">温度</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="1"
+                    value={selectedNode.data.temperature || 0.7}
+                    onChange={(e) => updateNodeData('temperature', parseFloat(e.target.value))}
+                    className="border rounded-lg px-3 py-2 w-full text-sm"
+                  />
+                </div>
+              </>
+            )}
+
+            {selectedNode.data.type === 'prompt' && (
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">提示词模板</label>
+                <textarea
+                  value={selectedNode.data.template || '根据以下内容回答问题：\n\n{context}\n\n问题：{question}'}
+                  onChange={(e) => updateNodeData('template', e.target.value)}
+                  className="border rounded-lg px-3 py-2 w-full text-sm h-24"
+                />
+                <p className="text-xs text-gray-400 mt-1">可用变量: {'{context}'}, {'{question}'}</p>
+              </div>
+            )}
+
+            {/* 删除按钮 */}
+            <button
+              onClick={deleteSelectedNode}
+              className="w-full py-2 rounded-lg bg-red-50 text-red-600 text-sm"
+            >
+              删除节点
+            </button>
           </div>
         </div>
       )}
