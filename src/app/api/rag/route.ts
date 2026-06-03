@@ -42,12 +42,12 @@ async function executeStatsQuery(supabase: ReturnType<typeof getSupabaseClient>,
     // 判断查询类型
     if (statsType === 'total' || statsType === 'count') {
       // 总数查询
-      const { data, error } = await supabase
+      const { count, error } = await supabase
         .from('knowledge_items')
         .select('id', { count: 'exact', head: true });
       
       if (!error) {
-        result = `知识库中共有 **${data?.length || 0}** 条记录。`;
+        result = `知识库中共有 **${count || 0}** 条记录。`;
         sql = 'SELECT COUNT(*) FROM knowledge_items';
       }
     } else if (statsType === 'country_list') {
