@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -14,18 +14,14 @@ import {
   MessageSquare, 
   FileText, 
   Image, 
-  FileSpreadsheet, 
-  FileCode,
-  Database,
+  FileSpreadsheet,
   Loader2,
-  CheckCircle,
-  XCircle,
   Send,
   ChevronDown,
   ChevronUp,
   Play,
   Pause,
-  RefreshCw
+  X
 } from 'lucide-react';
 
 type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory';
@@ -35,9 +31,9 @@ const modalityIcons: Record<Modality, React.ReactNode> = {
   image: <Image className="w-4 h-4" />,
   excel: <FileSpreadsheet className="w-4 h-4" />,
   doc: <FileText className="w-4 h-4" />,
-  md: <FileCode className="w-4 h-4" />,
-  json: <FileCode className="w-4 h-4" />,
-  trajectory: <Database className="w-4 h-4" />,
+  md: <FileText className="w-4 h-4" />,
+  json: <FileText className="w-4 h-4" />,
+  trajectory: <FileSpreadsheet className="w-4 h-4" />,
 };
 
 const modalityLabels: Record<Modality, string> = {
@@ -45,7 +41,7 @@ const modalityLabels: Record<Modality, string> = {
   image: '图片',
   excel: 'Excel',
   doc: '文档',
-  md: 'Markdown',
+  md: 'MD',
   json: 'JSON',
   trajectory: '航迹',
 };
@@ -58,6 +54,7 @@ interface KnowledgeItem {
   source: string;
   similarity?: number;
   status: 'embedded' | 'pending';
+  metadata?: Record<string, unknown>;
 }
 
 export default function RagPage() {
@@ -96,107 +93,63 @@ export default function RagPage() {
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState('');
   const [searchModality, setSearchModality] = useState<string>('');
-  const [searchMode, setSearchMode] = useState<'fuzzy' | 'exact'>('fuzzy'); // 搜索模式
+  const [searchMode, setSearchMode] = useState<'fuzzy' | 'exact'>('fuzzy');
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<KnowledgeItem[]>([]);
   
-  // RAG 问答状态
+  // RAG 状态
   const [ragQuery, setRagQuery] = useState('');
   const [ragAnswer, setRagAnswer] = useState('');
-  const [ragSources, setRagSources] = useState<Array<{
-    title: string;
-    source: string;
-    similarity: number;
-  }>>([]);
   const [ragLoading, setRagLoading] = useState(false);
   const answerRef = useRef<HTMLDivElement>(null);
 
   // 获取向量化状态
-  const fetchEmbedStatus = async () => {
+  const fetchEmbedStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/embed');
       const data = await res.json();
-      if (data.success) {
-        setEmbedStatus(data);
-      }
+      setEmbedStatus({
+        total: data.total || 0,
+        embedded: data.embedded || 0,
+        pending: data.pending || 0,
+      });
     } catch (error) {
-      console.error('获取向量化状态失败:', error);
+      console.error('获取状态失败:', error);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchEmbedStatus();
     const interval = setInterval(fetchEmbedStatus, 5000);
     return () => clearInterval(interval);
-  }, []);
-
-  // 获取详细条目
-  const fetchDetailItems = async (type: 'all' | 'embedded' | 'pending', page: number = 1) => {
-    setDetailLoading(true);
-    try {
-      const params = new URLSearchParams({
-        type,
-        page: page.toString(),
-        limit: '20'
-      });
-      const res = await fetch(`/api/search?${params}`);
-      const data = await res.json();
-      if (data.success) {
-        setDetailItems(data.items);
-        setDetailTotal(data.total);
-        setDetailPage(page);
-      }
-    } catch (error) {
-      console.error('获取详细条目失败:', error);
-    } finally {
-      setDetailLoading(false);
-    }
-  };
-
-  // 展开/折叠处理
-  const handleExpand = (section: string) => {
-    if (expandedSection === section) {
-      setExpandedSection(null);
-    } else {
-      setExpandedSection(section);
-      const type = section === 'total' ? 'all' : section === 'embedded' ? 'embedded' : 'pending';
-      fetchDetailItems(type as 'all' | 'embedded' | 'pending', 1);
-    }
-  };
+  }, [fetchEmbedStatus]);
 
   // 文件上传
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleUpload = async () => {
+    const fileInput = fileInputRef.current;
+    if (!fileInput?.files?.length) return;
+
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
 
     setUploading(true);
     setUploadResult(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
       const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
       });
-
       const data = await res.json();
       setUploadResult(data);
-      
       if (data.success) {
         fetchEmbedStatus();
       }
     } catch (error) {
-      setUploadResult({
-        success: false,
-        error: error instanceof Error ? error.message : '上传失败',
-      });
+      setUploadResult({ success: false, error: '上传失败' });
     } finally {
       setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
     }
   };
 
@@ -204,74 +157,82 @@ export default function RagPage() {
   const handleEmbed = async () => {
     setEmbedding(true);
     try {
-      const res = await fetch('/api/embed', {
+      await fetch('/api/embed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batchSize: 50 }),
       });
-      const data = await res.json();
       fetchEmbedStatus();
-      if (data.success && data.processed > 0) {
-        setEmbedProgress(prev => ({
-          processed: prev.processed + data.processed,
-          failed: prev.failed + (data.failed || 0)
-        }));
-      }
-    } catch (error) {
-      console.error('向量化失败:', error);
     } finally {
       setEmbedding(false);
     }
   };
 
-  // 自动批量向量化
-  const runAutoEmbed = useCallback(async () => {
-    if (!autoEmbedding) return;
-    
-    try {
-      const res = await fetch('/api/embed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batchSize: 50 }),
-      });
-      const data = await res.json();
-      
-      if (data.success) {
-        setEmbedProgress(prev => ({
-          processed: prev.processed + data.processed,
-          failed: prev.failed + (data.failed || 0)
-        }));
-        fetchEmbedStatus();
-        
-        // 如果还有待处理项，继续执行
-        if (data.processed > 0 && autoEmbedding) {
-          setTimeout(runAutoEmbed, 500); // 500ms 间隔
-        } else {
-          setAutoEmbedding(false);
-        }
-      } else {
-        setAutoEmbedding(false);
-      }
-    } catch (error) {
-      console.error('自动向量化失败:', error);
-      setAutoEmbedding(false);
-    }
-  }, [autoEmbedding]);
-
-  // 启动/停止自动向量化
-  const toggleAutoEmbed = () => {
+  // 自动向量化
+  const toggleAutoEmbed = async () => {
     if (autoEmbedding) {
       setAutoEmbedding(false);
-    } else {
-      setAutoEmbedding(true);
-      setEmbedProgress({ processed: 0, failed: 0 });
+      return;
+    }
+
+    setAutoEmbedding(true);
+    setEmbedProgress({ processed: 0, failed: 0 });
+
+    while (autoEmbedding || embedStatus?.pending === 0) {
+      try {
+        const res = await fetch('/api/embed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchSize: 50 }),
+        });
+        const data = await res.json();
+        
+        setEmbedProgress(prev => ({
+          processed: prev.processed + (data.processed || 0),
+          failed: prev.failed + (data.failed || 0),
+        }));
+
+        if (data.processed === 0 || data.pending === 0) {
+          setAutoEmbedding(false);
+          break;
+        }
+        
+        await fetchEmbedStatus();
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error('自动向量化出错:', error);
+        setAutoEmbedding(false);
+        break;
+      }
     }
   };
 
-  // 全部取消向量化
+  // 获取详情列表
+  const fetchDetailItems = async (type: 'embedded' | 'pending' | 'all', page: number = 1) => {
+    setDetailLoading(true);
+    try {
+      const res = await fetch(`/api/search?type=${type}&limit=20&offset=${(page - 1) * 20}`);
+      const data = await res.json();
+      setDetailItems(data.items || []);
+      setDetailTotal(data.total || 0);
+      setDetailPage(page);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const toggleSection = (section: string) => {
+    if (expandedSection === section) {
+      setExpandedSection(null);
+    } else {
+      setExpandedSection(section);
+      fetchDetailItems(section as 'embedded' | 'pending' | 'all');
+    }
+  };
+
+  // 全部取消
   const handleCancelAll = async () => {
-    if (!confirm('确定要取消所有待向量化的条目吗？此操作不可恢复。')) return;
-    
+    if (!confirm('确定要删除所有待向量化的条目吗？')) return;
     try {
       const res = await fetch('/api/embed', {
         method: 'DELETE',
@@ -279,23 +240,20 @@ export default function RagPage() {
         body: JSON.stringify({ clearAll: true }),
       });
       const data = await res.json();
-      if (data.success) {
-        alert(data.message);
-        fetchEmbedStatus();
-        if (expandedSection === 'pending') {
-          fetchDetailItems('pending', 1);
-        }
+      alert(`已删除 ${data.deleted} 条待处理条目`);
+      fetchEmbedStatus();
+      if (expandedSection === 'pending') {
+        fetchDetailItems('pending');
       }
     } catch (error) {
-      console.error('取消失败:', error);
+      alert('取消失败');
     }
   };
 
-  // 取消选中的条目
+  // 取消选中
   const handleCancelSelected = async () => {
     if (selectedItems.size === 0) return;
-    if (!confirm(`确定要取消选中的 ${selectedItems.size} 条目吗？此操作不可恢复。`)) return;
-    
+    if (!confirm(`确定要删除选中的 ${selectedItems.size} 条条目吗？`)) return;
     try {
       const res = await fetch('/api/embed', {
         method: 'DELETE',
@@ -303,59 +261,36 @@ export default function RagPage() {
         body: JSON.stringify({ ids: Array.from(selectedItems) }),
       });
       const data = await res.json();
-      if (data.success) {
-        alert(data.message);
-        setSelectedItems(new Set());
-        fetchEmbedStatus();
-        if (expandedSection === 'pending') {
-          fetchDetailItems('pending', detailPage);
-        }
+      alert(`已删除 ${data.deleted} 条条目`);
+      setSelectedItems(new Set());
+      fetchEmbedStatus();
+      if (expandedSection === 'pending') {
+        fetchDetailItems('pending');
       }
     } catch (error) {
-      console.error('取消失败:', error);
+      alert('取消失败');
     }
   };
 
-  // 切换选中状态
-  const toggleItemSelection = (id: string) => {
-    const newSelected = new Set(selectedItems);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedItems(newSelected);
-  };
-
-  useEffect(() => {
-    if (autoEmbedding) {
-      runAutoEmbed();
-    }
-  }, [autoEmbedding, runAutoEmbed]);
-
-  // 执行搜索
+  // 搜索
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
-
     setSearching(true);
+    setSearchResults([]);
     try {
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: searchQuery,
-          modality: searchModality || undefined,
-          mode: searchMode, // 搜索模式
           topK: 50,
           threshold: 0.3,
+          mode: searchMode,
+          filter: searchModality ? { modality: searchModality } : undefined,
         }),
       });
       const data = await res.json();
-      if (data.success) {
-        setSearchResults(data.results);
-      }
-    } catch (error) {
-      console.error('搜索失败:', error);
+      setSearchResults(data.results || []);
     } finally {
       setSearching(false);
     }
@@ -364,23 +299,18 @@ export default function RagPage() {
   // RAG 问答
   const handleRagQuery = async () => {
     if (!ragQuery.trim()) return;
-
     setRagLoading(true);
     setRagAnswer('');
-    setRagSources([]);
 
     try {
       const res = await fetch('/api/rag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: ragQuery,
-          stream: true,
-        }),
+        body: JSON.stringify({ query: ragQuery, noLimit: true }),
       });
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error('无法读取响应');
+      if (!reader) return;
 
       const decoder = new TextDecoder();
       while (true) {
@@ -389,250 +319,163 @@ export default function RagPage() {
         const chunk = decoder.decode(value, { stream: true });
         setRagAnswer(prev => prev + chunk);
       }
-    } catch (error) {
-      setRagAnswer('问答失败: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setRagLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-screen bg-background">
+      <div className="max-w-4xl mx-auto p-3 sm:p-4">
         {/* 标题 */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">跨模态 RAG 知识检索系统</h1>
-          <p className="text-muted-foreground">
-            支持 Excel、Doc、Markdown、JSON、图片、航迹等多种数据格式的智能检索与问答
-          </p>
+        <div className="text-center mb-4">
+          <h1 className="text-xl sm:text-2xl font-bold">跨模态 RAG 知识检索</h1>
         </div>
 
-        {/* 统计卡片 */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          {/* 知识条目 */}
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => handleExpand('total')}>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">知识条目</CardTitle>
-                {expandedSection === 'total' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{embedStatus?.total || 0}</div>
-              <p className="text-xs text-muted-foreground">点击查看详情</p>
-            </CardContent>
-          </Card>
-          
-          {/* 已向量化 */}
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => handleExpand('embedded')}>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">已向量化</CardTitle>
-                {expandedSection === 'embedded' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600">{embedStatus?.embedded || 0}</div>
-              <p className="text-xs text-muted-foreground">点击查看详情</p>
-            </CardContent>
-          </Card>
-          
-          {/* 待处理 */}
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => handleExpand('pending')}>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">待处理</CardTitle>
-                {expandedSection === 'pending' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-orange-500">{embedStatus?.pending || 0}</div>
-              <p className="text-xs text-muted-foreground">点击查看详情</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* 展开的详情面板 */}
-        {expandedSection && (
-          <Card className="mb-8">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>
-                  {expandedSection === 'total' && '全部知识条目'}
-                  {expandedSection === 'embedded' && '已向量化条目'}
-                  {expandedSection === 'pending' && '待处理条目'}
-                </CardTitle>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">共 {detailTotal} 条</span>
-                  <Button variant="ghost" size="sm" onClick={() => {
-                    const type = expandedSection === 'total' ? 'all' : expandedSection === 'embedded' ? 'embedded' : 'pending';
-                    fetchDetailItems(type as 'all' | 'embedded' | 'pending', detailPage);
-                  }}>
-                    <RefreshCw className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {detailLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {detailItems.map((item, index) => (
-                    <div key={item.id || index} className="p-3 border rounded-lg hover:bg-muted/50">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="outline" className="flex items-center gap-1">
-                          {modalityIcons[item.modality as Modality]}
-                          {modalityLabels[item.modality as Modality] || item.modality}
-                        </Badge>
-                        <span className="font-medium">{item.title || '无标题'}</span>
-                        <Badge variant={item.status === 'embedded' ? 'default' : 'secondary'} className="ml-auto">
-                          {item.status === 'embedded' ? '已向量化' : '待处理'}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {item.content?.substring(0, 150)}
-                        {item.content && item.content.length > 150 && '...'}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">来源：{item.source}</p>
-                    </div>
-                  ))}
-                  {detailItems.length === 0 && (
-                    <p className="text-center text-muted-foreground py-4">暂无数据</p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 主功能区域 */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="upload">文件上传</TabsTrigger>
-            <TabsTrigger value="search">知识检索</TabsTrigger>
-            <TabsTrigger value="rag">智能问答</TabsTrigger>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-3 mb-4">
+            <TabsTrigger value="upload" className="text-sm">📤 上传</TabsTrigger>
+            <TabsTrigger value="search" className="text-sm">🔍 检索</TabsTrigger>
+            <TabsTrigger value="rag" className="text-sm">💬 问答</TabsTrigger>
           </TabsList>
 
           {/* 文件上传 */}
           <TabsContent value="upload">
             <Card>
-              <CardHeader>
-                <CardTitle>上传知识文件</CardTitle>
-                <CardDescription>
-                  支持格式：Excel (.xlsx/.xls/.csv)、Word (.docx)、Markdown (.md)、JSON (.json)、文本 (.txt)、图片
-                </CardDescription>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">文件上传</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="border-2 border-dashed rounded-lg p-8 text-center">
+              <CardContent className="space-y-3">
+                {/* 上传区域 */}
+                <div className="border-2 border-dashed rounded-lg p-4 text-center">
                   <input
-                    ref={fileInputRef}
                     type="file"
+                    ref={fileInputRef}
+                    onChange={handleUpload}
+                    accept=".txt,.md,.json,.xlsx,.xls,.csv,.docx,.pdf,.pptx,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a"
                     className="hidden"
-                    accept=".xlsx,.xls,.docx,.doc,.md,.json,.txt,.csv,.png,.jpg,.jpeg,.gif,.webp"
-                    onChange={handleFileUpload}
                   />
-                  <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="mb-4 text-muted-foreground">
-                    点击或拖拽文件到此处上传
-                  </p>
-                  <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                  <Button 
+                    onClick={() => fileInputRef.current?.click()} 
+                    disabled={uploading}
+                    className="w-full h-12 text-base"
+                  >
                     {uploading ? (
                       <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                         上传中...
                       </>
                     ) : (
-                      '选择文件'
+                      <>
+                        <Upload className="w-5 h-5 mr-2" />
+                        选择文件
+                      </>
                     )}
                   </Button>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    支持 Excel、Word、PDF、PPT、图片、音频、JSON、MD
+                  </p>
                 </div>
 
+                {/* 上传结果 */}
                 {uploadResult && (
-                  <div className={`p-4 rounded-lg ${uploadResult.success ? 'bg-green-50' : 'bg-red-50'}`}>
-                    {uploadResult.success ? (
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="w-5 h-5 text-green-600" />
-                        <span>
-                          上传成功：{uploadResult.filename}，解析出 {uploadResult.itemCount} 个条目
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 text-red-600">
-                        <XCircle className="w-5 h-5" />
-                        <span>{uploadResult.error}</span>
-                      </div>
-                    )}
+                  <div className={`p-3 rounded-lg text-sm ${uploadResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    {uploadResult.success 
+                      ? `✅ ${uploadResult.filename} - ${uploadResult.itemCount} 条` 
+                      : `❌ ${uploadResult.error}`}
+                  </div>
+                )}
+
+                {/* 统计卡片 */}
+                {embedStatus && (
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => toggleSection('all')}
+                      className="p-3 bg-muted rounded-lg text-center"
+                    >
+                      <div className="text-2xl font-bold">{embedStatus.total}</div>
+                      <div className="text-xs text-muted-foreground">知识条目</div>
+                    </button>
+                    <button
+                      onClick={() => toggleSection('embedded')}
+                      className="p-3 bg-green-100 rounded-lg text-center"
+                    >
+                      <div className="text-2xl font-bold text-green-700">{embedStatus.embedded}</div>
+                      <div className="text-xs text-green-600">已向量化</div>
+                    </button>
+                    <button
+                      onClick={() => toggleSection('pending')}
+                      className="p-3 bg-yellow-100 rounded-lg text-center"
+                    >
+                      <div className="text-2xl font-bold text-yellow-700">{embedStatus.pending}</div>
+                      <div className="text-xs text-yellow-600">待处理</div>
+                    </button>
                   </div>
                 )}
 
                 {/* 向量化进度 */}
-                {embedStatus && embedStatus.pending > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span>向量化进度</span>
-                      <span>{Math.round((embedStatus.embedded / embedStatus.total) * 100)}%</span>
+                {autoEmbedding && (
+                  <div className="space-y-2">
+                    <Progress value={(embedProgress.processed / (embedStatus?.total || 1)) * 100} />
+                    <p className="text-xs text-center text-muted-foreground">
+                      已处理 {embedProgress.processed} 条，失败 {embedProgress.failed} 条
+                    </p>
+                  </div>
+                )}
+
+                {/* 展开详情 */}
+                {expandedSection && (
+                  <div className="border rounded-lg p-3 max-h-60 overflow-y-auto space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium">
+                        {expandedSection === 'all' ? '全部' : expandedSection === 'embedded' ? '已向量化' : '待处理'}
+                        ({detailTotal})
+                      </span>
+                      <Button variant="ghost" size="sm" onClick={() => setExpandedSection(null)}>
+                        <X className="w-4 h-4" />
+                      </Button>
                     </div>
-                    <Progress value={(embedStatus.embedded / embedStatus.total) * 100} />
-                    
-                    {/* 自动向量化进度 */}
-                    {autoEmbedding && (
-                      <div className="p-3 bg-blue-50 rounded-lg">
-                        <div className="flex items-center gap-2 text-blue-600">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>后台向量化中... 已处理 {embedProgress.processed} 条，失败 {embedProgress.failed} 条</span>
+                    {detailLoading ? (
+                      <div className="text-center py-4"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></div>
+                    ) : (
+                      detailItems.slice(0, 10).map(item => (
+                        <div key={item.id} className="text-xs p-2 bg-muted rounded flex justify-between">
+                          <span className="truncate flex-1">{item.title}</span>
+                          <Badge variant="outline" className="ml-2 text-xs">{modalityLabels[item.modality as Modality] || item.modality}</Badge>
                         </div>
-                      </div>
+                      ))
                     )}
-                    
-                    <div className="flex gap-2 flex-wrap">
-                      <Button 
-                        onClick={toggleAutoEmbed} 
-                        variant={autoEmbedding ? "destructive" : "default"}
-                        className="flex-1"
-                      >
-                        {autoEmbedding ? (
-                          <>
-                            <Pause className="w-4 h-4 mr-2" />
-                            停止自动向量化
-                          </>
-                        ) : (
-                          <>
-                            <Play className="w-4 h-4 mr-2" />
-                            自动向量化全部 ({embedStatus.pending} 条)
-                          </>
-                        )}
+                  </div>
+                )}
+
+                {/* 向量化按钮 */}
+                {embedStatus && embedStatus.pending > 0 && (
+                  <div className="space-y-2">
+                    <Button 
+                      onClick={toggleAutoEmbed} 
+                      disabled={embedding}
+                      className="w-full h-11"
+                      variant={autoEmbedding ? "destructive" : "default"}
+                    >
+                      {autoEmbedding ? (
+                        <>
+                          <Pause className="w-4 h-4 mr-2" />
+                          停止向量化
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 mr-2" />
+                          自动向量化 ({embedStatus.pending} 条)
+                        </>
+                      )}
+                    </Button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button onClick={handleEmbed} disabled={embedding || autoEmbedding} variant="outline" className="h-10">
+                        单次处理
                       </Button>
-                      <Button onClick={handleEmbed} disabled={embedding || autoEmbedding} variant="outline">
-                        {embedding ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            处理中...
-                          </>
-                        ) : (
-                          '单次处理 (50条)'
-                        )}
-                      </Button>
-                      {/* 取消按钮 */}
-                      <Button 
-                        onClick={handleCancelAll} 
-                        variant="destructive" 
-                        disabled={autoEmbedding}
-                        className="flex-1"
-                      >
+                      <Button onClick={handleCancelAll} variant="destructive" disabled={autoEmbedding} className="h-10">
                         全部取消
                       </Button>
-                      {detailItems.length > 0 && expandedSection === 'pending' && (
-                        <Button 
-                          onClick={handleCancelSelected} 
-                          variant="outline" 
-                          disabled={autoEmbedding || selectedItems.size === 0}
-                        >
-                          取消选中 ({selectedItems.size})
-                        </Button>
-                      )}
                     </div>
                   </div>
                 )}
@@ -643,81 +486,82 @@ export default function RagPage() {
           {/* 知识检索 */}
           <TabsContent value="search">
             <Card>
-              <CardHeader>
-                <CardTitle>智能检索</CardTitle>
-                <CardDescription>
-                  支持精确搜索（关键词匹配）和模糊搜索（语义相似）
-                </CardDescription>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">智能检索</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex gap-2">
+              <CardContent className="space-y-3">
+                {/* 搜索框 */}
+                <div className="space-y-2">
                   <Input
                     placeholder="输入检索内容..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    className="flex-1"
+                    className="h-11 text-base"
                   />
-                  <select
-                    className="px-3 py-2 border rounded-md"
-                    value={searchMode}
-                    onChange={(e) => setSearchMode(e.target.value as 'fuzzy' | 'exact')}
-                  >
-                    <option value="fuzzy">模糊搜索</option>
-                    <option value="exact">精确搜索</option>
-                  </select>
-                  <select
-                    className="px-3 py-2 border rounded-md"
-                    value={searchModality}
-                    onChange={(e) => setSearchModality(e.target.value)}
-                  >
-                    <option value="">全部类型</option>
-                    <option value="text">文本</option>
-                    <option value="excel">Excel</option>
-                    <option value="doc">文档</option>
-                    <option value="md">Markdown</option>
-                    <option value="json">JSON</option>
-                    <option value="image">图片</option>
-                  </select>
-                  <Button onClick={handleSearch} disabled={searching}>
+                  
+                  {/* 搜索选项 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      className="h-10 px-3 border rounded-md text-sm"
+                      value={searchMode}
+                      onChange={(e) => setSearchMode(e.target.value as 'fuzzy' | 'exact')}
+                    >
+                      <option value="fuzzy">🔍 模糊搜索</option>
+                      <option value="exact">🎯 精确搜索</option>
+                    </select>
+                    <select
+                      className="h-10 px-3 border rounded-md text-sm"
+                      value={searchModality}
+                      onChange={(e) => setSearchModality(e.target.value)}
+                    >
+                      <option value="">全部类型</option>
+                      <option value="excel">Excel</option>
+                      <option value="text">文本</option>
+                      <option value="doc">文档</option>
+                      <option value="image">图片</option>
+                    </select>
+                  </div>
+                  
+                  <Button onClick={handleSearch} disabled={searching} className="w-full h-11">
                     {searching ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        搜索中...
+                      </>
                     ) : (
-                      <Search className="w-4 h-4" />
+                      <>
+                        <Search className="w-4 h-4 mr-2" />
+                        搜索
+                      </>
                     )}
                   </Button>
                 </div>
 
                 {/* 搜索结果 */}
-                <div className="space-y-3">
+                <div className="space-y-2">
+                  {searchResults.length > 0 && (
+                    <div className="text-sm text-muted-foreground">
+                      找到 {searchResults.length} 条结果
+                    </div>
+                  )}
                   {searchResults.map((result, index) => (
-                    <Card key={result.id || index}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge variant="outline" className="flex items-center gap-1">
-                                {modalityIcons[result.modality as Modality]}
-                                {modalityLabels[result.modality as Modality]}
-                              </Badge>
-                              <span className="font-medium">{result.title}</span>
-                            </div>
-                            <p className="text-sm text-muted-foreground line-clamp-3">
-                              {result.content?.substring(0, 200)}...
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              来源：{result.source}
-                            </p>
-                          </div>
-                          <div className="text-right ml-4">
-                            <div className="text-lg font-bold text-primary">
-                              {((result.similarity || 0) * 100).toFixed(1)}%
-                            </div>
-                            <div className="text-xs text-muted-foreground">相关度</div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <div key={result.id || index} className="p-3 bg-muted rounded-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant="outline" className="text-xs">
+                          {modalityLabels[result.modality as Modality] || result.modality}
+                        </Badge>
+                        <span className="font-medium text-sm truncate flex-1">{result.title}</span>
+                        <span className="text-xs text-green-600 font-bold">
+                          {((result.similarity || 0) * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {result.modality === 'image' 
+                          ? (result.metadata?.description as string) || result.content?.substring(0, 100)
+                          : result.content?.substring(0, 150)}
+                      </p>
+                    </div>
                   ))}
                 </div>
               </CardContent>
@@ -727,41 +571,43 @@ export default function RagPage() {
           {/* 智能问答 */}
           <TabsContent value="rag">
             <Card>
-              <CardHeader>
-                <CardTitle>RAG 智能问答</CardTitle>
-                <CardDescription>
-                  基于知识库的智能问答，自动检索相关内容并生成回答
-                </CardDescription>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">RAG 智能问答</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex gap-2">
+              <CardContent className="space-y-3">
+                <div className="space-y-2">
                   <Textarea
                     placeholder="输入您的问题..."
                     value={ragQuery}
                     onChange={(e) => setRagQuery(e.target.value)}
                     rows={2}
+                    className="text-base"
                   />
-                  <Button onClick={handleRagQuery} disabled={ragLoading} className="h-auto">
+                  <Button onClick={handleRagQuery} disabled={ragLoading} className="w-full h-11">
                     {ragLoading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        思考中...
+                      </>
                     ) : (
-                      <Send className="w-4 h-4" />
+                      <>
+                        <Send className="w-4 h-4 mr-2" />
+                        提问
+                      </>
                     )}
                   </Button>
                 </div>
 
                 {/* 回答 */}
                 {ragAnswer && (
-                  <Card className="bg-muted/50">
-                    <CardContent className="p-4">
-                      <div className="flex items-start gap-2">
-                        <MessageSquare className="w-5 h-5 mt-1 text-primary" />
-                        <div className="flex-1 whitespace-pre-wrap" ref={answerRef}>
-                          {ragAnswer}
-                        </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <MessageSquare className="w-4 h-4 mt-1 text-primary shrink-0" />
+                      <div className="flex-1 whitespace-pre-wrap text-sm" ref={answerRef}>
+                        {ragAnswer}
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
