@@ -175,11 +175,16 @@ export default function WorkflowManagePage() {
         body: JSON.stringify({ id }),
       });
       
-      if (res.ok) {
+      const data = await res.json();
+      
+      if (res.ok && data.success) {
         fetchWorkflows();
+      } else {
+        alert(data.error || '删除失败');
       }
     } catch (error) {
       console.error('删除失败:', error);
+      alert('删除失败，请稍后重试');
     }
   };
   
@@ -370,12 +375,22 @@ export default function WorkflowManagePage() {
                               {wf.is_locked ? <Unlock className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
                             </Button>
                             
-                            {!wf.is_locked && (
+                            {!wf.is_locked ? (
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleDelete(wf.id)}
                                 className="text-red-500 hover:bg-red-50 hover:text-red-600 h-5 w-5 p-0"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled
+                                title="锁定的工作流不能删除，请先解锁"
+                                className="text-slate-300 h-5 w-5 p-0 cursor-not-allowed"
                               >
                                 <Trash2 className="w-2.5 h-2.5" />
                               </Button>
@@ -404,6 +419,16 @@ export default function WorkflowManagePage() {
                               className="text-green-600 border-green-200 hover:bg-green-50 h-5 px-1.5 text-[9px]"
                             >
                               复制
+                            </Button>
+                            
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled
+                              title="内置工作流不能删除"
+                              className="text-slate-300 h-5 w-5 p-0 cursor-not-allowed"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
                             </Button>
                           </>
                         )}
