@@ -694,7 +694,17 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
     const file = e.target.files?.[0];
     if (!file) return;
     
+    // 检查文件类型
+    const fileName = file.name.toLowerCase();
+    const isCsv = fileName.endsWith('.csv') || file.type === 'text/csv' || file.type === 'application/vnd.ms-excel';
+    if (!isCsv) {
+      setMessage('请选择CSV格式文件（.csv后缀）');
+      e.target.value = '';
+      return;
+    }
+    
     setLoading(true);
+    setMessage('');
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -714,7 +724,7 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
         setMessage(data.error || '导入失败');
       }
     } catch (err) {
-      setMessage('文件上传失败');
+      setMessage('文件上传失败，请检查网络连接');
     }
     setLoading(false);
     // 清空文件输入
@@ -810,7 +820,7 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv"
+                accept=".csv,text/csv,application/vnd.ms-excel,text/plain"
                 onChange={handleFileUpload}
                 className="hidden"
               />
@@ -824,6 +834,9 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
               </Button>
               <p className="text-xs text-muted-foreground mt-2">
                 点击按钮选择CSV文件上传
+              </p>
+              <p className="text-[10px] text-orange-500 mt-1">
+                * 如无法选择文件，请尝试在文件管理器中将文件重命名为.csv后缀
               </p>
             </div>
           </div>
