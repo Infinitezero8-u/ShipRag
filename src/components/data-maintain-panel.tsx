@@ -588,6 +588,40 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
 }) {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [importMode, setImportMode] = useState<'json' | 'csv'>('csv');
+  const [fileInputRef, setFileInputRef] = useState<HTMLInputElement | null>(null);
+
+  // CSV文件上传处理
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('type', type);
+      
+      const res = await fetch('/api/data-maintain/csv-import', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setMessage(data.message);
+        onSuccess();
+        onClose();
+      } else {
+        setMessage(data.error || '导入失败');
+      }
+    } catch (err) {
+      setMessage('文件上传失败');
+    }
+    setLoading(false);
+    // 清空文件输入
+    e.target.value = '';
+  };
 
   const handleImport = async () => {
     setLoading(true);
@@ -634,6 +668,10 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
   }
 ]`;
 
+  const csvFieldsInfo = type === 'port' 
+    ? 'portCode, nameCn, ctryCode, ctryNameCn, ctryNameEn, namePinyin, namePy, tzOffset, portType, lon, lat, continentCode, continentNameCn, continentNameEn'
+    : 'origPort, destPort, geometryWkt';
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-background p-4 rounded-lg w-[600px] max-h-[80vh] overflow-y-auto">
@@ -641,23 +679,80 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
           <h3 className="text-sm font-medium">批量导入{type === 'port' ? '港口' : '航线'}数据</h3>
           <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
         </div>
-        <div className="text-xs text-muted-foreground mb-2">
-          粘贴JSON数组格式数据，示例：<br/>
-          <pre className="bg-muted p-2 rounded mt-1 text-[10px] overflow-x-auto">
-            {type === 'port' ? examplePort : exampleRoute}
-          </pre>
+        
+        {/* 导入模式切换 */}
+        <div className="flex gap-2 mb-3">
+          <Button 
+            size="sm" 
+            variant={importMode === 'csv' ? 'default' : 'outline'}
+            onClick={() => setImportMode('csv')}
+            className="h-7 text-xs"
+          >
+            <Upload className="w-3 h-3 mr-1" />CSV文件导入
+          </Button>
+          <Button 
+            size="sm" 
+            variant={importMode === 'json' ? 'default' : 'outline'}
+            onClick={() => setImportMode('json')}
+            className="h-7 text-xs"
+          >
+            JSON文本导入
+          </Button>
         </div>
-        <textarea 
-          className="w-full h-48 text-xs p-2 border rounded font-mono"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="粘贴JSON数组..."
-        />
+
+        {importMode === 'csv' ? (
+          <div className="space-y-3">
+            <div className="text-xs text-muted-foreground">
+              <p className="mb-2">支持CSV格式文件，字段包括：</p>
+              <code className="bg-muted p-2 rounded text-[10px] block overflow-x-auto">
+                {csvFieldsInfo}
+              </code>
+            </div>
+            <div className="border-2 border-dashed rounded-lg p-6 text-center">
+              <input
+                ref={(el) => { if (el) setFileInputRef(el); }}
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <Button 
+                onClick={() => fileInputRef?.click()}
+                disabled={loading}
+                className="mb-2"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                {loading ? '导入中...' : '选择CSV文件'}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2">
+                点击按钮选择CSV文件，或直接拖拽文件到此区域
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="text-xs text-muted-foreground mb-2">
+              粘贴JSON数组格式数据，示例：<br/>
+              <pre className="bg-muted p-2 rounded mt-1 text-[10px] overflow-x-auto">
+                {type === 'port' ? examplePort : exampleRoute}
+              </pre>
+            </div>
+            <textarea 
+              className="w-full h-48 text-xs p-2 border rounded font-mono"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="粘贴JSON数组..."
+            />
+          </>
+        )}
+        
         <div className="flex justify-end gap-2 mt-4">
           <Button size="sm" variant="outline" onClick={onClose} className="h-7 text-xs">取消</Button>
-          <Button size="sm" onClick={handleImport} disabled={loading} className="h-7 text-xs">
-            {loading ? '导入中...' : '导入'}
-          </Button>
+          {importMode === 'json' && (
+            <Button size="sm" onClick={handleImport} disabled={loading} className="h-7 text-xs">
+              {loading ? '导入中...' : '导入'}
+            </Button>
+          )}
         </div>
       </div>
     </div>
