@@ -508,11 +508,49 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
     const embeddingClient = new EmbeddingClient();
     const llmClient = new LLMClient(new Config(), customHeaders);
 
-    // 1. 生成查询向量
-    const queryEmbedding = await embeddingClient.embedText(query);
+    // 构建session上下文对象
+    const sessionContext = {
+      history: contextMessages.map((m) => ({
+        query: m.role === 'user' ? m.content : '',
+        answer: m.role === 'assistant' ? m.content : '',
+      })).filter((h: { query: string; answer: string }) => h.query || h.answer),
+      summary: contextSummary,
+      locked: lockedContext,
+    };
 
-    // 2. 检索相关上下文（提高相似度阈值）
-    const { data: contextItems, error: searchError } = await supabase.rpc('vector_search', {
+    // 1. Query改写（强制带入chat_history，代词还原）
+    let rewrittenQuery = effectiveQuery;
+    if (sessionContext && sessionContext.history.length > 0) {
+      try {
+        const rewritePrompt = `你是一个问题改写助手。根据对话历史，将用户当前问题改写为独立的、可理解的完整问题。
+要求：
+1. 代词还原：将"它"、"该港口"、"该航线"、"上文"、"那个"等代词替换为具体名称
+2. 补全省略：将"还有多少？"、"呢？"等省略问法补全为完整问题
+3. 保持原意：不要改变问题的核心意图
+
+对话历史：
+${sessionContext.history.slice(-4).map(h => `Q: ${h.query}\nA: ${h.answer?.substring(0, 200)}...`).join('\n\n')}
+
+当前问题：${effectiveQuery}
+
+请直接输出改写后的问题，不要解释：`;
+
+        const rewriteResponse = await llmClient.invoke([{ role: 'user', content: rewritePrompt }], {
+          model: 'doubao-seed-1-8-251228',
+          temperature: 0.3,
+        });
+        rewrittenQuery = rewriteResponse.content?.trim() || effectiveQuery;
+        console.log(`[Query改写] ${effectiveQuery} -> ${rewrittenQuery}`);
+      } catch (e) {
+        console.log('[Query改写失败]', e);
+      }
+    }
+
+    // 2. 生成查询向量
+    const queryEmbedding = await embeddingClient.embedText(rewrittenQuery);
+
+    // 3. 检索相关上下文（提高相似度阈值）
+    let { data: contextItems, error: searchError } = await supabase.rpc('vector_search', {
       query_embedding: queryEmbedding,
       match_threshold: 0.5,
       match_count: actualTopK,
@@ -525,27 +563,64 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
       if (fallbackResult.error) {
         return NextResponse.json({ error: fallbackResult.error }, { status: 500 });
       }
+      contextItems = fallbackResult.items;
     }
 
-    // 3. 构建上下文
+    // 4. 判断RAG结果是否足够（关键数据检测）
+    const ragResultCount = contextItems?.length || 0;
+    const avgSimilarity = contextItems && contextItems.length > 0 
+      ? contextItems.reduce((sum: number, item: { similarity: number }) => sum + item.similarity, 0) / contextItems.length 
+      : 0;
+    const isRagInsufficient = ragResultCount < 3 || avgSimilarity < 0.6;
+    let sqlFallbackResult: { sql: string; result: unknown } | null = null;
+    let usedFallback = false;
+
+    // 5. RAG结果不足时，自动走SQL补充（兜底分支）
+    if (isRagInsufficient) {
+      console.log(`[RAG不足] 结果数:${ragResultCount}, 平均相似度:${avgSimilarity.toFixed(3)}, 触发SQL兜底`);
+      try {
+        const sqlResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/sql`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: rewrittenQuery }),
+        });
+        const sqlData = await sqlResponse.json();
+        if (sqlData.result && (!Array.isArray(sqlData.result) || sqlData.result.length > 0)) {
+          sqlFallbackResult = { sql: sqlData.sql, result: sqlData.result };
+          usedFallback = true;
+          console.log(`[SQL兜底成功] SQL: ${sqlData.sql}`);
+        }
+      } catch (e) {
+        console.log('[SQL兜底失败]', e);
+      }
+    }
+
+    // 6. 构建上下文
     const context = (contextItems || [])
       .map((item: { title: string; content: string; source: string; similarity: number }, index: number) => {
         return `[${index + 1}] 标题: ${item.title}\n来源: ${item.source}\n相关度: ${item.similarity.toFixed(3)}\n内容: ${item.content?.substring(0, 500) || '无内容'}`;
       })
       .join('\n\n---\n\n');
 
-    // 4. 构建消息（包含指令和模式提示）
+    // SQL补充数据格式化
+    const sqlContext = sqlFallbackResult 
+      ? `\n\n【数据库补充数据】\nSQL: ${sqlFallbackResult.sql}\n结果: ${JSON.stringify(sqlFallbackResult.result, null, 2).substring(0, 1000)}`
+      : '';
+
+    // 7. 构建消息（包含指令和模式提示）
     const messages = [
       { role: 'system' as const, content: SYSTEM_PROMPT + modeInstruction + instructionPrompt },
       { 
         role: 'user' as const, 
         content: `上下文信息：
-${context || '未找到相关信息'}
+${context || '未找到相关信息'}${sqlContext}
 
 ${expandedQueries.length > 0 ? `隐含检索维度：${expandedQueries.join('、')}\n` : ''}
-用户问题：${effectiveQuery}
+用户问题：${rewrittenQuery}
 
-注意：所有输出内容必须标注来源，格式为【来源】文档名称 | 海图图号 | 片段位置`
+注意：所有输出内容必须标注来源，格式为【知识库来源】文档名称 | 【数据库来源】表名.字段
+${usedFallback ? '\n提示：RAG检索结果不足，已自动补充数据库查询结果，请综合两部分数据回答。' : ''}
+${ragResultCount === 0 && !usedFallback ? '\n警告：未找到任何相关知识库内容，请如实告知用户"暂无相关资料"，禁止编造内容。' : ''}`
       },
     ];
 
@@ -602,13 +677,24 @@ ${expandedQueries.length > 0 ? `隐含检索维度：${expandedQueries.join('、
       return NextResponse.json({
         success: true,
         query,
+        rewrittenQuery: rewrittenQuery !== effectiveQuery ? rewrittenQuery : undefined,
         answer: response.content,
         contextCount: contextItems?.length || 0,
         sources: (contextItems || []).map((item: { title: string; source: string; similarity: number }) => ({
           title: item.title,
           source: item.source,
           similarity: item.similarity,
+          type: 'knowledge_base' as const,
         })),
+        sqlFallback: usedFallback ? {
+          sql: sqlFallbackResult?.sql,
+          result: sqlFallbackResult?.result,
+        } : undefined,
+        ragQuality: {
+          resultCount: ragResultCount,
+          avgSimilarity: Math.round(avgSimilarity * 1000) / 1000,
+          isInsufficient: isRagInsufficient,
+        },
       });
     }
   } catch (error) {

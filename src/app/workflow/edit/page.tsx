@@ -141,6 +141,28 @@ const NODE_TYPE_CONFIG: Record<string, {
       { key: 'model', label: '润色模型', type: 'select', default: 'doubao-seed-32k', options: ['doubao-seed-32k', 'deepseek-chat'] },
     ]
   },
+  // 新增：RAG缺内容兜底分支
+  ragFallback: {
+    label: 'RAG兜底检测',
+    icon: '🔄',
+    color: '#f59e0b',
+    category: 'fallback',
+    fields: [
+      { key: 'enabled', label: '启用兜底', type: 'switch', default: true, description: 'RAG内容不足时自动走SQL补充' },
+      { key: 'minContentLength', label: '最小内容长度', type: 'number', default: 50, description: 'RAG返回内容小于此值触发兜底' },
+      { key: 'keywords', label: '关键数据词', type: 'text', default: '数量,统计,总计,合计', description: '缺失这些关键词时触发兜底' },
+    ]
+  },
+  contentMerge: {
+    label: '内容合并',
+    icon: '🔗',
+    color: '#10b981',
+    category: 'merge',
+    fields: [
+      { key: 'strategy', label: '合并策略', type: 'select', default: 'supplement', options: ['supplement', 'replace', 'append'], description: 'supplement:补充缺失, replace:替换, append:追加' },
+      { key: 'deduplicate', label: '去重', type: 'switch', default: true },
+    ]
+  },
   mergeOutput: {
     label: '输出汇总',
     icon: '📤',
