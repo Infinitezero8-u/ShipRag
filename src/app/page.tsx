@@ -572,11 +572,11 @@ export default function RagPage() {
               <ChevronLeft className="w-4 h-4 mr-1" />
               返回
             </Button>
-            <TabsList className="grid grid-cols-5">
+            <TabsList className="grid grid-cols-4 gap-1">
               <TabsTrigger value="rag" className="text-xs">💬 问答</TabsTrigger>
               <TabsTrigger value="search" className="text-xs">🔍 检索</TabsTrigger>
               <TabsTrigger value="upload" className="text-xs">📤 上传</TabsTrigger>
-              <TabsTrigger value="maintain" className="text-xs">🗄️ 数据维护</TabsTrigger>
+              <TabsTrigger value="maintain" className="text-xs">🗄️ 维护</TabsTrigger>
             </TabsList>
             <div className="w-16" /> {/* 占位 */}
           </div>
