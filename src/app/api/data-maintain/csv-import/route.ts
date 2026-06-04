@@ -105,8 +105,13 @@ function parseCSV(csvText: string): Record<string, string>[] {
 // 动态导入supabase客户端
 async function getSupabase() {
   const { createClient } = await import('@supabase/supabase-js');
-  const supabaseUrl = process.env.SUPABASE_URL!;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY!;
+  const supabaseUrl = process.env.COZE_SUPABASE_URL!;
+  const supabaseKey = process.env.COZE_SUPABASE_ANON_KEY!;
+  
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Supabase环境变量未配置: COZE_SUPABASE_URL 或 COZE_SUPABASE_ANON_KEY');
+  }
+  
   return createClient(supabaseUrl, supabaseKey);
 }
 
