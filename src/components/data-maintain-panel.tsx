@@ -8,9 +8,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Plus, Edit2, Trash2, Eye, Database, Search, Upload, 
   CheckCircle, XCircle, Clock, FileText, Route, Anchor, BookOpen, ExternalLink,
-  Layers, Zap, Map as MapIcon
+  Layers, Zap, Map as MapIcon, BarChart3
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 // 动态导入地图组件（避免SSR问题）
 const MapContainer = dynamic(
@@ -86,7 +87,7 @@ interface RegulationChunk {
 }
 
 export function DataMaintainPanel() {
-  const [activeTab, setActiveTab] = useState<'port' | 'route' | 'regulation'>('port');
+  const [activeTab, setActiveTab] = useState<'port' | 'route' | 'regulation' | 'chart'>('port');
   const [ports, setPorts] = useState<PortData[]>([]);
   const [routes, setRoutes] = useState<RouteData[]>([]);
   const [regulations, setRegulations] = useState<RegulationData[]>([]);
@@ -485,7 +486,7 @@ export function DataMaintainPanel() {
       )}
 
       {/* 数据Tab */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'port' | 'route' | 'regulation')}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'port' | 'route' | 'regulation' | 'chart')}>
         <TabsList className="h-7">
           <TabsTrigger value="port" className="h-6 text-xs">
             <Anchor className="w-3 h-3 mr-1" />港口数据
@@ -495,6 +496,9 @@ export function DataMaintainPanel() {
           </TabsTrigger>
           <TabsTrigger value="regulation" className="h-6 text-xs">
             <BookOpen className="w-3 h-3 mr-1" />规章制度
+          </TabsTrigger>
+          <TabsTrigger value="chart" className="h-6 text-xs">
+            <BarChart3 className="w-3 h-3 mr-1" />海图统计
           </TabsTrigger>
         </TabsList>
 
@@ -693,6 +697,11 @@ export function DataMaintainPanel() {
             </div>
           </div>
         </TabsContent>
+
+        {/* 海图统计Tab */}
+        <TabsContent value="chart" className="mt-2">
+          <ChartTab ports={ports} routes={routes} />
+        </TabsContent>
       </Tabs>
 
       {/* 预览弹窗 */}
@@ -831,6 +840,185 @@ function AddDataModal({ type, onClose, onSuccess, setMessage }: {
             {loading ? '保存中...' : '保存'}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// 区域分类定义
+const REGIONS = [
+  { key: 'global', name: '全球', range: null },
+  { key: 'asia_pacific', name: '亚太', range: { lonMin: 100, lonMax: 180, latMin: -50, latMax: 60 } },
+  { key: 'middle_east', name: '中东', range: { lonMin: 35, lonMax: 60, latMin: 12, latMax: 40 } },
+  { key: 'red_sea_east_africa', name: '红海东非', range: { lonMin: 30, lonMax: 55, latMin: -30, latMax: 30 } },
+  { key: 'west_africa', name: '西非', range: { lonMin: -20, lonMax: 20, latMin: -35, latMax: 20 } },
+  { key: 'europe', name: '欧洲', range: { lonMin: -10, lonMax: 40, latMin: 35, latMax: 70 } },
+  { key: 'north_america', name: '北美', range: { lonMin: -180, lonMax: -60, latMin: 25, latMax: 70 } },
+  { key: 'central_south_america', name: '中南美', range: { lonMin: -120, lonMax: -30, latMin: -60, latMax: 25 } }
+];
+
+// 根据经纬度判断区域
+function getRegionByCoords(lon: number, lat: number): string {
+  // 检查各个区域（排除全球）
+  for (const region of REGIONS) {
+    if (region.range) {
+      const { lonMin, lonMax, latMin, latMax } = region.range;
+      // 处理跨越180度经线的情况
+      if (lonMin > lonMax) {
+        if ((lon >= lonMin || lon <= lonMax) && lat >= latMin && lat <= latMax) {
+          return region.key;
+        }
+      } else {
+        if (lon >= lonMin && lon <= lonMax && lat >= latMin && lat <= latMax) {
+          return region.key;
+        }
+      }
+    }
+  }
+  return 'global'; // 默认归入全球
+}
+
+// 海图统计Tab组件
+function ChartTab({ ports, routes }: { ports: PortData[]; routes: RouteData[] }) {
+  const [chartType, setChartType] = useState<'port' | 'route'>('port');
+  
+  // 计算各区域港口数量
+  const portStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    REGIONS.forEach(r => counts[r.key] = 0);
+    
+    ports.forEach(port => {
+      if (!isNaN(port.lon) && !isNaN(port.lat)) {
+        const region = getRegionByCoords(port.lon, port.lat);
+        counts[region]++;
+      }
+    });
+    
+    // 全球统计为所有港口总数
+    counts['global'] = ports.length;
+    
+    return REGIONS.map(r => ({
+      name: r.name,
+      key: r.key,
+      count: counts[r.key]
+    }));
+  }, [ports]);
+  
+  // 计算各区域航线数量（根据起点港口位置）
+  const routeStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    REGIONS.forEach(r => counts[r.key] = 0);
+    
+    // 构建港口位置映射
+    const portLocationMap = new Map<string, { lon: number; lat: number }>();
+    ports.forEach(p => {
+      portLocationMap.set(p.port_code, { lon: p.lon, lat: p.lat });
+    });
+    
+    routes.forEach(route => {
+      const origLoc = portLocationMap.get(route.orig_port);
+      if (origLoc && !isNaN(origLoc.lon) && !isNaN(origLoc.lat)) {
+        const region = getRegionByCoords(origLoc.lon, origLoc.lat);
+        counts[region]++;
+      } else {
+        counts['global']++;
+      }
+    });
+    
+    // 全球统计为所有航线总数
+    counts['global'] = routes.length;
+    
+    return REGIONS.map(r => ({
+      name: r.name,
+      key: r.key,
+      count: counts[r.key]
+    }));
+  }, [routes, ports]);
+  
+  const currentData = chartType === 'port' ? portStats : routeStats;
+  const totalCount = chartType === 'port' ? ports.length : routes.length;
+  
+  return (
+    <div className="space-y-3">
+      {/* 切换按钮 */}
+      <div className="flex gap-2 items-center">
+        <Button 
+          size="sm" 
+          variant={chartType === 'port' ? 'default' : 'outline'}
+          onClick={() => setChartType('port')}
+          className="h-7 text-xs"
+        >
+          <Anchor className="w-3 h-3 mr-1" />港口统计
+        </Button>
+        <Button 
+          size="sm" 
+          variant={chartType === 'route' ? 'default' : 'outline'}
+          onClick={() => setChartType('route')}
+          className="h-7 text-xs"
+        >
+          <Route className="w-3 h-3 mr-1" />航线统计
+        </Button>
+        <span className="text-xs text-muted-foreground ml-auto">
+          共 {totalCount} 条{chartType === 'port' ? '港口' : '航线'}数据
+        </span>
+      </div>
+      
+      {/* 直方图 */}
+      <div className="bg-muted/20 rounded-lg p-4">
+        <div className="h-[300px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={currentData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+              <XAxis 
+                dataKey="name" 
+                tick={{ fontSize: 11 }}
+                angle={-30}
+                textAnchor="end"
+                height={60}
+              />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip 
+                formatter={(value: number) => [value, chartType === 'port' ? '港口数' : '航线数']}
+                labelFormatter={(label) => `区域: ${label}`}
+              />
+              <Bar 
+                dataKey="count" 
+                fill={chartType === 'port' ? '#3b82f6' : '#10b981'}
+                name={chartType === 'port' ? '港口数' : '航线数'}
+                radius={[4, 4, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      
+      {/* 统计表格 */}
+      <div className="border rounded-lg overflow-hidden">
+        <table className="w-full text-xs">
+          <thead className="bg-muted">
+            <tr>
+              <th className="p-2 text-left">区域</th>
+              <th className="p-2 text-right">{chartType === 'port' ? '港口数' : '航线数'}</th>
+              <th className="p-2 text-right">占比</th>
+            </tr>
+          </thead>
+          <tbody>
+            {currentData.map((item, idx) => (
+              <tr key={item.key} className={idx % 2 === 0 ? 'bg-background' : 'bg-muted/30'}>
+                <td className="p-2">{item.name}</td>
+                <td className="p-2 text-right font-mono">{item.count}</td>
+                <td className="p-2 text-right text-muted-foreground">
+                  {totalCount > 0 ? `${(item.count / totalCount * 100).toFixed(1)}%` : '0%'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      
+      {/* 说明 */}
+      <div className="text-[10px] text-muted-foreground">
+        * 区域划分基于港口经纬度坐标，航线按起运港位置归类
       </div>
     </div>
   );
