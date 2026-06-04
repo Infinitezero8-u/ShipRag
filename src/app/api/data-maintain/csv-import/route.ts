@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Route Segment Config - 增大body size限制
+export const runtime = 'nodejs';
+export const maxDuration = 60; // 最大执行时间60秒
+
 // CSV解析函数 - 支持带引号的字段和字段内逗号
 function parseCSV(csvText: string): Record<string, string>[] {
   // 移除BOM标记

@@ -964,8 +964,15 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
       return;
     }
     
+    // 检查文件大小（限制10MB）
+    if (file.size > 10 * 1024 * 1024) {
+      setMessage('❌ 文件过大，请选择小于10MB的文件');
+      e.target.value = '';
+      return;
+    }
+    
     setLoading(true);
-    setMessage('正在读取文件...');
+    setMessage(`正在读取文件 (${(file.size / 1024).toFixed(1)}KB)...`);
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -975,7 +982,29 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
         method: 'POST',
         body: formData
       });
-      const data = await res.json();
+      
+      // 先检查响应是否正常
+      if (!res.ok) {
+        const text = await res.text();
+        console.error('API响应错误:', res.status, text);
+        setMessage(`❌ 导入失败: HTTP ${res.status} - ${text.substring(0, 100)}`);
+        setLoading(false);
+        e.target.value = '';
+        return;
+      }
+      
+      // 先读取文本再解析JSON，便于调试
+      const responseText = await res.text();
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON解析错误, 响应内容:', responseText.substring(0, 200));
+        setMessage(`❌ 响应解析失败: ${responseText.substring(0, 100)}`);
+        setLoading(false);
+        e.target.value = '';
+        return;
+      }
       
       if (data.success) {
         setMessage(`✅ ${data.message}`);
