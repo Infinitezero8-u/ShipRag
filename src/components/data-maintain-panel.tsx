@@ -61,11 +61,35 @@ interface RouteData {
   vector_status: string;
 }
 
+interface RegulationData {
+  id: string;
+  filename: string;
+  description?: string;
+  categories: string[];
+  is_valid: boolean;
+  vector_status: string;
+  version?: string;
+  publish_date?: string;
+  publish_org?: string;
+  created_at: string;
+  file_size?: number;
+  file_type?: string;
+}
+
+interface RegulationChunk {
+  id: string;
+  regulation_id: string;
+  chunk_index: number;
+  content: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
 export function DataMaintainPanel() {
   const [activeTab, setActiveTab] = useState<'port' | 'route' | 'regulation'>('port');
   const [ports, setPorts] = useState<PortData[]>([]);
   const [routes, setRoutes] = useState<RouteData[]>([]);
-  const [regulations, setRegulations] = useState<{id: string; name: string; categories: string[]; is_valid: boolean; vector_status: string}[]>([]);
+  const [regulations, setRegulations] = useState<RegulationData[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchCode, setSearchCode] = useState('');
   const [searchResults, setSearchResults] = useState<PortData[]>([]);
@@ -75,14 +99,20 @@ export function DataMaintainPanel() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showBatchModal, setShowBatchModal] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<PortData | RouteData | null>(null);
+  const [selectedItem, setSelectedItem] = useState<PortData | RouteData | RegulationData | null>(null);
   const [message, setMessage] = useState<string>('');
   // 批量选中状态
   const [selectedPorts, setSelectedPorts] = useState<string[]>([]);
   const [selectedRoutes, setSelectedRoutes] = useState<{origPort: string, destPort: string}[]>([]);
+  const [selectedRegulations, setSelectedRegulations] = useState<string[]>([]);
   // 向量化状态
   const [isVectorizing, setIsVectorizing] = useState(false);
   const [vectorizeProgress, setVectorizeProgress] = useState({ current: 0, total: 0 });
+  // 规章制度切分查看
+  const [showChunksModal, setShowChunksModal] = useState(false);
+  const [selectedRegulationChunks, setSelectedRegulationChunks] = useState<RegulationChunk[]>([]);
+  // 规章制度编辑弹窗
+  const [showRegEditModal, setShowRegEditModal] = useState(false);
 
   // 加载数据
   const loadPorts = async () => {
@@ -119,6 +149,91 @@ export function DataMaintainPanel() {
       console.error(e);
     }
     setLoading(false);
+  };
+
+  // 规章制度操作函数
+  const handleRegulationDelete = async (reg: RegulationData) => {
+    if (!confirm(`确认删除文档"${reg.filename}"？此操作将同时删除所有相关切片数据。`)) return;
+    
+    try {
+      const res = await fetch('/api/regulations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', ids: [reg.id] })
+      });
+      const data = await res.json();
+      setMessage(data.message || '删除成功');
+      loadRegulations();
+    } catch (e) {
+      setMessage('删除失败');
+    }
+  };
+
+  const handleRegulationVectorize = async (reg: RegulationData) => {
+    setMessage(`正在向量化: ${reg.filename}`);
+    try {
+      const res = await fetch('/api/regulations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'revectorize', id: reg.id })
+      });
+      const data = await res.json();
+      setMessage(data.message || '向量化完成');
+      loadRegulations();
+    } catch (e) {
+      setMessage('向量化失败');
+    }
+  };
+
+  const handleRegulationBatchVectorize = async () => {
+    if (selectedRegulations.length === 0) {
+      setMessage('请先选择要向量化的文档');
+      return;
+    }
+    
+    setIsVectorizing(true);
+    setMessage(`正在批量向量化 ${selectedRegulations.length} 个文档...`);
+    try {
+      const res = await fetch('/api/regulations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'batch-vectorize', ids: selectedRegulations })
+      });
+      const data = await res.json();
+      setMessage(data.message || '批量向量化完成');
+      setSelectedRegulations([]);
+      loadRegulations();
+    } catch (e) {
+      setMessage('批量向量化失败');
+    } finally {
+      setIsVectorizing(false);
+    }
+  };
+
+  const handleViewChunks = async (reg: RegulationData) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/regulations?action=detail&id=${reg.id}`);
+      const data = await res.json();
+      setSelectedItem(reg);
+      setSelectedRegulationChunks(data.chunks || []);
+      setShowChunksModal(true);
+    } catch (e) {
+      setMessage('获取切分数据失败');
+    }
+    setLoading(false);
+  };
+
+  // 分类标签显示
+  const getCategoryLabel = (key: string) => {
+    const labels: Record<string, string> = {
+      'maritime_rules': '海事',
+      'platform_ops': '运维',
+      'trajectory_annotation': '标注',
+      'model_training': '训练',
+      'other': '其他'
+    };
+    return labels[key] || key;
   };
 
   useEffect(() => {
@@ -476,21 +591,34 @@ export function DataMaintainPanel() {
 
         <TabsContent value="regulation" className="mt-2">
           <div className="space-y-2">
-            {/* 快速跳转按钮 */}
-            <div className="flex gap-2">
+            {/* 操作按钮 */}
+            <div className="flex gap-2 flex-wrap">
               <Button 
                 size="sm" 
                 variant="outline" 
-                className="h-7 text-xs flex-1"
+                className="h-6 text-[10px]"
+                onClick={handleRegulationBatchVectorize}
+                disabled={isVectorizing || selectedRegulations.length === 0}
+              >
+                <Database className="w-3 h-3 mr-1" />批量向量化
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[10px]"
                 onClick={() => window.location.href = '/regulations'}
               >
-                <ExternalLink className="w-3 h-3 mr-1" />
-                打开规章制度管理
+                <Upload className="w-3 h-3 mr-1" />上传文档
               </Button>
+              {isVectorizing && (
+                <Button size="sm" variant="destructive" className="h-6 text-[10px]" onClick={() => setIsVectorizing(false)}>
+                  <XCircle className="w-3 h-3 mr-1" />取消
+                </Button>
+              )}
             </div>
             
             {/* 规章制度列表 */}
-            <div className="space-y-1 max-h-[350px] overflow-y-auto">
+            <div className="space-y-1 max-h-[400px] overflow-y-auto">
               {loading ? (
                 <div className="text-xs text-center py-4 text-muted-foreground">加载中...</div>
               ) : regulations.length === 0 ? (
@@ -509,20 +637,55 @@ export function DataMaintainPanel() {
                 </div>
               ) : (
                 regulations.map((reg) => (
-                  <div key={reg.id} className="flex items-center justify-between p-2 bg-muted/20 rounded hover:bg-muted/40">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <StatusIcon status={reg.vector_status === 'success' ? '向量化成功' : reg.vector_status === 'failed' ? '向量化失败' : '未向量化'} />
-                      <span className="text-xs truncate flex-1">{reg.name}</span>
+                  <div key={reg.id} className="p-2 bg-muted/20 rounded hover:bg-muted/40">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedRegulations.includes(reg.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedRegulations([...selectedRegulations, reg.id]);
+                            } else {
+                              setSelectedRegulations(selectedRegulations.filter(id => id !== reg.id));
+                            }
+                          }}
+                          className="w-3 h-3"
+                        />
+                        <StatusIcon status={reg.vector_status === 'success' ? '向量化成功' : reg.vector_status === 'failed' ? '向量化失败' : '未向量化'} />
+                        <span className="text-xs truncate flex-1" title={reg.filename}>{reg.filename}</span>
+                      </div>
                       <div className="flex gap-1 flex-shrink-0">
                         {reg.categories.slice(0, 2).map((cat, i) => (
                           <span key={i} className="text-[10px] px-1 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">
-                            {cat === 'maritime_rules' ? '海事' : cat === 'platform_ops' ? '运维' : cat === 'trajectory_annotation' ? '标注' : cat === 'model_training' ? '训练' : '其他'}
+                            {getCategoryLabel(cat)}
                           </span>
                         ))}
+                        {!reg.is_valid && (
+                          <span className="text-[10px] px-1 py-0.5 bg-red-100 dark:bg-red-900 text-red-600 rounded">失效</span>
+                        )}
                       </div>
-                      {!reg.is_valid && (
-                        <span className="text-[10px] px-1 py-0.5 bg-red-100 dark:bg-red-900 text-red-600 rounded">失效</span>
-                      )}
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <div className="text-[10px] text-muted-foreground">
+                        {reg.file_size ? `${(reg.file_size / 1024).toFixed(1)}KB` : ''}
+                        {reg.version && ` | v${reg.version}`}
+                        {reg.publish_org && ` | ${reg.publish_org}`}
+                      </div>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" className="h-5 w-5 p-0" title="查看切分" onClick={() => handleViewChunks(reg)}>
+                          <Layers className="w-3 h-3" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-5 w-5 p-0" title="编辑" onClick={() => { setSelectedItem(reg); setShowRegEditModal(true); }}>
+                          <Edit2 className="w-3 h-3" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-5 w-5 p-0" title="向量化" onClick={() => handleRegulationVectorize(reg)} disabled={isVectorizing}>
+                          <Database className="w-3 h-3" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-red-500" title="删除" onClick={() => handleRegulationDelete(reg)}>
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -533,11 +696,30 @@ export function DataMaintainPanel() {
       </Tabs>
 
       {/* 预览弹窗 */}
-      {showPreviewModal && selectedItem && (
+      {showPreviewModal && selectedItem && (activeTab === 'port' || activeTab === 'route') && (
         <PreviewModal 
-          item={selectedItem} 
+          item={selectedItem as PortData | RouteData} 
           type={activeTab as 'port' | 'route'}
           onClose={() => setShowPreviewModal(false)} 
+        />
+      )}
+
+      {/* 切分查看弹窗 */}
+      {showChunksModal && selectedItem && (
+        <ChunksViewModal
+          regulation={selectedItem as RegulationData}
+          chunks={selectedRegulationChunks}
+          onClose={() => setShowChunksModal(false)}
+        />
+      )}
+
+      {/* 规章制度编辑弹窗 */}
+      {showRegEditModal && selectedItem && (
+        <RegulationEditModal
+          regulation={selectedItem as RegulationData}
+          onClose={() => setShowRegEditModal(false)}
+          onSuccess={() => { setShowRegEditModal(false); loadRegulations(); setMessage(''); }}
+          setMessage={setMessage}
         />
       )}
 
@@ -1232,6 +1414,241 @@ function PreviewModal({ item, type, onClose }: {
             <span>航点数: {routeLines.flat().length}</span>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// 切分查看弹窗
+function ChunksViewModal({ regulation, chunks, onClose }: {
+  regulation: RegulationData;
+  chunks: RegulationChunk[];
+  onClose: () => void;
+}) {
+  const [selectedChunk, setSelectedChunk] = useState<RegulationChunk | null>(null);
+  
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-background p-4 rounded-lg w-[900px] max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="text-sm font-medium">
+            文档切分查看: {regulation.filename}
+            <span className="ml-2 text-xs text-muted-foreground">共 {chunks.length} 个切分</span>
+          </h3>
+          <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
+        </div>
+        
+        <div className="flex gap-3 flex-1 overflow-hidden">
+          {/* 切分列表 */}
+          <div className="w-1/3 border rounded overflow-y-auto">
+            <div className="p-2 bg-muted text-xs font-medium">切分列表</div>
+            <div className="divide-y">
+              {chunks.length === 0 ? (
+                <div className="p-4 text-xs text-center text-muted-foreground">暂无切分数据</div>
+              ) : (
+                chunks.map((chunk, idx) => (
+                  <div 
+                    key={chunk.id}
+                    className={`p-2 cursor-pointer hover:bg-muted/50 ${selectedChunk?.id === chunk.id ? 'bg-blue-50 dark:bg-blue-950' : ''}`}
+                    onClick={() => setSelectedChunk(chunk)}
+                  >
+                    <div className="text-xs font-medium">切分 #{chunk.chunk_index + 1}</div>
+                    <div className="text-[10px] text-muted-foreground truncate mt-0.5">
+                      {chunk.content.substring(0, 60)}...
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      字数: {chunk.content.length}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          
+          {/* 切分内容 */}
+          <div className="flex-1 border rounded overflow-hidden flex flex-col">
+            <div className="p-2 bg-muted text-xs font-medium">切分内容</div>
+            <div className="flex-1 overflow-y-auto p-3">
+              {selectedChunk ? (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-2">
+                    切分 #{selectedChunk.chunk_index + 1} | 字数: {selectedChunk.content.length}
+                  </div>
+                  {selectedChunk.metadata && (
+                    <div className="text-[10px] bg-muted p-2 rounded mb-2">
+                      <div className="font-medium mb-1">元数据:</div>
+                      <pre className="whitespace-pre-wrap">{JSON.stringify(selectedChunk.metadata, null, 2)}</pre>
+                    </div>
+                  )}
+                  <div className="text-xs whitespace-pre-wrap border-t pt-2">
+                    {selectedChunk.content}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-center text-muted-foreground py-8">
+                  点击左侧切分查看详细内容
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 规章制度编辑弹窗
+function RegulationEditModal({ regulation, onClose, onSuccess, setMessage }: {
+  regulation: RegulationData;
+  onClose: () => void;
+  onSuccess: () => void;
+  setMessage: (m: string) => void;
+}) {
+  const [formData, setFormData] = useState({
+    categories: regulation.categories || [],
+    is_valid: regulation.is_valid,
+    version: regulation.version || '',
+    publish_date: regulation.publish_date || '',
+    publish_org: regulation.publish_org || '',
+    description: regulation.description || ''
+  });
+  const [loading, setLoading] = useState(false);
+  
+  const CATEGORY_OPTIONS = [
+    { key: 'maritime_rules', label: '海事规章制度' },
+    { key: 'platform_ops', label: '平台运维规范' },
+    { key: 'trajectory_annotation', label: '航迹标注准则' },
+    { key: 'model_training', label: '模型训练管理办法' },
+    { key: 'other', label: '其他资料' }
+  ];
+  
+  const handleSubmit = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/regulations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          id: regulation.id,
+          ...formData
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        setMessage(`❌ ${data.error}`);
+      } else {
+        setMessage('✅ 更新成功');
+        onSuccess();
+      }
+    } catch (e) {
+      setMessage('更新失败');
+    }
+    setLoading(false);
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-background p-4 rounded-lg w-[500px] max-h-[80vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="text-sm font-medium">编辑规章制度</h3>
+          <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
+        </div>
+        
+        <div className="space-y-3">
+          <div className="text-xs text-muted-foreground">
+            文件名: {regulation.filename} (不可修改)
+          </div>
+          
+          {/* 分类选择 */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">文档分类</label>
+            <div className="flex flex-wrap gap-2">
+              {CATEGORY_OPTIONS.map(opt => (
+                <label key={opt.key} className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={formData.categories.includes(opt.key)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setFormData({ ...formData, categories: [...formData.categories, opt.key] });
+                      } else {
+                        setFormData({ ...formData, categories: formData.categories.filter(c => c !== opt.key) });
+                      }
+                    }}
+                    className="w-3 h-3"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          
+          {/* 生效状态 */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">生效状态</label>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={formData.is_valid}
+                onChange={(e) => setFormData({ ...formData, is_valid: e.target.checked })}
+                className="w-3 h-3"
+              />
+              有效
+            </label>
+          </div>
+          
+          {/* 版本 */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">版本号</label>
+            <Input
+              className="h-7 text-xs"
+              value={formData.version}
+              onChange={(e) => setFormData({ ...formData, version: e.target.value })}
+              placeholder="如: 1.0"
+            />
+          </div>
+          
+          {/* 发布日期 */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">发布日期</label>
+            <Input
+              className="h-7 text-xs"
+              type="date"
+              value={formData.publish_date}
+              onChange={(e) => setFormData({ ...formData, publish_date: e.target.value })}
+            />
+          </div>
+          
+          {/* 发布机构 */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">发布机构</label>
+            <Input
+              className="h-7 text-xs"
+              value={formData.publish_org}
+              onChange={(e) => setFormData({ ...formData, publish_org: e.target.value })}
+              placeholder="如: 交通运输部"
+            />
+          </div>
+          
+          {/* 描述 */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">描述</label>
+            <textarea
+              className="w-full h-20 text-xs p-2 border rounded"
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              placeholder="文档描述..."
+            />
+          </div>
+        </div>
+        
+        <div className="flex justify-end gap-2 mt-4">
+          <Button size="sm" variant="outline" onClick={onClose} className="h-7 text-xs">取消</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={loading} className="h-7 text-xs">
+            {loading ? '保存中...' : '保存'}
+          </Button>
+        </div>
       </div>
     </div>
   );
