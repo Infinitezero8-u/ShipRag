@@ -190,13 +190,16 @@ export async function POST(request: NextRequest) {
       
     } else if (type === 'route') {
       // 航线数据导入
+      console.log('航线CSV解析结果示例:', items.slice(0, 2));
       const routeItems = items.map(item => ({
-        orig_port: item.origPort || item.orig_port || item.startPort || item.start_port,
-        dest_port: item.destPort || item.dest_port || item.endPort || item.end_port,
-        geometry_wkt: item.geometryWkt || item.geometry_wkt || 
+        orig_port: item.OrigPort || item.origPort || item.orig_port || item.startPort || item.start_port,
+        dest_port: item.DestPort || item.destPort || item.dest_port || item.endPort || item.end_port,
+        geometry_wkt: item.geometry_wkt || item.geometryWkt ||
           `LINESTRING(${item.fromLon || 0} ${item.fromLat || 0}, ${item.toLon || 0} ${item.toLat || 0})`,
         vector_status: '未向量化'
       })).filter(item => item.orig_port && item.dest_port);
+      
+      console.log('航线数据处理后:', routeItems.length, '条');
       
       // 去重：同一orig_port+dest_port组合只保留最后一条
       const uniqueItems = new Map<string, typeof routeItems[0]>();
