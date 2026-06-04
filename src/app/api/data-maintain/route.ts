@@ -452,6 +452,49 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    // 取消向量化
+    if (action === 'cancel-vectorize') {
+      const { portCodes, OrigPorts, DestPorts } = body;
+      
+      if (type === 'port') {
+        // 将指定港口的向量化状态重置为"未向量化"
+        let query = supabase.from('port_data').update({ 
+          vector_status: '未向量化',
+          updated_at: new Date().toISOString() 
+        });
+        
+        if (portCodes && portCodes.length > 0) {
+          query = query.in('port_code', portCodes);
+        } else {
+          // 取消所有正在向量化的（状态为空或待处理的）
+          query = query.or('vector_status.is.null,vector_status.eq.向量化中');
+        }
+        
+        const { error: updateError } = await query;
+        
+        if (updateError) throw updateError;
+        return NextResponse.json({ 
+          success: true, 
+          message: '已取消向量化任务' 
+        });
+      } else {
+        // 航线取消向量化
+        const { error: updateError } = await supabase
+          .from('route_data')
+          .update({ 
+            vector_status: '未向量化',
+            updated_at: new Date().toISOString() 
+          })
+          .or('vector_status.is.null,vector_status.eq.向量化中');
+        
+        if (updateError) throw updateError;
+        return NextResponse.json({ 
+          success: true, 
+          message: '已取消向量化任务' 
+        });
+      }
+    }
+    
     // 批量导入
     if (action === 'batch-import') {
       const { items } = body;

@@ -57,6 +57,9 @@ export function DataMaintainPanel() {
   // 批量选中状态
   const [selectedPorts, setSelectedPorts] = useState<string[]>([]);
   const [selectedRoutes, setSelectedRoutes] = useState<{origPort: string, destPort: string}[]>([]);
+  // 向量化状态
+  const [isVectorizing, setIsVectorizing] = useState(false);
+  const [vectorizeProgress, setVectorizeProgress] = useState({ current: 0, total: 0 });
 
   // 加载数据
   const loadPorts = async () => {
@@ -162,40 +165,58 @@ export function DataMaintainPanel() {
         setMessage('请先选择要向量化的港口数据');
         return;
       }
-      setMessage('正在批量向量化...');
-      const res = await fetch('/api/data-maintain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'batch-vectorize', 
-          type: 'port', 
-          portCodes: selectedPorts 
-        })
-      });
-      const data = await res.json();
-      setMessage(data.message);
-      setSelectedPorts([]);
-      loadPorts();
+      setIsVectorizing(true);
+      setVectorizeProgress({ current: 0, total: selectedPorts.length });
+      setMessage(`正在向量化 0/${selectedPorts.length}...`);
+      try {
+        const res = await fetch('/api/data-maintain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            action: 'batch-vectorize', 
+            type: 'port', 
+            portCodes: selectedPorts 
+          })
+        });
+        const data = await res.json();
+        setMessage(data.message);
+        setSelectedPorts([]);
+        loadPorts();
+      } catch (e) {
+        setMessage('向量化失败');
+      } finally {
+        setIsVectorizing(false);
+        setVectorizeProgress({ current: 0, total: 0 });
+      }
     } else if (activeTab === 'route') {
       if (selectedRoutes.length === 0) {
         setMessage('请先选择要向量化的航线数据');
         return;
       }
-      setMessage('正在批量向量化...');
-      const res = await fetch('/api/data-maintain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'batch-vectorize', 
-          type: 'route', 
-          OrigPorts: selectedRoutes.map(r => r.origPort),
-          DestPorts: selectedRoutes.map(r => r.destPort)
-        })
-      });
-      const data = await res.json();
-      setMessage(data.message);
-      setSelectedRoutes([]);
-      loadRoutes();
+      setIsVectorizing(true);
+      setVectorizeProgress({ current: 0, total: selectedRoutes.length });
+      setMessage(`正在向量化 0/${selectedRoutes.length}...`);
+      try {
+        const res = await fetch('/api/data-maintain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            action: 'batch-vectorize', 
+            type: 'route', 
+            OrigPorts: selectedRoutes.map(r => r.origPort),
+            DestPorts: selectedRoutes.map(r => r.destPort)
+          })
+        });
+        const data = await res.json();
+        setMessage(data.message);
+        setSelectedRoutes([]);
+        loadRoutes();
+      } catch (e) {
+        setMessage('向量化失败');
+      } finally {
+        setIsVectorizing(false);
+        setVectorizeProgress({ current: 0, total: 0 });
+      }
     }
   };
 
@@ -203,20 +224,54 @@ export function DataMaintainPanel() {
   const handleVectorizeAll = async () => {
     if (!confirm('确认对全部未向量化的数据进行向量化？')) return;
     
+    setIsVectorizing(true);
     setMessage('正在全部向量化...');
-    const res = await fetch('/api/data-maintain', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        action: 'batch-vectorize', 
-        type: activeTab, 
-        vectorizeAll: true 
-      })
-    });
-    const data = await res.json();
-    setMessage(data.message);
-    if (activeTab === 'port') loadPorts();
-    else loadRoutes();
+    try {
+      const res = await fetch('/api/data-maintain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'batch-vectorize', 
+          type: activeTab, 
+          vectorizeAll: true 
+        })
+      });
+      const data = await res.json();
+      setMessage(data.message);
+      if (activeTab === 'port') loadPorts();
+      else loadRoutes();
+    } catch (e) {
+      setMessage('向量化失败');
+    } finally {
+      setIsVectorizing(false);
+    }
+  };
+
+  // 取消向量化
+  const handleCancelVectorize = async () => {
+    if (!confirm('确认取消向量化任务？')) return;
+    
+    try {
+      const res = await fetch('/api/data-maintain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'cancel-vectorize', 
+          type: activeTab,
+          portCodes: activeTab === 'port' ? selectedPorts : undefined,
+          OrigPorts: activeTab === 'route' ? selectedRoutes.map(r => r.origPort) : undefined,
+          DestPorts: activeTab === 'route' ? selectedRoutes.map(r => r.destPort) : undefined
+        })
+      });
+      const data = await res.json();
+      setMessage(data.message || '已取消向量化任务');
+      setIsVectorizing(false);
+      setVectorizeProgress({ current: 0, total: 0 });
+      if (activeTab === 'port') loadPorts();
+      else loadRoutes();
+    } catch (e) {
+      setMessage('取消失败');
+    }
   };
 
   // 状态图标
@@ -238,16 +293,21 @@ export function DataMaintainPanel() {
           </span>
         </div>
         <div className="flex gap-1 flex-wrap">
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowBatchModal(true)}>
+          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowBatchModal(true)} disabled={isVectorizing}>
             <Upload className="w-3 h-3 mr-1" />批量导入
           </Button>
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleBatchVectorize}>
+          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleBatchVectorize} disabled={isVectorizing}>
             <Layers className="w-3 h-3 mr-1" />批量向量化
           </Button>
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleVectorizeAll}>
+          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleVectorizeAll} disabled={isVectorizing}>
             <Zap className="w-3 h-3 mr-1" />全部向量化
           </Button>
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowAddModal(true)}>
+          {isVectorizing && (
+            <Button size="sm" variant="destructive" className="h-6 text-[10px]" onClick={handleCancelVectorize}>
+              <XCircle className="w-3 h-3 mr-1" />取消
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowAddModal(true)} disabled={isVectorizing}>
             <Plus className="w-3 h-3 mr-1" />新增
           </Button>
         </div>
