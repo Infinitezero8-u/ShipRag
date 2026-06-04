@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { EmbeddingClient } from 'coze-coding-dev-sdk';
 
 const supabase = getSupabaseClient();
+const embeddingClient = new EmbeddingClient();
 
 // GET: 列表、搜索、预览
 export async function GET(request: NextRequest) {
@@ -220,28 +222,233 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // 向量化
+    // 单个向量化
     if (action === 'vectorize') {
-      // 更新状态为处理中
       if (type === 'port') {
         const { portCode } = body;
-        const { error } = await supabase
-          .from('port_data')
-          .update({ vector_status: '向量化成功', updated_at: new Date().toISOString() })
-          .eq('port_code', portCode);
         
-        if (error) throw error;
-        return NextResponse.json({ success: true, message: '港口数据向量化成功' });
+        // 获取港口数据
+        const { data: port, error: queryError } = await supabase
+          .from('port_data')
+          .select('*')
+          .eq('port_code', portCode)
+          .single();
+        
+        if (queryError) throw queryError;
+        if (!port) return NextResponse.json({ error: '港口数据不存在' }, { status: 404 });
+        
+        // 构建向量化文本
+        const vectorText = `港口代码:${port.port_code} 名称:${port.name_cn} 国家:${port.ctry_name_cn} 类型:${port.port_type} 经度:${port.lon} 纬度:${port.lat} 大洲:${port.continent_name_cn}`;
+        
+        try {
+          // 更新状态为处理中
+          await supabase
+            .from('port_data')
+            .update({ vector_status: '向量化中', updated_at: new Date().toISOString() })
+            .eq('port_code', portCode);
+          
+          // 调用embedding API
+          const embedding = await embeddingClient.embedText(vectorText);
+          
+          // 更新向量和状态
+          const { error: updateError } = await supabase
+            .from('port_data')
+            .update({ 
+              embedding: embedding,
+              vector_status: '向量化成功', 
+              updated_at: new Date().toISOString() 
+            })
+            .eq('port_code', portCode);
+          
+          if (updateError) throw updateError;
+          return NextResponse.json({ success: true, message: '港口数据向量化成功' });
+        } catch (embedError) {
+          await supabase
+            .from('port_data')
+            .update({ vector_status: '向量化失败', updated_at: new Date().toISOString() })
+            .eq('port_code', portCode);
+          return NextResponse.json({ error: `向量化失败: ${embedError instanceof Error ? embedError.message : String(embedError)}` }, { status: 500 });
+        }
       } else {
         const { OrigPort, DestPort } = body;
-        const { error } = await supabase
-          .from('route_data')
-          .update({ vector_status: '向量化成功', updated_at: new Date().toISOString() })
-          .eq('orig_port', OrigPort)
-          .eq('dest_port', DestPort);
         
-        if (error) throw error;
-        return NextResponse.json({ success: true, message: '航线数据向量化成功' });
+        // 获取航线数据
+        const { data: route, error: queryError } = await supabase
+          .from('route_data')
+          .select('*')
+          .eq('orig_port', OrigPort)
+          .eq('dest_port', DestPort)
+          .single();
+        
+        if (queryError) throw queryError;
+        if (!route) return NextResponse.json({ error: '航线数据不存在' }, { status: 404 });
+        
+        // 构建向量化文本
+        const vectorText = `航线 起始港:${route.orig_port} 目的港:${route.dest_port} 航线:${route.geometry_wkt}`;
+        
+        try {
+          // 更新状态为处理中
+          await supabase
+            .from('route_data')
+            .update({ vector_status: '向量化中', updated_at: new Date().toISOString() })
+            .eq('orig_port', OrigPort)
+            .eq('dest_port', DestPort);
+          
+          // 调用embedding API
+          const embedding = await embeddingClient.embedText(vectorText);
+          
+          // 更新向量和状态
+          const { error: updateError } = await supabase
+            .from('route_data')
+            .update({ 
+              embedding: embedding,
+              vector_status: '向量化成功', 
+              updated_at: new Date().toISOString() 
+            })
+            .eq('orig_port', OrigPort)
+            .eq('dest_port', DestPort);
+          
+          if (updateError) throw updateError;
+          return NextResponse.json({ success: true, message: '航线数据向量化成功' });
+        } catch (embedError) {
+          await supabase
+            .from('route_data')
+            .update({ vector_status: '向量化失败', updated_at: new Date().toISOString() })
+            .eq('orig_port', OrigPort)
+            .eq('dest_port', DestPort);
+          return NextResponse.json({ error: `向量化失败: ${embedError instanceof Error ? embedError.message : String(embedError)}` }, { status: 500 });
+        }
+      }
+    }
+    
+    // 批量向量化（选中的或全部）
+    if (action === 'batch-vectorize') {
+      const { portCodes, OrigPorts, DestPorts, vectorizeAll } = body;
+      
+      if (type === 'port') {
+        // 获取需要向量化的港口列表
+        let query = supabase.from('port_data').select('*');
+        
+        if (!vectorizeAll && portCodes) {
+          query = query.in('port_code', portCodes);
+        } else if (vectorizeAll) {
+          query = query.or('vector_status.is.null,vector_status.eq.未向量化,vector_status.eq.向量化失败');
+        }
+        
+        const { data: ports, error: queryError } = await query.limit(100);
+        
+        if (queryError) throw queryError;
+        if (!ports || ports.length === 0) {
+          return NextResponse.json({ success: true, message: '没有需要向量化的数据', processed: 0 });
+        }
+        
+        let processed = 0;
+        let failed = 0;
+        const errors: string[] = [];
+        
+        for (const port of ports) {
+          const vectorText = `港口代码:${port.port_code} 名称:${port.name_cn} 国家:${port.ctry_name_cn} 类型:${port.port_type} 经度:${port.lon} 纬度:${port.lat} 大洲:${port.continent_name_cn}`;
+          
+          try {
+            const embedding = await embeddingClient.embedText(vectorText);
+            
+            const { error: updateError } = await supabase
+              .from('port_data')
+              .update({ 
+                embedding: embedding,
+                vector_status: '向量化成功', 
+                updated_at: new Date().toISOString() 
+              })
+              .eq('port_code', port.port_code);
+            
+            if (updateError) {
+              failed++;
+              errors.push(`${port.port_code}: ${updateError.message}`);
+            } else {
+              processed++;
+            }
+          } catch (embedError) {
+            failed++;
+            errors.push(`${port.port_code}: ${embedError instanceof Error ? embedError.message : String(embedError)}`);
+            await supabase
+              .from('port_data')
+              .update({ vector_status: '向量化失败', updated_at: new Date().toISOString() })
+              .eq('port_code', port.port_code);
+          }
+        }
+        
+        return NextResponse.json({ 
+          success: true, 
+          message: `批量向量化完成，成功${processed}条，失败${failed}条`,
+          processed,
+          failed,
+          errors: errors.slice(0, 10)
+        });
+      } else {
+        // 航线向量化
+        let query = supabase.from('route_data').select('*');
+        
+        if (!vectorizeAll && OrigPorts && DestPorts) {
+          // 批量查询多个航线
+          const { data: routes, error: queryError } = await query.limit(100);
+          const filteredRoutes = routes?.filter((r, i) => 
+            OrigPorts[i] && DestPorts[i] && r.orig_port === OrigPorts[i] && r.dest_port === DestPorts[i]
+          );
+        } else if (vectorizeAll) {
+          query = query.or('vector_status.is.null,vector_status.eq.未向量化,vector_status.eq.向量化失败');
+        }
+        
+        const { data: routes, error: queryError } = await query.limit(100);
+        
+        if (queryError) throw queryError;
+        if (!routes || routes.length === 0) {
+          return NextResponse.json({ success: true, message: '没有需要向量化的数据', processed: 0 });
+        }
+        
+        let processed = 0;
+        let failed = 0;
+        const errors: string[] = [];
+        
+        for (const route of routes) {
+          const vectorText = `航线 起始港:${route.orig_port} 目的港:${route.dest_port} 航线:${route.geometry_wkt}`;
+          
+          try {
+            const embedding = await embeddingClient.embedText(vectorText);
+            
+            const { error: updateError } = await supabase
+              .from('route_data')
+              .update({ 
+                embedding: embedding,
+                vector_status: '向量化成功', 
+                updated_at: new Date().toISOString() 
+              })
+              .eq('orig_port', route.orig_port)
+              .eq('dest_port', route.dest_port);
+            
+            if (updateError) {
+              failed++;
+              errors.push(`${route.orig_port}-${route.dest_port}: ${updateError.message}`);
+            } else {
+              processed++;
+            }
+          } catch (embedError) {
+            failed++;
+            errors.push(`${route.orig_port}-${route.dest_port}: ${embedError instanceof Error ? embedError.message : String(embedError)}`);
+            await supabase
+              .from('route_data')
+              .update({ vector_status: '向量化失败', updated_at: new Date().toISOString() })
+              .eq('orig_port', route.orig_port)
+              .eq('dest_port', route.dest_port);
+          }
+        }
+        
+        return NextResponse.json({ 
+          success: true, 
+          message: `批量向量化完成，成功${processed}条，失败${failed}条`,
+          processed,
+          failed,
+          errors: errors.slice(0, 10)
+        });
       }
     }
     

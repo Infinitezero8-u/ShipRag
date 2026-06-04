@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Plus, Edit2, Trash2, Eye, Database, Search, Upload, 
-  CheckCircle, XCircle, Clock, FileText, Route, Anchor, BookOpen, ExternalLink
+  CheckCircle, XCircle, Clock, FileText, Route, Anchor, BookOpen, ExternalLink,
+  Layers, Zap
 } from 'lucide-react';
 
 interface PortData {
@@ -53,6 +54,9 @@ export function DataMaintainPanel() {
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<PortData | RouteData | null>(null);
   const [message, setMessage] = useState<string>('');
+  // 批量选中状态
+  const [selectedPorts, setSelectedPorts] = useState<string[]>([]);
+  const [selectedRoutes, setSelectedRoutes] = useState<{origPort: string, destPort: string}[]>([]);
 
   // 加载数据
   const loadPorts = async () => {
@@ -151,6 +155,70 @@ export function DataMaintainPanel() {
     else loadRoutes();
   };
 
+  // 批量向量化（选中的）
+  const handleBatchVectorize = async () => {
+    if (activeTab === 'port') {
+      if (selectedPorts.length === 0) {
+        setMessage('请先选择要向量化的港口数据');
+        return;
+      }
+      setMessage('正在批量向量化...');
+      const res = await fetch('/api/data-maintain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'batch-vectorize', 
+          type: 'port', 
+          portCodes: selectedPorts 
+        })
+      });
+      const data = await res.json();
+      setMessage(data.message);
+      setSelectedPorts([]);
+      loadPorts();
+    } else if (activeTab === 'route') {
+      if (selectedRoutes.length === 0) {
+        setMessage('请先选择要向量化的航线数据');
+        return;
+      }
+      setMessage('正在批量向量化...');
+      const res = await fetch('/api/data-maintain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'batch-vectorize', 
+          type: 'route', 
+          OrigPorts: selectedRoutes.map(r => r.origPort),
+          DestPorts: selectedRoutes.map(r => r.destPort)
+        })
+      });
+      const data = await res.json();
+      setMessage(data.message);
+      setSelectedRoutes([]);
+      loadRoutes();
+    }
+  };
+
+  // 全部向量化
+  const handleVectorizeAll = async () => {
+    if (!confirm('确认对全部未向量化的数据进行向量化？')) return;
+    
+    setMessage('正在全部向量化...');
+    const res = await fetch('/api/data-maintain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        action: 'batch-vectorize', 
+        type: activeTab, 
+        vectorizeAll: true 
+      })
+    });
+    const data = await res.json();
+    setMessage(data.message);
+    if (activeTab === 'port') loadPorts();
+    else loadRoutes();
+  };
+
   // 状态图标
   const StatusIcon = ({ status }: { status: string }) => {
     if (status === '向量化成功') return <CheckCircle className="w-3 h-3 text-green-500" />;
@@ -169,9 +237,15 @@ export function DataMaintainPanel() {
             港口: {ports.length} | 航线: {routes.length} | 规章: {regulations.length}
           </span>
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowBatchModal(true)}>
             <Upload className="w-3 h-3 mr-1" />批量导入
+          </Button>
+          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleBatchVectorize}>
+            <Layers className="w-3 h-3 mr-1" />批量向量化
+          </Button>
+          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleVectorizeAll}>
+            <Zap className="w-3 h-3 mr-1" />全部向量化
           </Button>
           <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowAddModal(true)}>
             <Plus className="w-3 h-3 mr-1" />新增
@@ -236,6 +310,18 @@ export function DataMaintainPanel() {
               ports.map((port) => (
                 <div key={port.id} className="flex items-center justify-between p-2 bg-muted/20 rounded hover:bg-muted/40">
                   <div className="flex items-center gap-2">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedPorts.includes(port.port_code)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedPorts([...selectedPorts, port.port_code]);
+                        } else {
+                          setSelectedPorts(selectedPorts.filter(p => p !== port.port_code));
+                        }
+                      }}
+                      className="w-3 h-3"
+                    />
                     <StatusIcon status={port.vector_status} />
                     <span className="text-xs font-mono">{port.port_code}</span>
                     <span className="text-xs text-muted-foreground">{port.name_cn}</span>
@@ -271,6 +357,18 @@ export function DataMaintainPanel() {
               routes.map((route) => (
                 <div key={route.id} className="flex items-center justify-between p-2 bg-muted/20 rounded hover:bg-muted/40">
                   <div className="flex items-center gap-2">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedRoutes.some(r => r.origPort === route.orig_port && r.destPort === route.dest_port)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedRoutes([...selectedRoutes, { origPort: route.orig_port, destPort: route.dest_port }]);
+                        } else {
+                          setSelectedRoutes(selectedRoutes.filter(r => !(r.origPort === route.orig_port && r.destPort === route.dest_port)));
+                        }
+                      }}
+                      className="w-3 h-3"
+                    />
                     <StatusIcon status={route.vector_status} />
                     <span className="text-xs font-mono">{route.orig_port}</span>
                     <span className="text-xs">→</span>
