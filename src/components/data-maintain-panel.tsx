@@ -748,6 +748,8 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
   const [loading, setLoading] = useState(false);
   const [importMode, setImportMode] = useState<'json' | 'csv'>('csv');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importedData, setImportedData] = useState<any[]>([]);
+  const [showPreview, setShowPreview] = useState(false);
 
   // CSV文件上传处理
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -758,13 +760,13 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
     const fileName = file.name.toLowerCase();
     const isCsv = fileName.endsWith('.csv') || file.type === 'text/csv' || file.type === 'application/vnd.ms-excel';
     if (!isCsv) {
-      setMessage('请选择CSV格式文件（.csv后缀）');
+      setMessage('❌ 请选择CSV格式文件（.csv后缀）');
       e.target.value = '';
       return;
     }
     
     setLoading(true);
-    setMessage('');
+    setMessage('正在读取文件...');
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -777,14 +779,18 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
       const data = await res.json();
       
       if (data.success) {
-        setMessage(data.message);
+        setMessage(`✅ ${data.message}`);
+        // 显示导入的数据预览
+        if (data.data && data.data.length > 0) {
+          setImportedData(data.data);
+          setShowPreview(true);
+        }
         onSuccess();
-        onClose();
       } else {
-        setMessage(data.error || '导入失败');
+        setMessage(`❌ ${data.error || '导入失败'}`);
       }
     } catch (err) {
-      setMessage('文件上传失败，请检查网络连接');
+      setMessage(`❌ 文件上传失败: ${err instanceof Error ? err.message : '网络错误'}`);
     }
     setLoading(false);
     // 清空文件输入
@@ -925,6 +931,78 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
             </Button>
           )}
         </div>
+        
+        {/* 数据预览弹窗 */}
+        {showPreview && importedData.length > 0 && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" style={{position: 'fixed'}}>
+            <div className="bg-background p-4 rounded-lg w-[700px] max-h-[85vh] overflow-hidden flex flex-col">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-sm font-medium text-green-600">
+                  ✅ 成功导入 {importedData.length} 条数据
+                </h3>
+                <Button size="sm" variant="ghost" onClick={() => { setShowPreview(false); onClose(); }}>✕</Button>
+              </div>
+              <div className="flex-1 overflow-auto border rounded">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left w-8">#</th>
+                      {type === 'port' ? (
+                        <>
+                          <th className="p-2 text-left">港口代码</th>
+                          <th className="p-2 text-left">名称</th>
+                          <th className="p-2 text-left">国家</th>
+                          <th className="p-2 text-left">类型</th>
+                          <th className="p-2 text-left">经度</th>
+                          <th className="p-2 text-left">纬度</th>
+                        </>
+                      ) : (
+                        <>
+                          <th className="p-2 text-left">起始港</th>
+                          <th className="p-2 text-left">目的港</th>
+                          <th className="p-2 text-left">航线</th>
+                        </>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importedData.slice(0, 100).map((item, idx) => (
+                      <tr key={idx} className="border-t hover:bg-muted/50">
+                        <td className="p-2 text-muted-foreground">{idx + 1}</td>
+                        {type === 'port' ? (
+                          <>
+                            <td className="p-2 font-mono">{item.port_code || item.portCode}</td>
+                            <td className="p-2">{item.name_cn || item.nameCn}</td>
+                            <td className="p-2">{item.ctry_name_cn || item.ctryNameCn}</td>
+                            <td className="p-2">{item.port_type || item.portType}</td>
+                            <td className="p-2">{item.lon}</td>
+                            <td className="p-2">{item.lat}</td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="p-2 font-mono">{item.orig_port || item.origPort}</td>
+                            <td className="p-2 font-mono">{item.dest_port || item.destPort}</td>
+                            <td className="p-2 truncate max-w-[200px]">{(item.geometry_wkt || item.geometryWkt || '').substring(0, 50)}...</td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {importedData.length > 100 && (
+                  <div className="p-2 text-center text-xs text-muted-foreground bg-muted">
+                    仅显示前100条，共 {importedData.length} 条
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end mt-3">
+                <Button size="sm" onClick={() => { setShowPreview(false); onClose(); }} className="h-7 text-xs">
+                  确定
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

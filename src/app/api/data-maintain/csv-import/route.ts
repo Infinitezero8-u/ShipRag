@@ -170,6 +170,7 @@ export async function POST(request: NextRequest) {
         type: 'port',
         total: items.length,
         imported: data?.length || 0,
+        data: data, // 返回导入的数据
         message: `成功导入 ${data?.length || 0} 条港口数据`
       });
       
@@ -198,6 +199,7 @@ export async function POST(request: NextRequest) {
         type: 'route',
         total: items.length,
         imported: data?.length || 0,
+        data: data, // 返回导入的数据
         message: `成功导入 ${data?.length || 0} 条航线数据`
       });
     }
