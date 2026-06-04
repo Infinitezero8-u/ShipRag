@@ -1,6 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 
+// 默认工作流节点连线关系
+const DEFAULT_EDGES = [
+  { from: 0, to: 1 },
+  { from: 1, to: 2 },
+  { from: 2, to: 3 },
+  { from: 3, to: 4 },
+  { from: 4, to: 5 },
+  { from: 5, to: 6 },
+  { from: 6, to: 7 },
+  { from: 7, to: 8 },
+  { from: 8, to: 9 },
+  { from: 9, to: 13 },
+  { from: 3, to: 10 },
+  { from: 10, to: 11 },
+  { from: 11, to: 12 },
+  { from: 12, to: 13 },
+];
+
+// 系统内置默认工作流
+const DEFAULT_WORKFLOW = {
+  id: 'default-rag-sql',
+  name: '双分支 RAG+SQL 智能问答',
+  description: '用户输入→意图分类→条件分支→RAG分支/SQL分支→结果汇总',
+  nodes: [
+    { type: 'chatInput', name: '用户输入' },
+    { type: 'classifyPrompt', name: '分类Prompt' },
+    { type: 'classifyLLM', name: '分类LLM' },
+    { type: 'branchCondition', name: '条件分支' },
+    { type: 'queryRewrite', name: 'Query优化' },
+    { type: 'embedding', name: '向量化' },
+    { type: 'vectorRetrieval', name: '向量检索' },
+    { type: 'rerank', name: '结果重排' },
+    { type: 'promptAssembly', name: 'Prompt组装' },
+    { type: 'llm', name: 'LLM生成' },
+    { type: 'sqlPrompt', name: 'SQL生成' },
+    { type: 'sqlExecute', name: '数据库执行' },
+    { type: 'sqlPolish', name: '结果润色' },
+    { type: 'chatOutput', name: '输出汇总' },
+  ],
+  edges: DEFAULT_EDGES,
+  is_locked: true,
+  is_active: true,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+};
+
 // 获取工作流列表
 export async function GET(request: NextRequest) {
   try {
@@ -9,6 +55,11 @@ export async function GET(request: NextRequest) {
     const id = searchParams.get('id');
     
     if (id) {
+      // 检查是否是内置默认工作流
+      if (id === 'default-rag-sql') {
+        return NextResponse.json(DEFAULT_WORKFLOW);
+      }
+      
       // 获取单个工作流
       const { data, error } = await supabase
         .from('workflows')

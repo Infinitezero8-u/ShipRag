@@ -428,10 +428,10 @@ function WorkflowEditor() {
           }
           // 否则转换旧格式到新格式
           return {
-            id: node.id || `node_${index}_${Date.now()}`,
+            id: node.id || `node_${index}`,
             type: 'custom',
-            position: { x: 100 + (index % 3) * 250, y: 100 + Math.floor(index / 3) * 100 },
-            data: { type: node.type, ...node },
+            position: { x: 100 + (index % 4) * 220, y: 80 + Math.floor(index / 4) * 120 },
+            data: { type: node.type, name: node.name || NODE_TYPE_CONFIG[node.type]?.label || node.type, ...node },
           };
         });
       } else {
@@ -440,14 +440,35 @@ function WorkflowEditor() {
       }
       
       if (data.edges && Array.isArray(data.edges) && data.edges.length > 0) {
-        loadedEdges = data.edges;
+        // 检查edges格式
+        const firstEdge = data.edges[0];
+        if (firstEdge.from !== undefined && firstEdge.to !== undefined) {
+          // 旧格式 { from, to } 转换为 ReactFlow 格式
+          loadedEdges = data.edges.map((edge: any, index: number) => {
+            const sourceNode = loadedNodes[edge.from];
+            const targetNode = loadedNodes[edge.to];
+            return {
+              id: `edge_${index}`,
+              source: sourceNode?.id || `node_${edge.from}`,
+              target: targetNode?.id || `node_${edge.to}`,
+              sourceHandle: 'source',
+              targetHandle: 'target',
+              style: { stroke: '#94a3b8' },
+              type: 'smoothstep',
+              animated: false,
+            };
+          });
+        } else if (firstEdge.source && firstEdge.target) {
+          // 已经是 ReactFlow 格式
+          loadedEdges = data.edges;
+        }
       } else {
         // 如果没有连线，根据节点自动生成连线
         const nodeIds = loadedNodes.map(n => n.id);
         if (nodeIds.length >= 2) {
           // 找到输入和输出节点
           const inputNode = loadedNodes.find(n => n.data?.type === 'chatInput');
-          const outputNode = loadedNodes.find(n => n.data?.type === 'mergeOutput');
+          const outputNode = loadedNodes.find(n => n.data?.type === 'mergeOutput' || n.data?.type === 'chatOutput');
           if (inputNode && outputNode) {
             loadedEdges = [{
               id: 'e-input-output',
