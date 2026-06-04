@@ -169,13 +169,15 @@ export default function WorkflowManagePage() {
   };
   
   const handleDelete = async (id: string) => {
+    if (!id) {
+      alert('工作流ID无效');
+      return;
+    }
     if (!confirm('确定要删除此工作流吗？')) return;
     
     try {
-      const res = await fetch('/api/workflow', {
+      const res = await fetch(`/api/workflow?id=${encodeURIComponent(id)}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
       });
       
       const data = await res.json();
