@@ -51,7 +51,22 @@ export default function SegmentLabelPage() {
   const [showImport, setShowImport] = useState(false);
   const [filterMmsi, setFilterMmsi] = useState("");
   const [filterUnlabeled, setFilterUnlabeled] = useState(false);
+  const [filterStartPort, setFilterStartPort] = useState("");
+  const [filterEndPort, setFilterEndPort] = useState("");
+  const [filterBehavior, setFilterBehavior] = useState("");
+  const [filterIntent, setFilterIntent] = useState("");
+  const [filterStartTime, setFilterStartTime] = useState("");
+  const [filterEndTime, setFilterEndTime] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedPort, setSelectedPort] = useState<string | null>(null);
+  const [portInfo, setPortInfo] = useState<{
+    name_cn?: string;
+    lon?: number;
+    lat?: number;
+    port_type?: string;
+    tz_offset?: number;
+    ctry_name_cn?: string;
+  } | null>(null);
   
   // 标签编辑状态
   const [editingLabel, setEditingLabel] = useState<LabelDef | null>(null);
@@ -79,6 +94,12 @@ export default function SegmentLabelPage() {
       const params = new URLSearchParams();
       if (filterMmsi) params.set("mmsi", filterMmsi);
       if (filterUnlabeled) params.set("unlabeled", "true");
+      if (filterStartPort) params.set("startPort", filterStartPort);
+      if (filterEndPort) params.set("endPort", filterEndPort);
+      if (filterBehavior) params.set("behavior", filterBehavior);
+      if (filterIntent) params.set("intent", filterIntent);
+      if (filterStartTime) params.set("startTime", filterStartTime);
+      if (filterEndTime) params.set("endTime", filterEndTime);
       params.set("limit", "50");
       const res = await fetch(`/api/trajectory/label?${params}`);
       const data = await res.json();
@@ -172,6 +193,22 @@ export default function SegmentLabelPage() {
   const startEditLabel = (label: LabelDef) => {
     setEditingLabel(label);
     setLabelForm({ code: label.code, name: label.name, description: label.description || '' });
+  };
+
+  // 港口信息查询
+  const handlePortClick = async (portCode: string) => {
+    setSelectedPort(portCode);
+    try {
+      const res = await fetch(`/api/data-maintain?action=list&type=port&portCode=${portCode}`);
+      const data = await res.json();
+      if (data.success && data.items?.length > 0) {
+        setPortInfo(data.items[0]);
+      } else {
+        setPortInfo(null);
+      }
+    } catch {
+      setPortInfo(null);
+    }
   };
 
   const handleImport = async () => {
@@ -305,6 +342,52 @@ export default function SegmentLabelPage() {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`确定删除选中的 ${selectedIds.size} 条航迹？`)) return;
+    try {
+      let success = 0;
+      for (const id of selectedIds) {
+        const res = await fetch("/api/trajectory/label", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "delete", id }),
+        });
+        const data = await res.json();
+        if (data.success) success++;
+      }
+      alert(`批量删除完成: ${success}/${selectedIds.size}`);
+      setSelectedIds(new Set());
+      fetchItems();
+    } catch (e) {
+      console.error(e);
+      alert("批量删除失败");
+    }
+  };
+
+  const handleBatchClearLabel = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`确定取消选中的 ${selectedIds.size} 条航迹的标注？`)) return;
+    try {
+      let success = 0;
+      for (const id of selectedIds) {
+        const res = await fetch("/api/trajectory/label", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "clearLabel", id }),
+        });
+        const data = await res.json();
+        if (data.success) success++;
+      }
+      alert(`批量取消标注完成: ${success}/${selectedIds.size}`);
+      setSelectedIds(new Set());
+      fetchItems();
+    } catch (e) {
+      console.error(e);
+      alert("批量取消标注失败");
+    }
+  };
+
   const toggleSelect = (id: string) => {
     const newSet = new Set(selectedIds);
     if (newSet.has(id)) newSet.delete(id);
@@ -380,25 +463,73 @@ export default function SegmentLabelPage() {
         </TabsList>
 
         <TabsContent value="list" className="mt-0">
-          <div className="flex gap-1 mb-2 flex-wrap">
-            <Input
-              placeholder="MMSI筛选"
-              value={filterMmsi}
-              onChange={(e) => setFilterMmsi(e.target.value)}
-              className="h-7 w-20 text-[10px]"
-            />
-            <Button size="sm" variant={filterUnlabeled ? "default" : "outline"} onClick={() => setFilterUnlabeled(!filterUnlabeled)} className="h-7 text-[10px]">
-              仅未标注
-            </Button>
-            <Button size="sm" onClick={fetchItems} className="h-7 text-[10px]">
-              <RefreshCw className="w-3 h-3" />
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setShowImport(true)} className="h-7 text-[10px]">
-              <Upload className="w-3 h-3 mr-1" />导入
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => handleExport("json")} className="h-7 text-[10px]">
-              <Download className="w-3 h-3 mr-1" />导出
-            </Button>
+          {/* 筛选区域 */}
+          <div className="space-y-1 mb-2">
+            <div className="flex gap-1 flex-wrap">
+              <Input
+                placeholder="MMSI"
+                value={filterMmsi}
+                onChange={(e) => setFilterMmsi(e.target.value)}
+                className="h-7 w-16 text-[10px]"
+              />
+              <Input
+                placeholder="起港"
+                value={filterStartPort}
+                onChange={(e) => setFilterStartPort(e.target.value)}
+                className="h-7 w-16 text-[10px]"
+              />
+              <Input
+                placeholder="止港"
+                value={filterEndPort}
+                onChange={(e) => setFilterEndPort(e.target.value)}
+                className="h-7 w-16 text-[10px]"
+              />
+              <select 
+                value={filterBehavior} 
+                onChange={(e) => setFilterBehavior(e.target.value)}
+                className="h-7 text-[10px] border rounded px-1"
+              >
+                <option value="">行为标签</option>
+                {labels.behaviors.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+              </select>
+              <select 
+                value={filterIntent} 
+                onChange={(e) => setFilterIntent(e.target.value)}
+                className="h-7 text-[10px] border rounded px-1"
+              >
+                <option value="">意图标签</option>
+                {labels.intents.map(i => <option key={i.code} value={i.code}>{i.name}</option>)}
+              </select>
+            </div>
+            <div className="flex gap-1 flex-wrap items-center">
+              <Input
+                type="date"
+                placeholder="开始时间"
+                value={filterStartTime}
+                onChange={(e) => setFilterStartTime(e.target.value)}
+                className="h-7 w-28 text-[10px]"
+              />
+              <span className="text-[10px]">至</span>
+              <Input
+                type="date"
+                placeholder="结束时间"
+                value={filterEndTime}
+                onChange={(e) => setFilterEndTime(e.target.value)}
+                className="h-7 w-28 text-[10px]"
+              />
+              <Button size="sm" variant={filterUnlabeled ? "default" : "outline"} onClick={() => setFilterUnlabeled(!filterUnlabeled)} className="h-7 text-[10px]">
+                仅未标注
+              </Button>
+              <Button size="sm" onClick={fetchItems} className="h-7 text-[10px]">
+                <RefreshCw className="w-3 h-3" />
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowImport(true)} className="h-7 text-[10px]">
+                <Upload className="w-3 h-3 mr-1" />导入
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => handleExport("json")} className="h-7 text-[10px]">
+                <Download className="w-3 h-3 mr-1" />导出
+              </Button>
+            </div>
           </div>
 
           {selectedIds.size > 0 && (
@@ -406,6 +537,12 @@ export default function SegmentLabelPage() {
               <span className="text-[10px]">已选 {selectedIds.size} 条</span>
               <Button size="sm" onClick={handleBatchLabel} disabled={labeling} className="h-6 text-[10px]">
                 <Sparkles className="w-3 h-3 mr-1" />批量标注
+              </Button>
+              <Button size="sm" variant="destructive" onClick={handleBatchDelete} className="h-6 text-[10px]">
+                <Trash2 className="w-3 h-3 mr-1" />批量删除
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleBatchClearLabel} className="h-6 text-[10px]">
+                取消标注
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())} className="h-6 text-[10px]">
                 取消
@@ -484,8 +621,24 @@ export default function SegmentLabelPage() {
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
                   <div><span className="text-muted-foreground">MMSI:</span> {selected.mmsi}</div>
-                  <div><span className="text-muted-foreground">起点:</span> {selected.start_port}</div>
-                  <div><span className="text-muted-foreground">终点:</span> {selected.end_port}</div>
+                  <div>
+                    <span className="text-muted-foreground">起点:</span>{" "}
+                    <button 
+                      onClick={() => setSelectedPort(selected.start_port)}
+                      className="text-blue-600 hover:underline"
+                    >
+                      {selected.start_port}
+                    </button>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">终点:</span>{" "}
+                    <button 
+                      onClick={() => setSelectedPort(selected.end_port)}
+                      className="text-blue-600 hover:underline"
+                    >
+                      {selected.end_port}
+                    </button>
+                  </div>
                   <div><span className="text-muted-foreground">置信度:</span> {selected.confidence_score?.toFixed(2) || "-"}</div>
                 </div>
                 
@@ -797,6 +950,45 @@ export default function SegmentLabelPage() {
                   取消
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* 港口信息弹窗 */}
+      {selectedPort && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-sm">
+            <CardHeader className="p-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">港口信息: {selectedPort}</CardTitle>
+                <Button size="sm" variant="ghost" onClick={() => { setSelectedPort(null); setPortInfo(null); }}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-3 pt-0">
+              {portInfo ? (
+                <div className="space-y-2 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><span className="text-muted-foreground">中文名:</span> {portInfo.name_cn}</div>
+                    <div><span className="text-muted-foreground">国家:</span> {portInfo.ctry_name_cn}</div>
+                    <div><span className="text-muted-foreground">经度:</span> {portInfo.lon?.toFixed(4)}</div>
+                    <div><span className="text-muted-foreground">纬度:</span> {portInfo.lat?.toFixed(4)}</div>
+                    <div><span className="text-muted-foreground">类型:</span> {portInfo.port_type}</div>
+                    <div><span className="text-muted-foreground">时区:</span> UTC{(portInfo.tz_offset ?? 0) >= 0 ? '+' : ''}{portInfo.tz_offset ?? 0}</div>
+                  </div>
+                  <Button size="sm" variant="outline" className="w-full mt-2" asChild>
+                    <a href={`/sea-chart?port=${selectedPort}`} target="_blank" rel="noopener noreferrer">
+                      <Navigation className="w-3 h-3 mr-1" />在海图中查看
+                    </a>
+                  </Button>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground text-center py-4">
+                  未找到港口数据
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

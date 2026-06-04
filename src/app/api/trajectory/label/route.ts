@@ -449,6 +449,72 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, imported: inserted.length });
     }
     
+    // 批量删除航迹
+    if (action === 'batchDelete') {
+      const { ids } = body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return NextResponse.json({ error: 'ids 必须是非空数组' }, { status: 400 });
+      }
+      
+      const { error, count } = await supabase
+        .from('trajectory_segments')
+        .delete()
+        .in('id', ids);
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, deleted: ids.length });
+    }
+    
+    // 批量取消标注
+    if (action === 'batchClearLabel') {
+      const { ids } = body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return NextResponse.json({ error: 'ids 必须是非空数组' }, { status: 400 });
+      }
+      
+      const { error } = await supabase
+        .from('trajectory_segments')
+        .update({
+          behavior_code: null,
+          intent_code: null,
+          confidence_score: null,
+          label_reasoning: null,
+          labeled_at: null,
+          updated_at: new Date().toISOString()
+        })
+        .in('id', ids);
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, cleared: ids.length });
+    }
+    
+    // 批量导出
+    if (action === 'batchExport') {
+      const { ids } = body;
+      
+      let query = supabase
+        .from('trajectory_segments')
+        .select('*');
+      
+      if (Array.isArray(ids) && ids.length > 0) {
+        query = query.in('id', ids);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      
+      return NextResponse.json({ success: true, data, count: data?.length || 0 });
+    }
+    
     // 单条智能标注
     // 获取航迹数据
     let trajData = trajectoryData;
