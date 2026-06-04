@@ -1,26 +1,104 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// CSV解析函数
+// CSV解析函数 - 支持带引号的字段和字段内逗号
 function parseCSV(csvText: string): Record<string, string>[] {
-  const lines = csvText.trim().split('\n');
-  if (lines.length < 2) return [];
+  // 移除BOM标记
+  const text = csvText.replace(/^\uFEFF/, '');
+  const lines: string[] = [];
+  
+  // 解析CSV行，处理带引号的字段
+  let currentLine = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+    
+    if (char === '"' && !inQuotes) {
+      inQuotes = true;
+    } else if (char === '"' && inQuotes) {
+      if (nextChar === '"') {
+        // 双引号转义
+        currentLine += '"';
+        i++;
+      } else {
+        inQuotes = false;
+      }
+    } else if (char === '\n' && !inQuotes) {
+      if (currentLine.trim()) {
+        lines.push(currentLine.trim());
+      }
+      currentLine = '';
+    } else if (char === '\r') {
+      // 忽略回车符
+      continue;
+    } else {
+      currentLine += char;
+    }
+  }
+  
+  // 添加最后一行
+  if (currentLine.trim()) {
+    lines.push(currentLine.trim());
+  }
+  
+  if (lines.length < 2) {
+    console.log('CSV解析: 行数不足', lines.length);
+    return [];
+  }
+  
+  // 解析一行CSV
+  const parseLine = (line: string): string[] => {
+    const values: string[] = [];
+    let currentValue = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const nextChar = line[i + 1];
+      
+      if (char === '"' && !inQuotes) {
+        inQuotes = true;
+      } else if (char === '"' && inQuotes) {
+        if (nextChar === '"') {
+          currentValue += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else if (char === ',' && !inQuotes) {
+        values.push(currentValue.trim());
+        currentValue = '';
+      } else {
+        currentValue += char;
+      }
+    }
+    
+    // 添加最后一个值
+    values.push(currentValue.trim());
+    return values;
+  };
   
   // 解析表头
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^\uFEFF/, '')); // 移除BOM
+  const headers = parseLine(lines[0]).map(h => h.trim());
+  console.log('CSV解析: 表头', headers);
   
   // 解析数据行
   const items: Record<string, string>[] = [];
   for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(',');
-    if (values.length >= headers.length) {
+    const values = parseLine(lines[i]);
+    if (values.length > 0) {
       const item: Record<string, string> = {};
       headers.forEach((header, index) => {
-        item[header] = values[index]?.trim() || '';
+        if (header) {
+          item[header] = values[index]?.trim() || '';
+        }
       });
       items.push(item);
     }
   }
   
+  console.log('CSV解析: 数据行数', items.length);
   return items;
 }
 
