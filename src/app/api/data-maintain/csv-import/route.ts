@@ -159,10 +159,19 @@ export async function POST(request: NextRequest) {
         vector_status: '未向量化'
       })).filter(item => item.port_code); // 过滤掉没有港口代码的记录
       
+      // 去重：同一port_code只保留最后一条（CSV中后面的覆盖前面的）
+      const uniqueItems = new Map<string, typeof portItems[0]>();
+      portItems.forEach(item => {
+        uniqueItems.set(item.port_code, item);
+      });
+      const dedupedItems = Array.from(uniqueItems.values());
+      
+      console.log(`CSV导入: 原始${portItems.length}条, 去重后${dedupedItems.length}条`);
+      
       // 批量插入，遇到重复则更新
       const { data, error } = await supabase
         .from('port_data')
-        .upsert(portItems, { onConflict: 'port_code' })
+        .upsert(dedupedItems, { onConflict: 'port_code' })
         .select();
       
       if (error) {
@@ -189,9 +198,19 @@ export async function POST(request: NextRequest) {
         vector_status: '未向量化'
       })).filter(item => item.orig_port && item.dest_port);
       
+      // 去重：同一orig_port+dest_port组合只保留最后一条
+      const uniqueItems = new Map<string, typeof routeItems[0]>();
+      routeItems.forEach(item => {
+        const key = `${item.orig_port}-${item.dest_port}`;
+        uniqueItems.set(key, item);
+      });
+      const dedupedItems = Array.from(uniqueItems.values());
+      
+      console.log(`CSV导入: 原始${routeItems.length}条, 去重后${dedupedItems.length}条`);
+      
       const { data, error } = await supabase
         .from('route_data')
-        .upsert(routeItems, { onConflict: 'orig_port,dest_port' })
+        .upsert(dedupedItems, { onConflict: 'orig_port,dest_port' })
         .select();
       
       if (error) {
