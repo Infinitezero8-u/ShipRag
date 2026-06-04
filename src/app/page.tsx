@@ -324,19 +324,29 @@ export default function RagPage() {
   const handleCancelAll = async () => {
     if (!confirm('确定要删除所有待向量化的条目吗？')) return;
     try {
+      console.log('[全部取消] 开始执行...');
       const res = await fetch('/api/embed', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clearAll: true }),
       });
       const data = await res.json();
-      alert(`已删除 ${data.deleted} 条待处理条目`);
-      fetchEmbedStatus();
-      if (expandedSection === 'pending') {
-        fetchDetailItems('pending');
+      console.log('[全部取消] 响应:', data);
+      
+      if (data.success) {
+        alert(`已删除 ${data.deleted} 条待处理条目`);
+        // 强制刷新状态
+        await fetchEmbedStatus();
+        // 如果当前展开的是待处理列表，也刷新它
+        if (expandedSection === 'pending') {
+          await fetchDetailItems('pending');
+        }
+      } else {
+        alert(`删除失败: ${data.error || '未知错误'}`);
       }
     } catch (error) {
-      alert('取消失败');
+      console.error('[全部取消] 错误:', error);
+      alert('取消失败: ' + (error instanceof Error ? error.message : '网络错误'));
     }
   };
 

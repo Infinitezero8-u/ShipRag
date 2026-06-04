@@ -348,19 +348,33 @@ export async function DELETE(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const { ids, clearAll } = body;
 
+    console.log('[DELETE] 收到请求:', { clearAll, idsCount: ids?.length });
+
     const supabase = getSupabaseClient();
 
     let deletedCount = 0;
 
     if (clearAll) {
-      // 删除所有待向量化的条目
+      // 先查询待删除数量
+      const { count: pendingCount } = await supabase
+        .from('knowledge_items')
+        .select('*', { count: 'exact', head: true })
+        .is('embedding', null);
+      
+      console.log('[DELETE] 待删除条目数:', pendingCount);
+
+      // 删除所有待向量化的条目（embedding 为 null）
       const { count, error } = await supabase
         .from('knowledge_items')
         .delete({ count: 'exact' })
         .is('embedding', null);
 
-      if (error) throw error;
+      if (error) {
+        console.error('[DELETE] 删除失败:', error);
+        throw error;
+      }
       deletedCount = count || 0;
+      console.log('[DELETE] 已删除:', deletedCount);
     } else if (ids && Array.isArray(ids) && ids.length > 0) {
       // 删除指定的条目
       const { count, error } = await supabase
@@ -368,8 +382,14 @@ export async function DELETE(request: NextRequest) {
         .delete({ count: 'exact' })
         .in('id', ids);
 
-      if (error) throw error;
+      if (error) {
+        console.error('[DELETE] 删除指定条目失败:', error);
+        throw error;
+      }
       deletedCount = count || 0;
+      console.log('[DELETE] 已删除指定条目:', deletedCount);
+    } else {
+      console.log('[DELETE] 无操作: clearAll=false 且未提供ids');
     }
 
     return NextResponse.json({
