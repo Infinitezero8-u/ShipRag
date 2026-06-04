@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,8 +8,31 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Plus, Edit2, Trash2, Eye, Database, Search, Upload, 
   CheckCircle, XCircle, Clock, FileText, Route, Anchor, BookOpen, ExternalLink,
-  Layers, Zap
+  Layers, Zap, Map as MapIcon
 } from 'lucide-react';
+import dynamic from 'next/dynamic';
+
+// 动态导入地图组件（避免SSR问题）
+const MapContainer = dynamic(
+  () => import('react-leaflet').then(mod => mod.MapContainer),
+  { ssr: false }
+);
+const TileLayer = dynamic(
+  () => import('react-leaflet').then(mod => mod.TileLayer),
+  { ssr: false }
+);
+const Marker = dynamic(
+  () => import('react-leaflet').then(mod => mod.Marker),
+  { ssr: false }
+);
+const Popup = dynamic(
+  () => import('react-leaflet').then(mod => mod.Popup),
+  { ssr: false }
+);
+const Polyline = dynamic(
+  () => import('react-leaflet').then(mod => mod.Polyline),
+  { ssr: false }
+);
 
 interface PortData {
   id: string;
@@ -511,17 +534,11 @@ export function DataMaintainPanel() {
 
       {/* 预览弹窗 */}
       {showPreviewModal && selectedItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background p-4 rounded-lg max-w-2xl max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-medium">数据预览</h3>
-              <Button size="sm" variant="ghost" onClick={() => setShowPreviewModal(false)}>✕</Button>
-            </div>
-            <pre className="text-xs bg-muted p-2 rounded overflow-x-auto whitespace-pre-wrap">
-              {JSON.stringify(selectedItem, null, 2)}
-            </pre>
-          </div>
-        </div>
+        <PreviewModal 
+          item={selectedItem} 
+          type={activeTab as 'port' | 'route'}
+          onClose={() => setShowPreviewModal(false)} 
+        />
       )}
 
       {/* 新增弹窗 */}
@@ -1001,6 +1018,218 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
                 </Button>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// WKT解析函数：解析MULTILINESTRING格式
+function parseWKT(wkt: string): [number, number][][] {
+  if (!wkt || typeof wkt !== 'string') return [];
+  
+  // 匹配 MULTILINESTRING ((lon lat, lon lat, ...), (lon lat, ...))
+  const multilineMatch = wkt.match(/MULTILINESTRING\s*\(\s*\((.+?)\)\s*\)/i);
+  if (multilineMatch) {
+    const coordsStr = multilineMatch[1];
+    const coords = coordsStr.split(',').map(pair => {
+      const parts = pair.trim().split(/\s+/);
+      const lon = parseFloat(parts[0]);
+      const lat = parseFloat(parts[1]);
+      return [lon, lat] as [number, number];
+    }).filter(([lon, lat]) => !isNaN(lon) && !isNaN(lat));
+    return [coords];
+  }
+  
+  // 匹配 LINESTRING (lon lat, lon lat, ...)
+  const lineMatch = wkt.match(/LINESTRING\s*\((.+?)\)/i);
+  if (lineMatch) {
+    const coordsStr = lineMatch[1];
+    const coords = coordsStr.split(',').map(pair => {
+      const parts = pair.trim().split(/\s+/);
+      const lon = parseFloat(parts[0]);
+      const lat = parseFloat(parts[1]);
+      return [lon, lat] as [number, number];
+    }).filter(([lon, lat]) => !isNaN(lon) && !isNaN(lat));
+    return [coords];
+  }
+  
+  // 匹配多重线 MULTILINESTRING ((...), (...))
+  const multiMatch = wkt.match(/MULTILINESTRING\s*\(\s*(.+?)\s*\)/i);
+  if (multiMatch) {
+    const linesStr = multiMatch[1];
+    const lines: [number, number][][] = [];
+    // 使用正则匹配每个括号内的内容
+    const lineMatches = linesStr.match(/\([^()]+\)/g);
+    if (lineMatches) {
+      for (const lineMatch of lineMatches) {
+        const coordsStr = lineMatch.slice(1, -1); // 去掉括号
+        const coords = coordsStr.split(',').map(pair => {
+          const parts = pair.trim().split(/\s+/);
+          const lon = parseFloat(parts[0]);
+          const lat = parseFloat(parts[1]);
+          return [lon, lat] as [number, number];
+        }).filter(([lon, lat]) => !isNaN(lon) && !isNaN(lat));
+        if (coords.length > 0) lines.push(coords);
+      }
+    }
+    return lines;
+  }
+  
+  return [];
+}
+
+// 预览弹窗组件（带Tab切换和海图显示）
+function PreviewModal({ item, type, onClose }: {
+  item: PortData | RouteData;
+  type: 'port' | 'route';
+  onClose: () => void;
+}) {
+  const [previewTab, setPreviewTab] = useState<'content' | 'map'>('content');
+  const [isClient, setIsClient] = useState(false);
+  
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  // 判断是否有有效的坐标数据
+  const hasCoordinates = useMemo(() => {
+    if (type === 'port') {
+      const port = item as PortData;
+      return !isNaN(port.lon) && !isNaN(port.lat) && 
+             port.lon !== 0 && port.lat !== 0;
+    } else {
+      const route = item as RouteData;
+      const lines = parseWKT(route.geometry_wkt || '');
+      return lines.length > 0 && lines.some(line => line.length > 0);
+    }
+  }, [item, type]);
+
+  // 获取地图中心点
+  const mapCenter = useMemo((): [number, number] => {
+    if (type === 'port') {
+      const port = item as PortData;
+      return [port.lat || 0, port.lon || 0];
+    } else {
+      const route = item as RouteData;
+      const lines = parseWKT(route.geometry_wkt || '');
+      if (lines.length > 0 && lines[0].length > 0) {
+        // 计算所有点的中心
+        const allPoints = lines.flat();
+        const avgLat = allPoints.reduce((sum, [_, lat]) => sum + lat, 0) / allPoints.length;
+        const avgLon = allPoints.reduce((sum, [lon, _]) => sum + lon, 0) / allPoints.length;
+        return [avgLat, avgLon];
+      }
+      return [0, 0];
+    }
+  }, [item, type]);
+
+  // 解析航线
+  const routeLines = useMemo(() => {
+    if (type === 'route') {
+      return parseWKT((item as RouteData).geometry_wkt || '');
+    }
+    return [];
+  }, [item, type]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-background p-4 rounded-lg max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-medium">
+              {type === 'port' ? '港口预览' : '航线预览'}
+            </h3>
+            <Tabs value={previewTab} onValueChange={(v) => setPreviewTab(v as 'content' | 'map')}>
+              <TabsList className="h-6">
+                <TabsTrigger value="content" className="h-5 text-xs px-2">
+                  <FileText className="w-3 h-3 mr-1" />当前内容
+                </TabsTrigger>
+                <TabsTrigger value="map" className="h-5 text-xs px-2" disabled={!hasCoordinates}>
+                  <MapIcon className="w-3 h-3 mr-1" />预览海图
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
+        </div>
+        
+        <div className="flex-1 overflow-auto">
+          {previewTab === 'content' ? (
+            <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
+              {JSON.stringify(item, null, 2)}
+            </pre>
+          ) : (
+            <div className="h-[500px] rounded overflow-hidden border">
+              {isClient && hasCoordinates ? (
+                <MapContainer
+                  center={mapCenter}
+                  zoom={type === 'port' ? 8 : 4}
+                  style={{ height: '100%', width: '100%' }}
+                  scrollWheelZoom={true}
+                >
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  {type === 'port' && (
+                    <Marker position={mapCenter}>
+                      <Popup>
+                        <div className="text-xs">
+                          <div className="font-bold">{(item as PortData).name_cn}</div>
+                          <div>{(item as PortData).port_code}</div>
+                          <div>{(item as PortData).ctry_name_cn}</div>
+                          <div>经度: {(item as PortData).lon?.toFixed(4)}</div>
+                          <div>纬度: {(item as PortData).lat?.toFixed(4)}</div>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  )}
+                  {type === 'route' && routeLines.map((line, idx) => (
+                    <Polyline 
+                      key={idx}
+                      positions={line.map(([lon, lat]) => [lat, lon])}
+                      color={idx === 0 ? '#2563eb' : '#16a34a'}
+                      weight={3}
+                    />
+                  ))}
+                  {type === 'route' && routeLines.length > 0 && routeLines[0].length > 0 && (
+                    <>
+                      {/* 起点 */}
+                      <Marker position={[routeLines[0][0][1], routeLines[0][0][0]]}>
+                        <Popup>
+                          <div className="text-xs">
+                            <div className="font-bold text-green-600">起点</div>
+                            <div>{(item as RouteData).orig_port}</div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                      {/* 终点 */}
+                      <Marker position={[routeLines[0][routeLines[0].length - 1][1], routeLines[0][routeLines[0].length - 1][0]]}>
+                        <Popup>
+                          <div className="text-xs">
+                            <div className="font-bold text-red-600">终点</div>
+                            <div>{(item as RouteData).dest_port}</div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    </>
+                  )}
+                </MapContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                  {!hasCoordinates ? '暂无有效坐标数据' : '地图加载中...'}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        
+        {previewTab === 'map' && type === 'route' && (
+          <div className="mt-2 text-xs text-muted-foreground flex items-center gap-4">
+            <span>航线: {(item as RouteData).orig_port} → {(item as RouteData).dest_port}</span>
+            <span>航点数: {routeLines.flat().length}</span>
           </div>
         )}
       </div>
