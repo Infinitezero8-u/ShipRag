@@ -30,6 +30,9 @@ interface Workflow {
   updated_at: string;
 }
 
+// 默认工作流ID
+const DEFAULT_WORKFLOW_ID = 'default-rag-sql';
+
 // 默认工作流节点连线关系
 const DEFAULT_EDGES = [
   { from: 0, to: 1 }, // 用户输入 -> 分类Prompt
@@ -252,7 +255,7 @@ export default function WorkflowManagePage() {
     setFormData({ name: workflow.name, description: workflow.description || '' });
   };
   
-  const isDefaultWorkflow = (id: string) => id === DEFAULT_WORKFLOW.id;
+  const isDefaultWorkflow = (id: string) => id === DEFAULT_WORKFLOW_ID;
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -281,12 +284,12 @@ export default function WorkflowManagePage() {
           <div className="text-center py-8 text-slate-400 text-xs">加载中...</div>
         ) : (
           <div className="space-y-2">
-            {allWorkflows.map((wf) => {
+            {allWorkflows.map((wf, index) => {
               const isDefault = isDefaultWorkflow(wf.id);
               
               return (
                 <Card 
-                  key={wf.id} 
+                  key={wf.id || `workflow-${index}`} 
                   className={`transition-all duration-200 ${
                     wf.is_active 
                       ? 'border-blue-400/50 shadow-sm shadow-blue-100/50 bg-white' 
