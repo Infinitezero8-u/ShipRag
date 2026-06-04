@@ -1,5 +1,6 @@
 'use client';
 
+import AutoResearchPanel from '@/components/auto-research-panel';
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -388,12 +389,13 @@ export default function TrajectoryTrainingPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-5 mb-4">
+        <TabsList className="grid grid-cols-6 mb-4">
           <TabsTrigger value="dataset">数据集</TabsTrigger>
           <TabsTrigger value="augment">数据增强</TabsTrigger>
           <TabsTrigger value="train">模型训练</TabsTrigger>
           <TabsTrigger value="versions">版本管理</TabsTrigger>
           <TabsTrigger value="anomalies">异常样本</TabsTrigger>
+          <TabsTrigger value="autoresearch">自主调优</TabsTrigger>
         </TabsList>
 
         {/* 数据集管理 */}
@@ -902,6 +904,9 @@ export default function TrajectoryTrainingPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+        <TabsContent value="autoResearch">
+          <AutoResearchPanel />
         </TabsContent>
       </Tabs>
     </div>
