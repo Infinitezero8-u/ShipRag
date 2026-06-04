@@ -144,7 +144,17 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+    let id = searchParams.get('id');
+    
+    // 如果URL中没有id，尝试从body中获取
+    if (!id) {
+      try {
+        const body = await request.json();
+        id = body.id;
+      } catch {
+        // body解析失败，忽略
+      }
+    }
     
     if (!id) {
       return NextResponse.json({ error: '缺少工作流ID' }, { status: 400 });

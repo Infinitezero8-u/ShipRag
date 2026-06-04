@@ -439,8 +439,27 @@ function WorkflowEditor() {
         loadedNodes = createDefaultNodes();
       }
       
-      if (data.edges && Array.isArray(data.edges)) {
+      if (data.edges && Array.isArray(data.edges) && data.edges.length > 0) {
         loadedEdges = data.edges;
+      } else {
+        // 如果没有连线，根据节点自动生成连线
+        const nodeIds = loadedNodes.map(n => n.id);
+        if (nodeIds.length >= 2) {
+          // 找到输入和输出节点
+          const inputNode = loadedNodes.find(n => n.data?.type === 'chatInput');
+          const outputNode = loadedNodes.find(n => n.data?.type === 'mergeOutput');
+          if (inputNode && outputNode) {
+            loadedEdges = [{
+              id: 'e-input-output',
+              source: inputNode.id,
+              sourceHandle: 'source',
+              target: outputNode.id,
+              targetHandle: 'target',
+              style: { stroke: '#94a3b8' },
+              type: 'smoothstep'
+            }];
+          }
+        }
       }
       
       setNodes(loadedNodes);
