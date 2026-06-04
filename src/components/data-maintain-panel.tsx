@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -687,7 +687,7 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [importMode, setImportMode] = useState<'json' | 'csv'>('csv');
-  const [fileInputRef, setFileInputRef] = useState<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // CSV文件上传处理
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -808,14 +808,14 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
             </div>
             <div className="border-2 border-dashed rounded-lg p-6 text-center">
               <input
-                ref={(el) => { if (el) setFileInputRef(el); }}
+                ref={fileInputRef}
                 type="file"
                 accept=".csv"
                 onChange={handleFileUpload}
                 className="hidden"
               />
               <Button 
-                onClick={() => fileInputRef?.click()}
+                onClick={() => fileInputRef.current?.click()}
                 disabled={loading}
                 className="mb-2"
               >
@@ -823,7 +823,7 @@ function BatchImportModal({ type, onClose, onSuccess, setMessage }: {
                 {loading ? '导入中...' : '选择CSV文件'}
               </Button>
               <p className="text-xs text-muted-foreground mt-2">
-                点击按钮选择CSV文件，或直接拖拽文件到此区域
+                点击按钮选择CSV文件上传
               </p>
             </div>
           </div>
