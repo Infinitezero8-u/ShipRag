@@ -346,56 +346,125 @@ export async function GET(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { ids, clearAll } = body;
+    const { ids, clearAll, singleId } = body;
 
-    console.log('[DELETE] 收到请求:', { clearAll, idsCount: ids?.length });
+    console.log('[DELETE] 收到请求:', { clearAll, singleId, idsCount: ids?.length });
 
     const supabase = getSupabaseClient();
 
     let deletedCount = 0;
 
-    if (clearAll) {
-      // 先查询待删除数量
-      const { count: pendingCount } = await supabase
+    // 单条取消（仅取消待向量化条目，不影响已向量化的）
+    if (singleId) {
+      // 先检查该条目是否为待向量化状态
+      const { data: item, error: checkError } = await supabase
+        .from('knowledge_items')
+        .select('id, embedding')
+        .eq('id', singleId)
+        .single();
+      
+      if (checkError) {
+        console.error('[DELETE] 查询条目失败:', checkError);
+        throw new Error('条目不存在');
+      }
+      
+      if (item.embedding !== null) {
+        throw new Error('该条目已向量化，无法取消');
+      }
+      
+      // 删除待向量化的条目
+      const { count, error } = await supabase
+        .from('knowledge_items')
+        .delete({ count: 'exact' })
+        .eq('id', singleId)
+        .is('embedding', null);
+
+      if (error) {
+        console.error('[DELETE] 单条删除失败:', error);
+        throw error;
+      }
+      deletedCount = count || 0;
+      console.log('[DELETE] 已删除单条:', deletedCount);
+    }
+    // 全部取消
+    else if (clearAll) {
+      // 先查询待删除数量（embedding为null的条目）
+      const { count: pendingCount, error: countError } = await supabase
         .from('knowledge_items')
         .select('*', { count: 'exact', head: true })
         .is('embedding', null);
       
+      if (countError) {
+        console.error('[DELETE] 查询待删除数量失败:', countError);
+        throw countError;
+      }
+      
       console.log('[DELETE] 待删除条目数:', pendingCount);
 
+      if (pendingCount === 0) {
+        return NextResponse.json({
+          success: true,
+          deleted: 0,
+          message: '没有待向量化的条目'
+        });
+      }
+
       // 删除所有待向量化的条目（embedding 为 null）
+      // 注意：不会删除已向量化的数据（embedding不为null的）
       const { count, error } = await supabase
         .from('knowledge_items')
         .delete({ count: 'exact' })
         .is('embedding', null);
 
       if (error) {
-        console.error('[DELETE] 删除失败:', error);
+        console.error('[DELETE] 批量删除失败:', error);
         throw error;
       }
       deletedCount = count || 0;
-      console.log('[DELETE] 已删除:', deletedCount);
-    } else if (ids && Array.isArray(ids) && ids.length > 0) {
-      // 删除指定的条目
+      console.log('[DELETE] 实际删除数量:', deletedCount);
+    } 
+    // 批量取消指定条目（仅删除待向量化的）
+    else if (ids && Array.isArray(ids) && ids.length > 0) {
+      // 仅删除待向量化的条目（embedding为null）
       const { count, error } = await supabase
         .from('knowledge_items')
         .delete({ count: 'exact' })
-        .in('id', ids);
+        .in('id', ids)
+        .is('embedding', null);  // 确保只删除未向量化的
 
       if (error) {
-        console.error('[DELETE] 删除指定条目失败:', error);
+        console.error('[DELETE] 批量删除指定条目失败:', error);
         throw error;
       }
       deletedCount = count || 0;
-      console.log('[DELETE] 已删除指定条目:', deletedCount);
+      console.log('[DELETE] 已删除指定待向量化条目:', deletedCount);
     } else {
-      console.log('[DELETE] 无操作: clearAll=false 且未提供ids');
+      console.log('[DELETE] 无操作: 未提供有效参数');
     }
+
+    // 重新查询统计，验证结果
+    const { count: newTotal } = await supabase
+      .from('knowledge_items')
+      .select('*', { count: 'exact', head: true });
+    
+    const { count: newEmbedded } = await supabase
+      .from('knowledge_items')
+      .select('*', { count: 'exact', head: true })
+      .not('embedding', 'is', null);
+    
+    const newPending = (newTotal || 0) - (newEmbedded || 0);
+    
+    console.log('[DELETE] 操作后统计:', { total: newTotal, embedded: newEmbedded, pending: newPending });
 
     return NextResponse.json({
       success: true,
       deleted: deletedCount,
-      message: `已删除 ${deletedCount} 条待向量化条目`
+      message: deletedCount > 0 ? `已删除 ${deletedCount} 条待向量化条目` : '没有待处理的条目',
+      stats: {
+        total: newTotal || 0,
+        embedded: newEmbedded || 0,
+        pending: newPending
+      }
     });
   } catch (error) {
     console.error('取消向量化失败:', error);
