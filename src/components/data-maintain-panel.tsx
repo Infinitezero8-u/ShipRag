@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Plus, Edit2, Trash2, Eye, Database, Search, Upload, 
-  CheckCircle, XCircle, Clock, FileText, Route, Anchor
+  CheckCircle, XCircle, Clock, FileText, Route, Anchor, BookOpen, ExternalLink
 } from 'lucide-react';
 
 interface PortData {
@@ -38,9 +38,10 @@ interface RouteData {
 }
 
 export function DataMaintainPanel() {
-  const [activeTab, setActiveTab] = useState<'port' | 'route'>('port');
+  const [activeTab, setActiveTab] = useState<'port' | 'route' | 'regulation'>('port');
   const [ports, setPorts] = useState<PortData[]>([]);
   const [routes, setRoutes] = useState<RouteData[]>([]);
+  const [regulations, setRegulations] = useState<{id: string; name: string; categories: string[]; is_valid: boolean; vector_status: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchCode, setSearchCode] = useState('');
   const [searchResults, setSearchResults] = useState<PortData[]>([]);
@@ -78,9 +79,22 @@ export function DataMaintainPanel() {
     setLoading(false);
   };
 
+  const loadRegulations = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/regulations?page=1&pageSize=50');
+      const data = await res.json();
+      setRegulations(data.items || []);
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
     if (activeTab === 'port') loadPorts();
-    else loadRoutes();
+    else if (activeTab === 'route') loadRoutes();
+    else loadRegulations();
   }, [activeTab]);
 
   // 编码检索
@@ -152,7 +166,7 @@ export function DataMaintainPanel() {
           <Database className="w-4 h-4" />
           <span className="text-sm font-medium">数据维护</span>
           <span className="text-xs text-muted-foreground">
-            港口: {ports.length} | 航线: {routes.length}
+            港口: {ports.length} | 航线: {routes.length} | 规章: {regulations.length}
           </span>
         </div>
         <div className="flex gap-1">
@@ -199,13 +213,16 @@ export function DataMaintainPanel() {
       )}
 
       {/* 数据Tab */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'port' | 'route')}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'port' | 'route' | 'regulation')}>
         <TabsList className="h-7">
           <TabsTrigger value="port" className="h-6 text-xs">
             <Anchor className="w-3 h-3 mr-1" />港口数据
           </TabsTrigger>
           <TabsTrigger value="route" className="h-6 text-xs">
             <Route className="w-3 h-3 mr-1" />航线数据
+          </TabsTrigger>
+          <TabsTrigger value="regulation" className="h-6 text-xs">
+            <BookOpen className="w-3 h-3 mr-1" />规章制度
           </TabsTrigger>
         </TabsList>
 
@@ -275,6 +292,63 @@ export function DataMaintainPanel() {
             )}
           </div>
         </TabsContent>
+
+        <TabsContent value="regulation" className="mt-2">
+          <div className="space-y-2">
+            {/* 快速跳转按钮 */}
+            <div className="flex gap-2">
+              <Button 
+                size="sm" 
+                variant="outline" 
+                className="h-7 text-xs flex-1"
+                onClick={() => window.location.href = '/regulations'}
+              >
+                <ExternalLink className="w-3 h-3 mr-1" />
+                打开规章制度管理
+              </Button>
+            </div>
+            
+            {/* 规章制度列表 */}
+            <div className="space-y-1 max-h-[350px] overflow-y-auto">
+              {loading ? (
+                <div className="text-xs text-center py-4 text-muted-foreground">加载中...</div>
+              ) : regulations.length === 0 ? (
+                <div className="text-xs text-center py-4 text-muted-foreground">
+                  暂无规章制度文档
+                  <div className="mt-2">
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="h-6 text-xs"
+                      onClick={() => window.location.href = '/regulations'}
+                    >
+                      前往上传
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                regulations.map((reg) => (
+                  <div key={reg.id} className="flex items-center justify-between p-2 bg-muted/20 rounded hover:bg-muted/40">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <StatusIcon status={reg.vector_status === 'success' ? '向量化成功' : reg.vector_status === 'failed' ? '向量化失败' : '未向量化'} />
+                      <span className="text-xs truncate flex-1">{reg.name}</span>
+                      <div className="flex gap-1 flex-shrink-0">
+                        {reg.categories.slice(0, 2).map((cat, i) => (
+                          <span key={i} className="text-[10px] px-1 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">
+                            {cat === 'maritime_rules' ? '海事' : cat === 'platform_ops' ? '运维' : cat === 'trajectory_annotation' ? '标注' : cat === 'model_training' ? '训练' : '其他'}
+                          </span>
+                        ))}
+                      </div>
+                      {!reg.is_valid && (
+                        <span className="text-[10px] px-1 py-0.5 bg-red-100 dark:bg-red-900 text-red-600 rounded">失效</span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </TabsContent>
       </Tabs>
 
       {/* 预览弹窗 */}
@@ -293,7 +367,7 @@ export function DataMaintainPanel() {
       )}
 
       {/* 新增弹窗 */}
-      {showAddModal && (
+      {showAddModal && (activeTab === 'port' || activeTab === 'route') && (
         <AddDataModal 
           type={activeTab} 
           onClose={() => setShowAddModal(false)} 
@@ -303,7 +377,7 @@ export function DataMaintainPanel() {
       )}
 
       {/* 编辑弹窗 */}
-      {showEditModal && selectedItem && (
+      {showEditModal && selectedItem && (activeTab === 'port' || activeTab === 'route') && (
         <EditDataModal 
           type={activeTab} 
           data={selectedItem as unknown as Record<string, unknown>}
@@ -314,7 +388,7 @@ export function DataMaintainPanel() {
       )}
 
       {/* 批量导入弹窗 */}
-      {showBatchModal && (
+      {showBatchModal && (activeTab === 'port' || activeTab === 'route') && (
         <BatchImportModal 
           type={activeTab}
           onClose={() => setShowBatchModal(false)}
