@@ -49,8 +49,8 @@ function SeaChartEmbed() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        // 加载港口数据
-        const portsRes = await fetch('/api/data-maintain?action=list&type=port&limit=500');
+        // 加载港口数据（全部）
+        const portsRes = await fetch('/api/data-maintain?action=list&type=port&limit=10000');
         const portsData = await portsRes.json();
         if (portsData.success && portsData.data) {
           const mappedPorts = portsData.data.map((p: {port_code: string; name_cn: string; lat: number; lon: number; ctry_name_cn?: string; ctry_code?: string}) => ({
@@ -64,8 +64,8 @@ function SeaChartEmbed() {
           setPorts(mappedPorts);
         }
 
-        // 加载航线数据
-        const routesRes = await fetch('/api/data-maintain?action=list&type=route&limit=100');
+        // 加载航线数据（全部）
+        const routesRes = await fetch('/api/data-maintain?action=list&type=route&limit=10000');
         const routesData = await routesRes.json();
         if (routesData.success && routesData.data) {
           const mappedRoutes = routesData.data
