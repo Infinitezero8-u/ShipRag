@@ -602,7 +602,7 @@ export default function RagPage() {
               
               <Card 
                 className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => window.location.href = '/regulations'}
+                onClick={() => window.location.href = '/?tab=data-maintain'}
               >
                 <CardContent className="p-6 flex items-center gap-4">
                   <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center">

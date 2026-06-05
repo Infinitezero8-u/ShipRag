@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { 
   Plus, Edit2, Trash2, Eye, Database, Search, Upload, 
   CheckCircle, XCircle, Clock, FileText, Route, Anchor, BookOpen, ExternalLink,
@@ -128,6 +130,16 @@ export function DataMaintainPanel() {
   const [selectedRegulationChunks, setSelectedRegulationChunks] = useState<RegulationChunk[]>([]);
   // 规章制度编辑弹窗
   const [showRegEditModal, setShowRegEditModal] = useState(false);
+  const [showRegUploadModal, setShowRegUploadModal] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadForm, setUploadForm] = useState({
+    file: null as File | null,
+    category: '',
+    is_valid: true,
+    version: '',
+    publisher: '',
+    description: ''
+  });
 
   // 加载数据（支持大数据集）
   const loadPorts = async () => {
@@ -729,7 +741,7 @@ export function DataMaintainPanel() {
                 size="sm"
                 variant="outline"
                 className="h-6 text-[10px]"
-                onClick={() => window.location.href = '/regulations'}
+                onClick={() => setShowRegUploadModal(true)}
               >
                 <Upload className="w-3 h-3 mr-1" />上传文档
               </Button>
@@ -752,9 +764,9 @@ export function DataMaintainPanel() {
                       size="sm" 
                       variant="outline" 
                       className="h-6 text-xs"
-                      onClick={() => window.location.href = '/regulations'}
+                      onClick={() => setShowRegUploadModal(true)}
                     >
-                      前往上传
+                      上传文档
                     </Button>
                   </div>
                 </div>
@@ -854,6 +866,83 @@ export function DataMaintainPanel() {
           onSuccess={() => { setShowRegEditModal(false); loadRegulations(); setMessage(''); }}
           setMessage={setMessage}
         />
+      )}
+
+      {/* 规章制度上传弹窗 */}
+      {showRegUploadModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" onClick={() => setShowRegUploadModal(false)}>
+          <div className="bg-background rounded-lg w-full max-w-lg p-4" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-medium">上传规章制度文档</h3>
+              <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setShowRegUploadModal(false)}>✕</Button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-muted-foreground">选择文件 (PDF/Word/TXT/MD)</label>
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt,.md"
+                  className="w-full text-xs mt-1"
+                  onChange={(e) => setUploadForm({ ...uploadForm, file: e.target.files?.[0] || null })}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">分类 *</label>
+                <Select value={uploadForm.category} onValueChange={(v) => setUploadForm({ ...uploadForm, category: v })}>
+                  <SelectTrigger className="h-8 mt-1"><SelectValue placeholder="选择分类" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="海事规章制度">海事规章制度</SelectItem>
+                    <SelectItem value="平台运维规范">平台运维规范</SelectItem>
+                    <SelectItem value="航迹标注准则">航迹标注准则</SelectItem>
+                    <SelectItem value="模型训练管理办法">模型训练管理办法</SelectItem>
+                    <SelectItem value="其他资料">其他资料</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" checked={uploadForm.is_valid} onChange={(e) => setUploadForm({ ...uploadForm, is_valid: e.target.checked })} />
+                <label className="text-xs">生效状态</label>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input placeholder="版本号" className="h-8 text-xs px-2 border rounded" value={uploadForm.version} onChange={(e) => setUploadForm({ ...uploadForm, version: e.target.value })} />
+                <input placeholder="发布机构" className="h-8 text-xs px-2 border rounded" value={uploadForm.publisher} onChange={(e) => setUploadForm({ ...uploadForm, publisher: e.target.value })} />
+              </div>
+              <textarea placeholder="描述说明" className="w-full h-16 text-xs p-2 border rounded resize-none" value={uploadForm.description} onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })} />
+              <Button
+                className="w-full h-8"
+                disabled={!uploadForm.file || !uploadForm.category || uploadingFile}
+                onClick={async () => {
+                  if (!uploadForm.file || !uploadForm.category) return;
+                  setUploadingFile(true);
+                  const formData = new FormData();
+                  formData.append('file', uploadForm.file);
+                  formData.append('category', uploadForm.category);
+                  formData.append('is_valid', String(uploadForm.is_valid));
+                  if (uploadForm.version) formData.append('version', uploadForm.version);
+                  if (uploadForm.publisher) formData.append('publisher', uploadForm.publisher);
+                  if (uploadForm.description) formData.append('description', uploadForm.description);
+                  try {
+                    const res = await fetch('/api/regulations', { method: 'POST', body: formData });
+                    const data = await res.json();
+                    if (data.success) {
+                      setMessage(`✅ 上传成功: ${data.inserted} 条记录`);
+                      setShowRegUploadModal(false);
+                      setUploadForm({ file: null, category: '', is_valid: true, version: '', publisher: '', description: '' });
+                      loadRegulations();
+                    } else {
+                      setMessage(`❌ 上传失败: ${data.error}`);
+                    }
+                  } catch (err) {
+                    setMessage(`❌ 上传失败: ${err}`);
+                  }
+                  setUploadingFile(false);
+                }}
+              >
+                {uploadingFile ? '上传中...' : '上传'}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 新增弹窗 */}
@@ -1817,7 +1906,6 @@ function PreviewModal({ item, type, onClose }: {
   type: 'port' | 'route';
   onClose: () => void;
 }) {
-  const [previewTab, setPreviewTab] = useState<'content' | 'map'>('content');
   const [isClient, setIsClient] = useState(false);
   
   useEffect(() => {
@@ -1828,8 +1916,9 @@ function PreviewModal({ item, type, onClose }: {
   const hasCoordinates = useMemo(() => {
     if (type === 'port') {
       const port = item as PortData;
-      return !isNaN(port.lon) && !isNaN(port.lat) && 
-             port.lon !== 0 && port.lat !== 0;
+      const lon = Number(port.lon);
+      const lat = Number(port.lat);
+      return !isNaN(lon) && !isNaN(lat) && lon !== 0 && lat !== 0;
     } else {
       const route = item as RouteData;
       const lines = parseWKT(route.geometry_wkt || '');
@@ -1841,12 +1930,11 @@ function PreviewModal({ item, type, onClose }: {
   const mapCenter = useMemo((): [number, number] => {
     if (type === 'port') {
       const port = item as PortData;
-      return [port.lat || 0, port.lon || 0];
+      return [Number(port.lat) || 0, Number(port.lon) || 0];
     } else {
       const route = item as RouteData;
       const lines = parseWKT(route.geometry_wkt || '');
       if (lines.length > 0 && lines[0].length > 0) {
-        // 计算所有点的中心
         const allPoints = lines.flat();
         const avgLat = allPoints.reduce((sum, [_, lat]) => sum + lat, 0) / allPoints.length;
         const avgLon = allPoints.reduce((sum, [lon, _]) => sum + lon, 0) / allPoints.length;
@@ -1864,105 +1952,116 @@ function PreviewModal({ item, type, onClose }: {
     return [];
   }, [item, type]);
 
+  const port = type === 'port' ? (item as PortData) : null;
+  const route = type === 'route' ? (item as RouteData) : null;
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]" onClick={onClose}>
-      <div className="bg-background p-4 rounded-lg w-[800px] max-w-[95vw] max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-3 pb-2 border-b">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-medium">
-              {type === 'port' ? '港口预览' : '航线预览'}
-            </h3>
-            <Tabs value={previewTab} onValueChange={(v) => setPreviewTab(v as 'content' | 'map')}>
-              <TabsList className="h-6">
-                <TabsTrigger value="content" className="h-5 text-xs px-2">
-                  <FileText className="w-3 h-3 mr-1" />当前内容
-                </TabsTrigger>
-                <TabsTrigger value="map" className="h-5 text-xs px-2" disabled={!hasCoordinates}>
-                  <MapIcon className="w-3 h-3 mr-1" />预览海图
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-          <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" onClick={onClose}>
+      <div className="bg-background rounded-lg w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        {/* 标题栏 */}
+        <div className="flex justify-between items-center p-3 border-b bg-muted/30">
+          <h3 className="font-medium text-sm">
+            {type === 'port' ? `港口: ${port?.name_cn || port?.port_code}` : `航线: ${route?.orig_port} → ${route?.dest_port}`}
+          </h3>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={onClose}>✕</Button>
         </div>
         
-        <div className="flex-1 overflow-auto min-h-[400px]">
-          {previewTab === 'content' ? (
-            <div className="bg-muted p-3 rounded">
-              <pre className="text-xs overflow-x-auto whitespace-pre-wrap">{JSON.stringify(item, null, 2)}</pre>
-            </div>
-          ) : (
-            <div className="h-[500px] rounded overflow-hidden border">
-              {isClient && hasCoordinates ? (
-                <MapContainer
-                  center={mapCenter}
-                  zoom={type === 'port' ? 8 : 4}
-                  style={{ height: '100%', width: '100%' }}
-                  scrollWheelZoom={true}
-                >
-                  <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
-                  {type === 'port' && (
+        <div className="flex-1 overflow-auto p-3">
+          {type === 'port' && port ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* 基本信息 */}
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">港口代码:</span> <span className="font-medium">{port.port_code}</span></div>
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">中文名:</span> <span className="font-medium">{port.name_cn || '-'}</span></div>
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">国家:</span> <span className="font-medium">{port.ctry_name_cn || '-'}</span></div>
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">大洲:</span> <span className="font-medium">{port.continent_name_cn || '-'}</span></div>
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">经度:</span> <span className="font-medium">{Number(port.lon)?.toFixed(4) || '-'}</span></div>
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">纬度:</span> <span className="font-medium">{Number(port.lat)?.toFixed(4) || '-'}</span></div>
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">港口类型:</span> <span className="font-medium">{port.port_type || '-'}</span></div>
+                  <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">时区偏移:</span> <span className="font-medium">{port.tz_offset || '-'}</span></div>
+                  <div className="bg-muted p-2 rounded col-span-2"><span className="text-muted-foreground">向量化状态:</span> <Badge variant={port.vector_status === '已向量化' ? 'default' : 'secondary'} className="ml-1">{port.vector_status || '未向量化'}</Badge></div>
+                </div>
+              </div>
+              {/* 海图 */}
+              <div className="h-[300px] rounded overflow-hidden border bg-muted">
+                {isClient && hasCoordinates ? (
+                  <MapContainer
+                    center={mapCenter}
+                    zoom={8}
+                    style={{ height: '100%', width: '100%' }}
+                    scrollWheelZoom={true}
+                  >
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
                     <Marker position={mapCenter}>
                       <Popup>
                         <div className="text-xs">
-                          <div className="font-bold">{(item as PortData).name_cn}</div>
-                          <div>{(item as PortData).port_code}</div>
-                          <div>{(item as PortData).ctry_name_cn}</div>
-                          <div>经度: {(item as PortData).lon?.toFixed(4)}</div>
-                          <div>纬度: {(item as PortData).lat?.toFixed(4)}</div>
+                          <div className="font-bold">{port.name_cn}</div>
+                          <div>{port.port_code}</div>
                         </div>
                       </Popup>
                     </Marker>
-                  )}
-                  {type === 'route' && routeLines.map((line, idx) => (
-                    <Polyline 
-                      key={idx}
-                      positions={line.map(([lon, lat]) => [lat, lon])}
-                      color={idx === 0 ? '#2563eb' : '#16a34a'}
-                      weight={3}
-                    />
-                  ))}
-                  {type === 'route' && routeLines.length > 0 && routeLines[0].length > 0 && (
-                    <>
-                      {/* 起点 */}
-                      <Marker position={[routeLines[0][0][1], routeLines[0][0][0]]}>
-                        <Popup>
-                          <div className="text-xs">
-                            <div className="font-bold text-green-600">起点</div>
-                            <div>{(item as RouteData).orig_port}</div>
-                          </div>
-                        </Popup>
-                      </Marker>
-                      {/* 终点 */}
-                      <Marker position={[routeLines[0][routeLines[0].length - 1][1], routeLines[0][routeLines[0].length - 1][0]]}>
-                        <Popup>
-                          <div className="text-xs">
-                            <div className="font-bold text-red-600">终点</div>
-                            <div>{(item as RouteData).dest_port}</div>
-                          </div>
-                        </Popup>
-                      </Marker>
-                    </>
-                  )}
-                </MapContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                  {!hasCoordinates ? '暂无有效坐标数据' : '地图加载中...'}
-                </div>
-              )}
+                  </MapContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                    {!hasCoordinates ? '暂无有效坐标' : '加载中...'}
+                  </div>
+                )}
+              </div>
             </div>
-          )}
+          ) : route ? (
+            <div className="space-y-3">
+              {/* 航线基本信息 */}
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">起点:</span> <span className="font-medium">{route.orig_port}</span></div>
+                <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">终点:</span> <span className="font-medium">{route.dest_port}</span></div>
+                <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">航点数:</span> <span className="font-medium">{routeLines.flat().length}</span></div>
+                <div className="bg-muted p-2 rounded col-span-3"><span className="text-muted-foreground">向量化状态:</span> <Badge variant={route.vector_status === '已向量化' ? 'default' : 'secondary'} className="ml-1">{route.vector_status || '未向量化'}</Badge></div>
+              </div>
+              {/* 海图 */}
+              <div className="h-[350px] rounded overflow-hidden border bg-muted">
+                {isClient && hasCoordinates ? (
+                  <MapContainer
+                    center={mapCenter}
+                    zoom={4}
+                    style={{ height: '100%', width: '100%' }}
+                    scrollWheelZoom={true}
+                  >
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    {routeLines.map((line, idx) => (
+                      <Polyline 
+                        key={idx}
+                        positions={line.map(([lon, lat]) => [lat, lon])}
+                        color={idx === 0 ? '#2563eb' : '#16a34a'}
+                        weight={3}
+                      />
+                    ))}
+                    {routeLines.length > 0 && routeLines[0].length > 0 && (
+                      <>
+                        <Marker position={[routeLines[0][0][1], routeLines[0][0][0]]}>
+                          <Popup><div className="text-xs font-bold text-green-600">起点: {route.orig_port}</div></Popup>
+                        </Marker>
+                        <Marker position={[routeLines[0][routeLines[0].length - 1][1], routeLines[0][routeLines[0].length - 1][0]]}>
+                          <Popup><div className="text-xs font-bold text-red-600">终点: {route.dest_port}</div></Popup>
+                        </Marker>
+                      </>
+                    )}
+                  </MapContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                    {!hasCoordinates ? '暂无有效航线数据' : '加载中...'}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
-        
-        {previewTab === 'map' && type === 'route' && (
-          <div className="mt-2 text-xs text-muted-foreground flex items-center gap-4">
-            <span>航线: {(item as RouteData).orig_port} → {(item as RouteData).dest_port}</span>
-            <span>航点数: {routeLines.flat().length}</span>
-          </div>
-        )}
       </div>
     </div>
   );
