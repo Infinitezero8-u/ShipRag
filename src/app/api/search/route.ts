@@ -69,6 +69,51 @@ export async function POST(request: NextRequest) {
 
     // 应用过滤器
     let filteredResults = results || [];
+    
+    // 同时搜索port_data表中的向量化港口数据
+    try {
+      const { data: ports, error: portError } = await supabase
+        .from('port_data')
+        .select('id, port_code, name_cn, ctry_name_cn, lon, lat, embedding')
+        .not('embedding', 'is', null)
+        .limit(500);
+
+      if (!portError && ports && ports.length > 0) {
+        const portResults = ports
+          .map(port => {
+            // embedding可能是字符串格式，需要解析
+            let embedding = port.embedding as unknown as number[];
+            if (typeof port.embedding === 'string') {
+              try {
+                embedding = JSON.parse(port.embedding);
+              } catch (e) {
+                return null;
+              }
+            }
+            const similarity = cosineSimilarity(queryEmbedding, embedding);
+            return {
+              id: port.id,
+              modality: 'port',
+              title: port.name_cn || port.port_code,
+              content: `港口代码: ${port.port_code}, 中文名: ${port.name_cn}, 国家: ${port.ctry_name_cn}, 经度: ${port.lon}, 纬度: ${port.lat}`,
+              source: 'port_data',
+              similarity,
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null && item.similarity >= threshold)
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, Math.min(topK, 20));
+
+        // 合并结果
+        filteredResults = [...filteredResults, ...portResults] as typeof filteredResults;
+        // 重新排序
+        filteredResults.sort((a: { similarity?: number }, b: { similarity?: number }) => (b.similarity || 0) - (a.similarity || 0));
+        filteredResults = filteredResults.slice(0, topK);
+      }
+    } catch (e) {
+      console.error('搜索港口数据失败:', e);
+    }
+    
     if (filter && filteredResults.length > 0) {
       filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown>; tags?: string[] }) => {
         return Object.entries(filter).every(([key, value]) => {

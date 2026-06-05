@@ -893,7 +893,7 @@ export function DataMaintainPanel() {
                   <SelectTrigger className="h-8 mt-1">
                     <SelectValue placeholder="请选择分类" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" className="z-[200]">
                     <SelectItem value="海事规章制度">海事规章制度</SelectItem>
                     <SelectItem value="平台运维规范">平台运维规范</SelectItem>
                     <SelectItem value="航迹标注准则">航迹标注准则</SelectItem>
@@ -1904,6 +1904,154 @@ function parseWKT(wkt: string): [number, number][][] {
   return [];
 }
 
+// 航线预览带Tab切换组件
+function RoutePreviewWithTabs({ route, routeLines, hasCoordinates, isClient, mapCenter }: {
+  route: RouteData;
+  routeLines: [number, number][][];
+  hasCoordinates: boolean;
+  isClient: boolean;
+  mapCenter: [number, number];
+}) {
+  const [activeTab, setActiveTab] = useState<'info' | 'map'>('info');
+  const [mapBounds, setMapBounds] = useState<[[number, number], [number, number]] | null>(null);
+
+  // 计算航线的边界范围
+  useEffect(() => {
+    if (routeLines.length > 0) {
+      const allPoints = routeLines.flat();
+      if (allPoints.length > 0) {
+        const lats = allPoints.map(([_, lat]) => lat);
+        const lons = allPoints.map(([lon, _]) => lon);
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+        // 添加一点边距
+        const latPadding = (maxLat - minLat) * 0.1 || 1;
+        const lonPadding = (maxLon - minLon) * 0.1 || 1;
+        setMapBounds([
+          [minLat - latPadding, minLon - lonPadding],
+          [maxLat + latPadding, maxLon + lonPadding]
+        ]);
+      }
+    }
+  }, [routeLines]);
+
+  // 航迹点数据
+  const allPoints = routeLines.flat();
+  
+  return (
+    <div className="space-y-3">
+      {/* Tab切换 */}
+      <div className="flex gap-1 border-b pb-2">
+        <Button
+          size="sm"
+          variant={activeTab === 'info' ? 'default' : 'ghost'}
+          onClick={() => setActiveTab('info')}
+          className="h-7 text-xs"
+        >
+          航迹信息
+        </Button>
+        <Button
+          size="sm"
+          variant={activeTab === 'map' ? 'default' : 'ghost'}
+          onClick={() => setActiveTab('map')}
+          className="h-7 text-xs"
+        >
+          海图
+        </Button>
+      </div>
+
+      {activeTab === 'info' ? (
+        <>
+          {/* 航线基本信息 */}
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">起点:</span> <span className="font-medium">{route.orig_port}</span></div>
+            <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">终点:</span> <span className="font-medium">{route.dest_port}</span></div>
+            <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">航点数:</span> <span className="font-medium">{allPoints.length}</span></div>
+            <div className="bg-muted p-2 rounded col-span-3"><span className="text-muted-foreground">向量化状态:</span> <Badge variant={route.vector_status === '已向量化' ? 'default' : 'secondary'} className="ml-1">{route.vector_status || '未向量化'}</Badge></div>
+          </div>
+          
+          {/* 航迹点列表 */}
+          <div className="border rounded overflow-hidden">
+            <div className="bg-muted px-2 py-1 text-xs font-medium">航迹点列表</div>
+            <div className="max-h-[280px] overflow-y-auto">
+              {allPoints.length === 0 ? (
+                <div className="p-4 text-xs text-center text-muted-foreground">暂无航迹点数据</div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50 sticky top-0">
+                    <tr>
+                      <th className="px-2 py-1 text-left font-medium">序号</th>
+                      <th className="px-2 py-1 text-left font-medium">经度</th>
+                      <th className="px-2 py-1 text-left font-medium">纬度</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {allPoints.slice(0, 200).map(([lon, lat], idx) => (
+                      <tr key={idx} className="hover:bg-muted/30">
+                        <td className="px-2 py-1">{idx + 1}</td>
+                        <td className="px-2 py-1 font-mono">{lon.toFixed(4)}</td>
+                        <td className="px-2 py-1 font-mono">{lat.toFixed(4)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {allPoints.length > 200 && (
+                <div className="p-2 text-xs text-center text-muted-foreground bg-muted/30">
+                  仅显示前200个航迹点，共{allPoints.length}个
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      ) : (
+        /* 海图 */
+        <div className="h-[350px] rounded overflow-hidden border bg-muted">
+          {isClient && hasCoordinates ? (
+            <MapContainer
+              bounds={mapBounds || undefined}
+              center={mapBounds ? undefined : mapCenter}
+              zoom={mapBounds ? undefined : 4}
+              style={{ height: '100%', width: '100%' }}
+              scrollWheelZoom={true}
+            >
+              <TileLayer
+                attribution='&copy; 高德地图'
+                url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+                subdomains={['1', '2', '3', '4']}
+              />
+              {routeLines.map((line, idx) => (
+                <Polyline 
+                  key={idx}
+                  positions={line.map(([lon, lat]) => [lat, lon])}
+                  color={idx === 0 ? '#2563eb' : '#16a34a'}
+                  weight={3}
+                />
+              ))}
+              {routeLines.length > 0 && routeLines[0].length > 0 && (
+                <>
+                  <Marker position={[routeLines[0][0][1], routeLines[0][0][0]]}>
+                    <Popup><div className="text-xs font-bold text-green-600">起点: {route.orig_port}</div></Popup>
+                  </Marker>
+                  <Marker position={[routeLines[0][routeLines[0].length - 1][1], routeLines[0][routeLines[0].length - 1][0]]}>
+                    <Popup><div className="text-xs font-bold text-red-600">终点: {route.dest_port}</div></Popup>
+                  </Marker>
+                </>
+              )}
+            </MapContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+              {!hasCoordinates ? '暂无有效航线数据' : '加载中...'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 预览弹窗组件（带Tab切换和海图显示）
 function PreviewModal({ item, type, onClose }: {
   item: PortData | RouteData;
@@ -2018,54 +2166,7 @@ function PreviewModal({ item, type, onClose }: {
               </div>
             </div>
           ) : route ? (
-            <div className="space-y-3">
-              {/* 航线基本信息 */}
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">起点:</span> <span className="font-medium">{route.orig_port}</span></div>
-                <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">终点:</span> <span className="font-medium">{route.dest_port}</span></div>
-                <div className="bg-muted p-2 rounded"><span className="text-muted-foreground">航点数:</span> <span className="font-medium">{routeLines.flat().length}</span></div>
-                <div className="bg-muted p-2 rounded col-span-3"><span className="text-muted-foreground">向量化状态:</span> <Badge variant={route.vector_status === '已向量化' ? 'default' : 'secondary'} className="ml-1">{route.vector_status || '未向量化'}</Badge></div>
-              </div>
-              {/* 海图 */}
-              <div className="h-[350px] rounded overflow-hidden border bg-muted">
-                {isClient && hasCoordinates ? (
-                  <MapContainer
-                    center={mapCenter}
-                    zoom={4}
-                    style={{ height: '100%', width: '100%' }}
-                    scrollWheelZoom={true}
-                  >
-                    <TileLayer
-                      attribution='&copy; 高德地图'
-                      url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
-                      subdomains={['1', '2', '3', '4']}
-                    />
-                    {routeLines.map((line, idx) => (
-                      <Polyline 
-                        key={idx}
-                        positions={line.map(([lon, lat]) => [lat, lon])}
-                        color={idx === 0 ? '#2563eb' : '#16a34a'}
-                        weight={3}
-                      />
-                    ))}
-                    {routeLines.length > 0 && routeLines[0].length > 0 && (
-                      <>
-                        <Marker position={[routeLines[0][0][1], routeLines[0][0][0]]}>
-                          <Popup><div className="text-xs font-bold text-green-600">起点: {route.orig_port}</div></Popup>
-                        </Marker>
-                        <Marker position={[routeLines[0][routeLines[0].length - 1][1], routeLines[0][routeLines[0].length - 1][0]]}>
-                          <Popup><div className="text-xs font-bold text-red-600">终点: {route.dest_port}</div></Popup>
-                        </Marker>
-                      </>
-                    )}
-                  </MapContainer>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                    {!hasCoordinates ? '暂无有效航线数据' : '加载中...'}
-                  </div>
-                )}
-              </div>
-            </div>
+            <RoutePreviewWithTabs route={route} routeLines={routeLines} hasCoordinates={hasCoordinates} isClient={isClient} mapCenter={mapCenter} />
           ) : null}
         </div>
       </div>
