@@ -181,7 +181,7 @@ export function DataMaintainPanel() {
       const res = await fetch(`/api/data-maintain?action=list&type=route&pageSize=5000${keyword ? `&search=${encodeURIComponent(keyword)}` : ''}`);
       const data = await res.json();
       setRoutes(data.items || []);
-      setHasRouteSearched(!!keyword);
+      setHasRouteSearched(true); // 加载成功后显示数据
     } catch (e) {
       console.error(e);
     }
