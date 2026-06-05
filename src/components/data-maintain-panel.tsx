@@ -87,7 +87,7 @@ interface RegulationChunk {
 }
 
 export function DataMaintainPanel() {
-  const [activeTab, setActiveTab] = useState<'port' | 'route' | 'regulation' | 'chart'>('port');
+  const [activeTab, setActiveTab] = useState<'port' | 'route' | 'regulation' | 'chart' | 'tasks'>('port');
   const [ports, setPorts] = useState<PortData[]>([]);
   const [routes, setRoutes] = useState<RouteData[]>([]);
   const [regulations, setRegulations] = useState<RegulationData[]>([]);
@@ -449,46 +449,50 @@ export function DataMaintainPanel() {
   };
 
   return (
-    <div className="space-y-3">
-      {/* 标题和统计 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Database className="w-4 h-4" />
-          <span className="text-sm font-medium">数据维护</span>
-          <span className="text-xs text-muted-foreground">
-            港口: {ports.length} | 航线: {routes.length} | 规章: {regulations.length}
-          </span>
-        </div>
-        <div className="flex gap-1 flex-wrap">
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowBatchModal(true)} disabled={isVectorizing}>
-            <Upload className="w-3 h-3 mr-1" />批量导入
-          </Button>
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleBatchVectorize} disabled={isVectorizing}>
-            <Layers className="w-3 h-3 mr-1" />批量向量化
-          </Button>
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={handleVectorizeAll} disabled={isVectorizing}>
-            <Zap className="w-3 h-3 mr-1" />全部向量化
-          </Button>
-          {isVectorizing && (
-            <Button size="sm" variant="destructive" className="h-6 text-[10px]" onClick={handleCancelVectorize}>
-              <XCircle className="w-3 h-3 mr-1" />取消
-            </Button>
-          )}
-          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => setShowAddModal(true)} disabled={isVectorizing}>
-            <Plus className="w-3 h-3 mr-1" />新增
-          </Button>
-        </div>
+    <div className="space-y-2">
+      {/* 标题行 */}
+      <div className="flex items-center gap-2">
+        <Database className="w-4 h-4" />
+        <span className="text-sm font-medium">数据维护</span>
+      </div>
+      
+      {/* 统计信息 */}
+      <div className="flex gap-2 text-xs text-muted-foreground flex-wrap">
+        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">港口: {ports.length}</span>
+        <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900 rounded">航线: {routes.length}</span>
+        <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900 rounded">规章: {regulations.length}</span>
       </div>
 
-      {/* 编码检索 */}
+      {/* 操作按钮行 */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1">
+        <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => setShowBatchModal(true)} disabled={isVectorizing}>
+          <Upload className="w-3 h-3 mr-1" />批量导入
+        </Button>
+        <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={handleBatchVectorize} disabled={isVectorizing}>
+          <Layers className="w-3 h-3 mr-1" />批量向量化
+        </Button>
+        <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={handleVectorizeAll} disabled={isVectorizing}>
+          <Zap className="w-3 h-3 mr-1" />全部向量化
+        </Button>
+        {isVectorizing && (
+          <Button size="sm" variant="destructive" className="h-7 text-xs w-full" onClick={handleCancelVectorize}>
+            <XCircle className="w-3 h-3 mr-1" />取消
+          </Button>
+        )}
+        <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => setShowAddModal(true)} disabled={isVectorizing}>
+          <Plus className="w-3 h-3 mr-1" />新增
+        </Button>
+      </div>
+
+      {/* 检索行 */}
       <div className="flex gap-2">
         <Input 
           placeholder="输入港口代码或中文名检索..."
           value={searchCode}
           onChange={(e) => setSearchCode(e.target.value)}
-          className="h-7 text-xs"
+          className="h-7 text-xs flex-1"
         />
-        <Button size="sm" className="h-7 text-xs" onClick={handleSearch}>
+        <Button size="sm" className="h-7 text-xs px-3" onClick={handleSearch}>
           <Search className="w-3 h-3 mr-1" />检索
         </Button>
       </div>
@@ -514,22 +518,22 @@ export function DataMaintainPanel() {
       )}
 
       {/* 数据Tab */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'port' | 'route' | 'regulation' | 'chart')}>
-        <TabsList className="h-7">
-          <TabsTrigger value="port" className="h-6 text-xs">
-            <Anchor className="w-3 h-3 mr-1" />港口数据
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'port' | 'route' | 'regulation' | 'chart' | 'tasks')}>
+        <TabsList className="h-8 grid grid-cols-5 w-full">
+          <TabsTrigger value="port" className="h-7 text-xs px-1">
+            港口
           </TabsTrigger>
-          <TabsTrigger value="route" className="h-6 text-xs">
-            <Route className="w-3 h-3 mr-1" />航线数据
+          <TabsTrigger value="route" className="h-7 text-xs px-1">
+            航线
           </TabsTrigger>
-          <TabsTrigger value="regulation" className="h-6 text-xs">
-            <BookOpen className="w-3 h-3 mr-1" />规章制度
+          <TabsTrigger value="regulation" className="h-7 text-xs px-1">
+            规章
           </TabsTrigger>
-          <TabsTrigger value="chart" className="h-6 text-xs">
-            <BarChart3 className="w-3 h-3 mr-1" />海图统计
+          <TabsTrigger value="chart" className="h-7 text-xs px-1">
+            海图
           </TabsTrigger>
-          <TabsTrigger value="tasks" className="h-6 text-xs">
-            <Layers className="w-3 h-3 mr-1" />向量化任务
+          <TabsTrigger value="tasks" className="h-7 text-xs px-1">
+            任务
           </TabsTrigger>
         </TabsList>
 
@@ -541,38 +545,42 @@ export function DataMaintainPanel() {
               <div className="text-xs text-center py-4 text-muted-foreground">暂无数据</div>
             ) : (
               ports.map((port) => (
-                <div key={port.id} className="flex items-center justify-between p-2 bg-muted/20 rounded hover:bg-muted/40">
-                  <div className="flex items-center gap-2">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedPorts.includes(port.port_code)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedPorts([...selectedPorts, port.port_code]);
-                        } else {
-                          setSelectedPorts(selectedPorts.filter(p => p !== port.port_code));
-                        }
-                      }}
-                      className="w-3 h-3"
-                    />
-                    <StatusIcon status={port.vector_status} />
-                    <span className="text-xs font-mono">{port.port_code}</span>
-                    <span className="text-xs text-muted-foreground">{port.name_cn}</span>
-                    <span className="text-[10px] text-muted-foreground">({port.ctry_name_cn})</span>
+                <div key={port.id} className="p-2 bg-muted/20 rounded hover:bg-muted/40">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedPorts.includes(port.port_code)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedPorts([...selectedPorts, port.port_code]);
+                          } else {
+                            setSelectedPorts(selectedPorts.filter(p => p !== port.port_code));
+                          }
+                        }}
+                        className="w-3 h-3 flex-shrink-0"
+                      />
+                      <StatusIcon status={port.vector_status} />
+                      <span className="text-xs font-mono truncate">{port.port_code}</span>
+                      <span className="text-xs text-muted-foreground truncate">{port.name_cn}</span>
+                    </div>
+                    <div className="flex gap-0.5 flex-shrink-0 ml-1">
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => handlePreview('port', port.port_code)}>
+                        <Eye className="w-3 h-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => handleVectorize('port', port)}>
+                        <Database className="w-3 h-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { setSelectedItem(port); setShowEditModal(true); }}>
+                        <Edit2 className="w-3 h-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-500" onClick={() => handleDelete('port', port)}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => handlePreview('port', port.port_code)}>
-                      <Eye className="w-3 h-3" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => { setSelectedItem(port); setShowEditModal(true); }}>
-                      <Edit2 className="w-3 h-3" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => handleVectorize('port', port)}>
-                      <Database className="w-3 h-3" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-red-500" onClick={() => handleDelete('port', port)}>
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
+                  <div className="text-[10px] text-muted-foreground mt-0.5 ml-4">
+                    {port.ctry_name_cn} | {port.lon?.toFixed(2)}, {port.lat?.toFixed(2)}
                   </div>
                 </div>
               ))
@@ -588,35 +596,37 @@ export function DataMaintainPanel() {
               <div className="text-xs text-center py-4 text-muted-foreground">暂无数据</div>
             ) : (
               routes.map((route) => (
-                <div key={route.id} className="flex items-center justify-between p-2 bg-muted/20 rounded hover:bg-muted/40">
-                  <div className="flex items-center gap-2">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedRoutes.some(r => r.origPort === route.orig_port && r.destPort === route.dest_port)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedRoutes([...selectedRoutes, { origPort: route.orig_port, destPort: route.dest_port }]);
-                        } else {
-                          setSelectedRoutes(selectedRoutes.filter(r => !(r.origPort === route.orig_port && r.destPort === route.dest_port)));
-                        }
-                      }}
-                      className="w-3 h-3"
-                    />
-                    <StatusIcon status={route.vector_status} />
-                    <span className="text-xs font-mono">{route.orig_port}</span>
-                    <span className="text-xs">→</span>
-                    <span className="text-xs font-mono">{route.dest_port}</span>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => handlePreview('route', `${route.orig_port}-${route.dest_port}`)}>
-                      <Eye className="w-3 h-3" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => handleVectorize('route', route)}>
-                      <Database className="w-3 h-3" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-red-500" onClick={() => handleDelete('route', route)}>
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
+                <div key={route.id} className="p-2 bg-muted/20 rounded hover:bg-muted/40">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedRoutes.some(r => r.origPort === route.orig_port && r.destPort === route.dest_port)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedRoutes([...selectedRoutes, { origPort: route.orig_port, destPort: route.dest_port }]);
+                          } else {
+                            setSelectedRoutes(selectedRoutes.filter(r => !(r.origPort === route.orig_port && r.destPort === route.dest_port)));
+                          }
+                        }}
+                        className="w-3 h-3 flex-shrink-0"
+                      />
+                      <StatusIcon status={route.vector_status} />
+                      <span className="text-xs font-mono truncate">{route.orig_port}</span>
+                      <span className="text-xs">→</span>
+                      <span className="text-xs font-mono truncate">{route.dest_port}</span>
+                    </div>
+                    <div className="flex gap-0.5 flex-shrink-0 ml-1">
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => handlePreview('route', `${route.orig_port}-${route.dest_port}`)}>
+                        <Eye className="w-3 h-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => handleVectorize('route', route)}>
+                        <Database className="w-3 h-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-500" onClick={() => handleDelete('route', route)}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))

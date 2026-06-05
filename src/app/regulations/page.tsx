@@ -513,33 +513,33 @@ export default function RegulationsPage() {
                   className="w-64"
                 />
               </div>
-              <Select value={filterCategory} onValueChange={setFilterCategory}>
+              <Select value={filterCategory || "all"} onValueChange={(v) => setFilterCategory(v === "all" ? "" : v)}>
                 <SelectTrigger className="w-48">
                   <SelectValue placeholder="文档分类" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">全部分类</SelectItem>
+                  <SelectItem value="all">全部分类</SelectItem>
                   {CATEGORIES.map(cat => (
                     <SelectItem key={cat.key} value={cat.key}>{cat.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={filterIsValid} onValueChange={setFilterIsValid}>
+              <Select value={filterIsValid || "all"} onValueChange={(v) => setFilterIsValid(v === "all" ? "" : v)}>
                 <SelectTrigger className="w-32">
                   <SelectValue placeholder="生效状态" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">全部</SelectItem>
+                  <SelectItem value="all">全部</SelectItem>
                   <SelectItem value="true">生效</SelectItem>
                   <SelectItem value="false">失效</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={filterVectorStatus} onValueChange={setFilterVectorStatus}>
+              <Select value={filterVectorStatus || "all"} onValueChange={(v) => setFilterVectorStatus(v === "all" ? "" : v)}>
                 <SelectTrigger className="w-32">
                   <SelectValue placeholder="向量化状态" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">全部</SelectItem>
+                  <SelectItem value="all">全部</SelectItem>
                   <SelectItem value="pending">未向量化</SelectItem>
                   <SelectItem value="success">成功</SelectItem>
                   <SelectItem value="failed">失败</SelectItem>
