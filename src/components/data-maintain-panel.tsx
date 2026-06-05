@@ -109,7 +109,7 @@ export function DataMaintainPanel() {
   
   // 航线搜索状态（独立搜索）
   const [routeSearchCode, setRouteSearchCode] = useState('');
-  const [hasRouteSearched, setHasRouteSearched] = useState(false);
+  const [hasRouteSearched, setHasRouteSearched] = useState(true); // 默认显示数据
   
   // 分页状态
   const [pageSize, setPageSize] = useState<number>(20);
@@ -659,7 +659,7 @@ export function DataMaintainPanel() {
           <div className="flex gap-2 mb-2">
             <input
               type="text"
-              placeholder="输入起点/终点港口代码搜索..."
+              placeholder="输入起点/终点港口代码筛选..."
               className="flex-1 h-7 px-2 text-xs border rounded"
               value={routeSearchCode}
               onChange={(e) => setRouteSearchCode(e.target.value)}
@@ -675,17 +675,16 @@ export function DataMaintainPanel() {
               onClick={() => loadRoutes()}
               disabled={loading}
             >
-              <Search className="w-3 h-3 mr-1" />搜索
+              <Search className="w-3 h-3 mr-1" />筛选
             </Button>
-            {hasRouteSearched && (
+            {routeSearchCode && (
               <Button 
                 size="sm" 
                 variant="outline"
                 className="h-7 text-xs"
                 onClick={() => {
                   setRouteSearchCode('');
-                  setRoutes([]);
-                  setHasRouteSearched(false);
+                  loadRoutes('');
                 }}
               >
                 清空
@@ -693,20 +692,16 @@ export function DataMaintainPanel() {
             )}
           </div>
           
-          {/* 搜索结果 */}
-          {hasRouteSearched && (
-            <div className="text-xs text-muted-foreground mb-1">
-              搜索结果: {filteredRoutes.length} 条
-              {pageSize > 0 && `，第 ${currentPage}/${totalRoutePages} 页`}
-            </div>
-          )}
+          {/* 数据统计 */}
+          <div className="text-xs text-muted-foreground mb-1">
+            共 {filteredRoutes.length} 条航线
+            {pageSize > 0 && `，第 ${currentPage}/${totalRoutePages} 页`}
+          </div>
           <div className="space-y-1 max-h-[400px] overflow-y-auto">
             {loading ? (
               <div className="text-xs text-center py-4 text-muted-foreground">加载中...</div>
-            ) : !hasRouteSearched ? (
-              <div className="text-xs text-center py-4 text-muted-foreground">请输入关键词搜索航线</div>
             ) : filteredRoutes.length === 0 ? (
-              <div className="text-xs text-center py-4 text-muted-foreground">无匹配结果</div>
+              <div className="text-xs text-center py-4 text-muted-foreground">暂无航线数据</div>
             ) : (
               paginatedRoutes.map((route, idx) => {
                 const rowNum = pageSize === 0 ? idx + 1 : (currentPage - 1) * pageSize + idx + 1;

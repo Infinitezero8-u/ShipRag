@@ -28,6 +28,110 @@ import {
   Settings,
   Download
 } from 'lucide-react';
+import dynamic from 'next/dynamic';
+
+// 动态导入海图组件
+const SeaMapComponent = dynamic(() => import('@/app/sea-chart/SeaMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full w-full flex items-center justify-center bg-gray-100">
+      <div className="text-gray-500">加载地图中...</div>
+    </div>
+  ),
+});
+
+// 内嵌海图组件
+function SeaChartEmbed() {
+  const [ports, setPorts] = useState<{id: string; name: string; lat: number; lng: number; country?: string; ctryCode?: string}[]>([]);
+  const [routes, setRoutes] = useState<{id: string; coordinates: [number, number][]}[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        // 加载港口数据
+        const portsRes = await fetch('/api/data-maintain?action=list&type=port&limit=500');
+        const portsData = await portsRes.json();
+        if (portsData.success && portsData.data) {
+          const mappedPorts = portsData.data.map((p: {port_code: string; name_cn: string; lat: number; lon: number; ctry_name_cn?: string; ctry_code?: string}) => ({
+            id: p.port_code,
+            name: p.name_cn,
+            lat: p.lat,
+            lng: p.lon,
+            country: p.ctry_name_cn,
+            ctryCode: p.ctry_code,
+          })).filter((p: {lat: number; lng: number}) => p.lat && p.lng);
+          setPorts(mappedPorts);
+        }
+
+        // 加载航线数据
+        const routesRes = await fetch('/api/data-maintain?action=list&type=route&limit=100');
+        const routesData = await routesRes.json();
+        if (routesData.success && routesData.data) {
+          const mappedRoutes = routesData.data
+            .filter((r: {geometry_wkt?: string}) => r.geometry_wkt)
+            .map((r: {route_code: string; geometry_wkt: string}) => {
+              try {
+                const match = r.geometry_wkt.match(/LINESTRING\s*\((.*)\)/i);
+                if (match) {
+                  const coords = match[1].split(',').map((pair: string) => {
+                    const [lng, lat] = pair.trim().split(/\s+/).map(Number);
+                    return [lng, lat] as [number, number];
+                  });
+                  return { id: r.route_code, coordinates: coords };
+                }
+                return null;
+              } catch {
+                return null;
+              }
+            })
+            .filter(Boolean) as {id: string; coordinates: [number, number][]}[];
+          setRoutes(mappedRoutes);
+        }
+      } catch (error) {
+        console.error('加载海图数据失败:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-gray-100">
+        <div className="text-gray-500">加载数据中...</div>
+      </div>
+    );
+  }
+
+  return (
+    <SeaMapComponent
+      mapCenter={[20, 110]}
+      mapZoom={3}
+      showSeaMap={true}
+      showPorts={true}
+      showTrack={false}
+      showTrajectories={true}
+      allPorts={ports}
+      selectedCountries={['CN', 'US', 'OTHER']}
+      mockTrack={[]}
+      customTrack={[]}
+      trajectories={routes.map(r => ({
+        id: r.id,
+        segment_id: r.id,
+        start_port: null,
+        end_port: null,
+        wkt_route: null,
+        sea_area: null,
+        ai_description: null,
+        coordinates: r.coordinates,
+      }))}
+      selectedTrajectory={null}
+      onMapClick={() => {}}
+    />
+  );
+}
 
 type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory';
 
@@ -485,10 +589,6 @@ export default function RagPage() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
             首页
           </button>
-          <a href="/sea-chart" className="text-green-600 hover:text-green-800 flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
-            海图
-          </a>
           <a href="/workflow" className="text-purple-600 hover:text-purple-800 flex items-center gap-1">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
             工作流
@@ -515,6 +615,22 @@ export default function RagPage() {
                   <div className="flex-1">
                     <h3 className="font-semibold text-lg">💬 智能问答</h3>
                     <p className="text-sm text-muted-foreground">基于知识库的 RAG 智能问答</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
+              
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
+                onClick={() => { setShowHome(false); setActiveTab('sea-chart'); }}
+              >
+                <CardContent className="p-6 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-lg">🗺️ 海图显示</h3>
+                    <p className="text-sm text-muted-foreground">港口航线分布可视化</p>
                   </div>
                   <ChevronRight className="w-5 h-5 text-muted-foreground" />
                 </CardContent>
@@ -599,22 +715,6 @@ export default function RagPage() {
                   <ChevronRight className="w-5 h-5 text-muted-foreground" />
                 </CardContent>
               </Card>
-              
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => window.location.href = '/?tab=data-maintain'}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center">
-                    <svg className="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">📋 规章制度管理</h3>
-                    <p className="text-sm text-muted-foreground">海事规章制度文档管理与智能检索</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
             </div>
           </div>
         ) : (
@@ -629,11 +729,12 @@ export default function RagPage() {
               <ChevronLeft className="w-4 h-4 mr-1" />
               返回
             </Button>
-            <TabsList className="grid grid-cols-4 gap-1">
+            <TabsList className="grid grid-cols-5 gap-1">
               <TabsTrigger value="rag" className="text-xs">💬 问答</TabsTrigger>
               <TabsTrigger value="search" className="text-xs">🔍 检索</TabsTrigger>
               <TabsTrigger value="upload" className="text-xs">📤 上传</TabsTrigger>
               <TabsTrigger value="maintain" className="text-xs">🗄️ 维护</TabsTrigger>
+              <TabsTrigger value="sea-chart" className="text-xs">🗺️ 海图</TabsTrigger>
             </TabsList>
             <div className="w-16" /> {/* 占位 */}
           </div>
@@ -1154,6 +1255,20 @@ export default function RagPage() {
               </CardHeader>
               <CardContent>
                 <DataMaintainPanel />
+              </CardContent>
+            </Card>
+          </TabsContent>
+          
+          {/* 海图显示 */}
+          <TabsContent value="sea-chart">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">海图显示</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[600px] w-full rounded-lg overflow-hidden border">
+                  <SeaChartEmbed />
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
