@@ -140,6 +140,7 @@ export function DataMaintainPanel() {
     publisher: '',
     description: ''
   });
+  const [regCategory, setRegCategory] = useState('');
 
   // 加载数据（支持大数据集）
   const loadPorts = async () => {
@@ -888,7 +889,7 @@ export function DataMaintainPanel() {
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">分类 *</label>
-                <Select value={uploadForm.category} onValueChange={(v) => setUploadForm({ ...uploadForm, category: v })}>
+                <Select value={regCategory || undefined} onValueChange={(v) => setRegCategory(v)}>
                   <SelectTrigger className="h-8 mt-1"><SelectValue placeholder="选择分类" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="海事规章制度">海事规章制度</SelectItem>
@@ -910,13 +911,13 @@ export function DataMaintainPanel() {
               <textarea placeholder="描述说明" className="w-full h-16 text-xs p-2 border rounded resize-none" value={uploadForm.description} onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })} />
               <Button
                 className="w-full h-8"
-                disabled={!uploadForm.file || !uploadForm.category || uploadingFile}
+                disabled={!uploadForm.file || !regCategory || uploadingFile}
                 onClick={async () => {
-                  if (!uploadForm.file || !uploadForm.category) return;
+                  if (!uploadForm.file || !regCategory) return;
                   setUploadingFile(true);
                   const formData = new FormData();
                   formData.append('file', uploadForm.file);
-                  formData.append('category', uploadForm.category);
+                  formData.append('category', regCategory);
                   formData.append('is_valid', String(uploadForm.is_valid));
                   if (uploadForm.version) formData.append('version', uploadForm.version);
                   if (uploadForm.publisher) formData.append('publisher', uploadForm.publisher);
@@ -928,6 +929,7 @@ export function DataMaintainPanel() {
                       setMessage(`✅ 上传成功: ${data.inserted} 条记录`);
                       setShowRegUploadModal(false);
                       setUploadForm({ file: null, category: '', is_valid: true, version: '', publisher: '', description: '' });
+                      setRegCategory('');
                       loadRegulations();
                     } else {
                       setMessage(`❌ 上传失败: ${data.error}`);
@@ -1993,8 +1995,9 @@ function PreviewModal({ item, type, onClose }: {
                     scrollWheelZoom={true}
                   >
                     <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      attribution='&copy; 高德地图'
+                      url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+                      subdomains={['1', '2', '3', '4']}
                     />
                     <Marker position={mapCenter}>
                       <Popup>
@@ -2031,8 +2034,9 @@ function PreviewModal({ item, type, onClose }: {
                     scrollWheelZoom={true}
                   >
                     <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      attribution='&copy; 高德地图'
+                      url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+                      subdomains={['1', '2', '3', '4']}
                     />
                     {routeLines.map((line, idx) => (
                       <Polyline 

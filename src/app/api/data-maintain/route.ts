@@ -443,11 +443,13 @@ export async function POST(request: NextRequest) {
           if (updateError) throw updateError;
           return NextResponse.json({ success: true, message: '港口数据向量化成功' });
         } catch (embedError) {
+          console.error('向量化失败详情:', embedError);
           await supabase
             .from('port_data')
             .update({ vector_status: '向量化失败', updated_at: new Date().toISOString() })
             .eq('port_code', portCode);
-          return NextResponse.json({ error: `向量化失败: ${embedError instanceof Error ? embedError.message : String(embedError)}` }, { status: 500 });
+          const errorMsg = embedError instanceof Error ? embedError.message : JSON.stringify(embedError);
+          return NextResponse.json({ error: `向量化失败: ${errorMsg}` }, { status: 500 });
         }
       } else {
         const { OrigPort, DestPort } = body;

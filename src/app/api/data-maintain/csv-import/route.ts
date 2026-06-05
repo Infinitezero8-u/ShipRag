@@ -92,6 +92,12 @@ function parseCSV(csvText: string): Record<string, string>[] {
   for (let i = 1; i < lines.length; i++) {
     const values = parseLine(lines[i]);
     if (values.length > 0) {
+      // 调试：输出第一条数据的values
+      if (i === 1) {
+        console.error('CSV解析调试: 第一条数据values数量', values.length);
+        console.error('CSV解析调试: geometry_wkt字段值长度', values[2]?.length);
+        console.error('CSV解析调试: geometry_wkt前100字符', values[2]?.substring(0, 100));
+      }
       const item: Record<string, string> = {};
       headers.forEach((header, index) => {
         if (header) {
@@ -195,13 +201,18 @@ export async function POST(request: NextRequest) {
     } else if (type === 'route') {
       // 航线数据导入
       console.log('航线CSV解析结果示例:', items.slice(0, 2));
-      const routeItems = items.map(item => ({
-        orig_port: item.OrigPort || item.origPort || item.orig_port || item.startPort || item.start_port,
-        dest_port: item.DestPort || item.destPort || item.dest_port || item.endPort || item.end_port,
-        geometry_wkt: item.geometry_wkt || item.geometryWkt ||
-          `LINESTRING(${item.fromLon || 0} ${item.fromLat || 0}, ${item.toLon || 0} ${item.toLat || 0})`,
-        vector_status: '未向量化'
-      })).filter(item => item.orig_port && item.dest_port);
+      console.log('第一条数据geometry_wkt长度:', items[0]?.geometry_wkt?.length);
+      console.log('第一条数据geometry_wkt前100字符:', items[0]?.geometry_wkt?.substring(0, 100));
+      const routeItems = items.map(item => {
+        const wkt = item.geometry_wkt || item.geometryWkt || item.GEOMETRY_WKT;
+        console.log('WKT字段值长度:', wkt?.length, 'orig_port:', item.OrigPort || item.orig_port);
+        return {
+          orig_port: item.OrigPort || item.origPort || item.orig_port || item.startPort || item.start_port,
+          dest_port: item.DestPort || item.destPort || item.dest_port || item.endPort || item.end_port,
+          geometry_wkt: wkt || `LINESTRING(${item.fromLon || 0} ${item.fromLat || 0}, ${item.toLon || 0} ${item.toLat || 0})`,
+          vector_status: '未向量化'
+        };
+      }).filter(item => item.orig_port && item.dest_port);
       
       console.log('航线数据处理后:', routeItems.length, '条');
       
