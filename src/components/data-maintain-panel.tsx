@@ -93,7 +93,10 @@ export function DataMaintainPanel() {
   const [regulations, setRegulations] = useState<RegulationData[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchCode, setSearchCode] = useState('');
-  const [searchResults, setSearchResults] = useState<PortData[]>([]);
+  
+  // 分页状态
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [currentPage, setCurrentPage] = useState(1);
   
   // 弹窗状态
   const [showAddModal, setShowAddModal] = useState(false);
@@ -179,6 +182,30 @@ export function DataMaintainPanel() {
     }
     setLoading(false);
   };
+
+  // 筛选后的数据
+  const filteredPorts = ports.filter(p => {
+    if (!searchCode.trim()) return true;
+    const keyword = searchCode.toLowerCase();
+    return p.port_code.toLowerCase().includes(keyword) || 
+           p.name_cn?.toLowerCase().includes(keyword) ||
+           p.ctry_name_cn?.toLowerCase().includes(keyword);
+  });
+  
+  const filteredRoutes = routes.filter(r => {
+    if (!searchCode.trim()) return true;
+    const keyword = searchCode.toLowerCase();
+    return r.orig_port.toLowerCase().includes(keyword) || 
+           r.dest_port.toLowerCase().includes(keyword);
+  });
+
+  // 分页后的数据
+  const paginatedPorts = pageSize === 0 ? filteredPorts : filteredPorts.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginatedRoutes = pageSize === 0 ? filteredRoutes : filteredRoutes.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  
+  // 总页数
+  const totalPortPages = pageSize === 0 ? 1 : Math.ceil(filteredPorts.length / pageSize);
+  const totalRoutePages = pageSize === 0 ? 1 : Math.ceil(filteredRoutes.length / pageSize);
 
   // 规章制度操作函数
   const handleRegulationDelete = async (reg: RegulationData) => {
@@ -270,14 +297,6 @@ export function DataMaintainPanel() {
     else if (activeTab === 'route') loadRoutes();
     else loadRegulations();
   }, [activeTab]);
-
-  // 编码检索
-  const handleSearch = async () => {
-    if (!searchCode) return;
-    const res = await fetch(`/api/data-maintain?action=search&code=${encodeURIComponent(searchCode)}`);
-    const data = await res.json();
-    setSearchResults(data.ports || []);
-  };
 
   // 预览
   const handlePreview = async (type: 'port' | 'route', code: string) => {
@@ -484,33 +503,35 @@ export function DataMaintainPanel() {
         </Button>
       </div>
 
-      {/* 检索行 */}
-      <div className="flex gap-2">
+      {/* 检索和分页行 */}
+      <div className="flex gap-2 items-center flex-wrap">
         <Input 
-          placeholder="输入港口代码或中文名检索..."
+          placeholder="输入港口/航线代码或名称检索..."
           value={searchCode}
-          onChange={(e) => setSearchCode(e.target.value)}
-          className="h-7 text-xs flex-1"
+          onChange={(e) => { setSearchCode(e.target.value); setCurrentPage(1); }}
+          className="h-7 text-xs flex-1 min-w-[120px]"
         />
-        <Button size="sm" className="h-7 text-xs px-3" onClick={handleSearch}>
-          <Search className="w-3 h-3 mr-1" />检索
-        </Button>
-      </div>
-
-      {/* 检索结果 */}
-      {searchResults.length > 0 && (
-        <div className="p-2 bg-muted/30 rounded text-xs">
-          <div className="font-medium mb-1">检索结果:</div>
-          {searchResults.map((p, i) => (
-            <div key={i} className="flex items-center gap-2 py-0.5">
-              <StatusIcon status={p.vector_status} />
-              <span>{p.port_code}</span>
-              <span className="text-muted-foreground">{p.name_cn}</span>
-              <span className="text-muted-foreground">({p.vector_status})</span>
-            </div>
-          ))}
+        {searchCode && (
+          <Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => { setSearchCode(''); setCurrentPage(1); }}>
+            <XCircle className="w-3 h-3 mr-1" />清空
+          </Button>
+        )}
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted-foreground">每页:</span>
+          <select 
+            value={pageSize} 
+            onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+            className="h-7 text-xs border rounded px-1"
+          >
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={500}>500</option>
+            <option value={1000}>1000</option>
+            <option value={0}>全部</option>
+          </select>
         </div>
-      )}
+      </div>
 
       {/* 消息提示 */}
       {message && (
@@ -538,16 +559,23 @@ export function DataMaintainPanel() {
         </TabsList>
 
         <TabsContent value="port" className="mt-2">
+          <div className="text-xs text-muted-foreground mb-1">
+            共 {filteredPorts.length} 条{searchCode && ` (筛选自 ${ports.length} 条)`}
+            {pageSize > 0 && `，第 ${currentPage}/${totalPortPages} 页`}
+          </div>
           <div className="space-y-1 max-h-[400px] overflow-y-auto">
             {loading ? (
               <div className="text-xs text-center py-4 text-muted-foreground">加载中...</div>
-            ) : ports.length === 0 ? (
-              <div className="text-xs text-center py-4 text-muted-foreground">暂无数据</div>
+            ) : filteredPorts.length === 0 ? (
+              <div className="text-xs text-center py-4 text-muted-foreground">{searchCode ? '无匹配结果' : '暂无数据'}</div>
             ) : (
-              ports.map((port) => (
+              paginatedPorts.map((port, idx) => {
+                const rowNum = pageSize === 0 ? idx + 1 : (currentPage - 1) * pageSize + idx + 1;
+                return (
                 <div key={port.id} className="p-2 bg-muted/20 rounded hover:bg-muted/40">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1 min-w-0 flex-1">
+                      <span className="text-xs text-muted-foreground w-8 flex-shrink-0">{rowNum}.</span>
                       <input 
                         type="checkbox" 
                         checked={selectedPorts.includes(port.port_code)}
@@ -579,26 +607,43 @@ export function DataMaintainPanel() {
                       </Button>
                     </div>
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5 ml-4">
+                  <div className="text-[10px] text-muted-foreground mt-0.5 ml-10">
                     {port.ctry_name_cn} | {port.lon?.toFixed(2)}, {port.lat?.toFixed(2)}
                   </div>
                 </div>
-              ))
+              );})
             )}
           </div>
+          {/* 分页导航 */}
+          {pageSize > 0 && totalPortPages > 1 && (
+            <div className="flex justify-center gap-1 mt-2">
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === 1} onClick={() => setCurrentPage(1)}>首页</Button>
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>上一页</Button>
+              <span className="text-xs px-2 py-1">{currentPage} / {totalPortPages}</span>
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === totalPortPages} onClick={() => setCurrentPage(p => p + 1)}>下一页</Button>
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === totalPortPages} onClick={() => setCurrentPage(totalPortPages)}>末页</Button>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="route" className="mt-2">
+          <div className="text-xs text-muted-foreground mb-1">
+            共 {filteredRoutes.length} 条{searchCode && ` (筛选自 ${routes.length} 条)`}
+            {pageSize > 0 && `，第 ${currentPage}/${totalRoutePages} 页`}
+          </div>
           <div className="space-y-1 max-h-[400px] overflow-y-auto">
             {loading ? (
               <div className="text-xs text-center py-4 text-muted-foreground">加载中...</div>
-            ) : routes.length === 0 ? (
-              <div className="text-xs text-center py-4 text-muted-foreground">暂无数据</div>
+            ) : filteredRoutes.length === 0 ? (
+              <div className="text-xs text-center py-4 text-muted-foreground">{searchCode ? '无匹配结果' : '暂无数据'}</div>
             ) : (
-              routes.map((route) => (
+              paginatedRoutes.map((route, idx) => {
+                const rowNum = pageSize === 0 ? idx + 1 : (currentPage - 1) * pageSize + idx + 1;
+                return (
                 <div key={route.id} className="p-2 bg-muted/20 rounded hover:bg-muted/40">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1 min-w-0 flex-1">
+                      <span className="text-xs text-muted-foreground w-8 flex-shrink-0">{rowNum}.</span>
                       <input 
                         type="checkbox" 
                         checked={selectedRoutes.some(r => r.origPort === route.orig_port && r.destPort === route.dest_port)}
@@ -629,9 +674,19 @@ export function DataMaintainPanel() {
                     </div>
                   </div>
                 </div>
-              ))
+              );})
             )}
           </div>
+          {/* 分页导航 */}
+          {pageSize > 0 && totalRoutePages > 1 && (
+            <div className="flex justify-center gap-1 mt-2">
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === 1} onClick={() => setCurrentPage(1)}>首页</Button>
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>上一页</Button>
+              <span className="text-xs px-2 py-1">{currentPage} / {totalRoutePages}</span>
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === totalRoutePages} onClick={() => setCurrentPage(p => p + 1)}>下一页</Button>
+              <Button size="sm" variant="outline" className="h-6 text-xs px-2" disabled={currentPage === totalRoutePages} onClick={() => setCurrentPage(totalRoutePages)}>末页</Button>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="regulation" className="mt-2">
