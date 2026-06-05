@@ -300,10 +300,22 @@ export function DataMaintainPanel() {
 
   // 预览
   const handlePreview = async (type: 'port' | 'route', code: string) => {
-    const res = await fetch(`/api/data-maintain?action=preview&type=${type}&code=${code}`);
-    const data = await res.json();
-    setSelectedItem(data.data);
-    setShowPreviewModal(true);
+    console.log('[Preview] 开始预览:', type, code);
+    try {
+      const res = await fetch(`/api/data-maintain?action=preview&type=${type}&code=${code}`);
+      const data = await res.json();
+      console.log('[Preview] API返回:', data);
+      if (data.data) {
+        setSelectedItem(data.data);
+        setShowPreviewModal(true);
+        console.log('[Preview] 设置弹窗显示');
+      } else {
+        alert('获取数据失败：未找到数据');
+      }
+    } catch (e) {
+      console.error('[Preview] 错误:', e);
+      alert('获取数据失败');
+    }
   };
 
   // 删除
@@ -1842,8 +1854,8 @@ function PreviewModal({ item, type, onClose }: {
   }, [item, type]);
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-background p-4 rounded-lg w-[800px] max-h-[85vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]" onClick={onClose}>
+      <div className="bg-background p-4 rounded-lg w-[800px] max-w-[95vw] max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-3 pb-2 border-b">
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-medium">
