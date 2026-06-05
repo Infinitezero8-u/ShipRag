@@ -38,14 +38,20 @@ export async function GET(request: NextRequest) {
       if (type === 'port') {
         const page = parseInt(searchParams.get('page') || '1');
         const pageSize = parseInt(searchParams.get('pageSize') || '500');
+        const search = searchParams.get('search') || '';
         const offset = (page - 1) * pageSize;
         
+        let query = supabase
+          .from('port_data')
+          .select('*')
+          .order('port_code', { ascending: true });
+        
+        if (search) {
+          query = query.or(`port_code.ilike.%${search}%,name_cn.ilike.%${search}%,ctry_name_cn.ilike.%${search}%`);
+        }
+        
         const [{ data, error }, { count }] = await Promise.all([
-          supabase
-            .from('port_data')
-            .select('*')
-            .order('port_code', { ascending: true })
-            .range(offset, offset + pageSize - 1),
+          query.range(offset, offset + pageSize - 1),
           supabase
             .from('port_data')
             .select('*', { count: 'exact', head: true })
@@ -56,14 +62,20 @@ export async function GET(request: NextRequest) {
       } else {
         const page = parseInt(searchParams.get('page') || '1');
         const pageSize = parseInt(searchParams.get('pageSize') || '500');
+        const search = searchParams.get('search') || '';
         const offset = (page - 1) * pageSize;
         
+        let query = supabase
+          .from('route_data')
+          .select('*')
+          .order('orig_port', { ascending: true });
+        
+        if (search) {
+          query = query.or(`orig_port.ilike.%${search}%,dest_port.ilike.%${search}%`);
+        }
+        
         const [{ data, error }, { count }] = await Promise.all([
-          supabase
-            .from('route_data')
-            .select('*')
-            .order('orig_port', { ascending: true })
-            .range(offset, offset + pageSize - 1),
+          query.range(offset, offset + pageSize - 1),
           supabase
             .from('route_data')
             .select('*', { count: 'exact', head: true })

@@ -107,6 +107,10 @@ export function DataMaintainPanel() {
   const [loading, setLoading] = useState(false);
   const [searchCode, setSearchCode] = useState('');
   
+  // 航线搜索状态（独立搜索）
+  const [routeSearchCode, setRouteSearchCode] = useState('');
+  const [hasRouteSearched, setHasRouteSearched] = useState(false);
+  
   // 分页状态
   const [pageSize, setPageSize] = useState<number>(20);
   const [currentPage, setCurrentPage] = useState(1);
@@ -169,26 +173,15 @@ export function DataMaintainPanel() {
     setLoading(false);
   };
 
-  const loadRoutes = async () => {
+  const loadRoutes = async (searchKeyword?: string) => {
     setLoading(true);
     try {
-      // 先获取总数，然后分批加载
-      const res = await fetch('/api/data-maintain?action=list&type=route&pageSize=1000');
+      // 如果有搜索关键词，使用后端搜索；否则加载全部
+      const keyword = searchKeyword || routeSearchCode;
+      const res = await fetch(`/api/data-maintain?action=list&type=route&pageSize=5000${keyword ? `&search=${encodeURIComponent(keyword)}` : ''}`);
       const data = await res.json();
-      const total = data.total || 0;
-      let allItems = data.items || [];
-      
-      // 如果还有更多数据，继续加载
-      if (total > 1000) {
-        const totalPages = Math.ceil(total / 1000);
-        for (let page = 2; page <= totalPages; page++) {
-          const resPage = await fetch(`/api/data-maintain?action=list&type=route&pageSize=1000&page=${page}`);
-          const dataPage = await resPage.json();
-          allItems = [...allItems, ...(dataPage.items || [])];
-        }
-      }
-      
-      setRoutes(allItems);
+      setRoutes(data.items || []);
+      setHasRouteSearched(!!keyword);
     } catch (e) {
       console.error(e);
     }
@@ -217,10 +210,9 @@ export function DataMaintainPanel() {
   });
   
   const filteredRoutes = routes.filter(r => {
-    if (!searchCode.trim()) return true;
-    const keyword = searchCode.toLowerCase();
-    return r.orig_port.toLowerCase().includes(keyword) || 
-           r.dest_port.toLowerCase().includes(keyword);
+    // 如果没有搜索过，不显示数据
+    if (!hasRouteSearched) return false;
+    return true;
   });
 
   // 分页后的数据
@@ -663,15 +655,58 @@ export function DataMaintainPanel() {
         </TabsContent>
 
         <TabsContent value="route" className="mt-2">
-          <div className="text-xs text-muted-foreground mb-1">
-            共 {filteredRoutes.length} 条{searchCode && ` (筛选自 ${routes.length} 条)`}
-            {pageSize > 0 && `，第 ${currentPage}/${totalRoutePages} 页`}
+          {/* 搜索栏 */}
+          <div className="flex gap-2 mb-2">
+            <input
+              type="text"
+              placeholder="输入起点/终点港口代码搜索..."
+              className="flex-1 h-7 px-2 text-xs border rounded"
+              value={routeSearchCode}
+              onChange={(e) => setRouteSearchCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  loadRoutes();
+                }
+              }}
+            />
+            <Button 
+              size="sm" 
+              className="h-7 text-xs"
+              onClick={() => loadRoutes()}
+              disabled={loading}
+            >
+              <Search className="w-3 h-3 mr-1" />搜索
+            </Button>
+            {hasRouteSearched && (
+              <Button 
+                size="sm" 
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => {
+                  setRouteSearchCode('');
+                  setRoutes([]);
+                  setHasRouteSearched(false);
+                }}
+              >
+                清空
+              </Button>
+            )}
           </div>
+          
+          {/* 搜索结果 */}
+          {hasRouteSearched && (
+            <div className="text-xs text-muted-foreground mb-1">
+              搜索结果: {filteredRoutes.length} 条
+              {pageSize > 0 && `，第 ${currentPage}/${totalRoutePages} 页`}
+            </div>
+          )}
           <div className="space-y-1 max-h-[400px] overflow-y-auto">
             {loading ? (
               <div className="text-xs text-center py-4 text-muted-foreground">加载中...</div>
+            ) : !hasRouteSearched ? (
+              <div className="text-xs text-center py-4 text-muted-foreground">请输入关键词搜索航线</div>
             ) : filteredRoutes.length === 0 ? (
-              <div className="text-xs text-center py-4 text-muted-foreground">{searchCode ? '无匹配结果' : '暂无数据'}</div>
+              <div className="text-xs text-center py-4 text-muted-foreground">无匹配结果</div>
             ) : (
               paginatedRoutes.map((route, idx) => {
                 const rowNum = pageSize === 0 ? idx + 1 : (currentPage - 1) * pageSize + idx + 1;
@@ -871,7 +906,15 @@ export function DataMaintainPanel() {
 
       {/* 规章制度上传弹窗 */}
       {showRegUploadModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" onClick={() => setShowRegUploadModal(false)}>
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" 
+          onClick={(e) => {
+            // 只有点击遮罩层本身才关闭，点击子元素不关闭
+            if (e.target === e.currentTarget) {
+              setShowRegUploadModal(false);
+            }
+          }}
+        >
           <div className="bg-background rounded-lg w-full max-w-lg p-4" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-3">
               <h3 className="font-medium">上传规章制度文档</h3>

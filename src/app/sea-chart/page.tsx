@@ -158,49 +158,30 @@ export default function SeaChartPage() {
     setMounted(true);
   }, []);
   
-  // 从数据库获取港口数据
+  // 从数据库获取港口数据（从数据维护表加载，不是向量化的数据）
   useEffect(() => {
     const fetchPorts = async () => {
       setLoadingPorts(true);
       try {
-        const res = await fetch('/api/search?limit=1000');
+        // 从数据维护API加载港口数据
+        const res = await fetch('/api/data-maintain?action=list&type=port&pageSize=5000');
         const data = await res.json();
-        const items = data.items || [];
+        const items = data.data || [];
         
         // 解析港口数据
-        const ports: Port[] = [];
-        items.forEach((item: { 
-          id?: string; 
-          title?: string; 
-          content?: string; 
-          source?: string;
-          metadata?: Record<string, unknown>;
-        }) => {
-          const content = item.content || '';
-          // 解析格式: portCode: XXX, nameCn: XXX, lat: XXX, lon: XXX, ...
-          const portCodeMatch = content.match(/portCode:\s*([^,]+)/);
-          const nameCnMatch = content.match(/nameCn:\s*([^,]+)/);
-          const latMatch = content.match(/lat:\s*([\d.-]+)/);
-          const lonMatch = content.match(/lon:\s*([\d.-]+)/);
-          const ctryNameCnMatch = content.match(/ctryNameCn:\s*([^,]+)/);
-          const ctryCodeMatch = content.match(/ctryCode:\s*([^,]+)/);
-          
-          if (portCodeMatch && latMatch && lonMatch) {
-            const lat = parseFloat(latMatch[1]);
-            const lng = parseFloat(lonMatch[1]);
-            if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-              ports.push({
-                id: portCodeMatch[1].trim(),
-                name: nameCnMatch ? nameCnMatch[1].trim() : portCodeMatch[1].trim(),
-                lat,
-                lng,
-                country: ctryNameCnMatch ? ctryNameCnMatch[1].trim() : '',
-                ctryCode: ctryCodeMatch ? ctryCodeMatch[1].trim() : '',
-                type: '港口',
-              });
-            }
-          }
-        });
+        const ports: Port[] = items.map((item: any) => ({
+          id: item.port_code || '',
+          name: item.name_cn || item.port_code || '',
+          lat: Number(item.lat) || 0,
+          lng: Number(item.lon) || 0,
+          country: item.ctry_name_cn || '',
+          ctryCode: item.ctry_code || '',
+          type: item.port_type || '港口',
+        })).filter((p: Port) => 
+          p.lat >= -90 && p.lat <= 90 && 
+          p.lng >= -180 && p.lng <= 180 &&
+          p.lat !== 0 && p.lng !== 0
+        );
         
         setDbPorts(ports);
         console.log(`加载了 ${ports.length} 个港口数据`);
@@ -238,23 +219,36 @@ export default function SeaChartPage() {
     }
   };
   
-  // 加载航迹数据
+  // 加载航迹数据（从数据维护表加载，不是向量化的数据）
   const loadTrajectories = useCallback(async () => {
     setLoadingTrajectories(true);
     try {
-      const res = await fetch('/api/trajectory/search?limit=1000');
+      // 从数据维护API加载航线数据
+      const res = await fetch('/api/data-maintain?action=list&type=route&pageSize=5000');
       const data = await res.json();
-      const items = data.trajectories || [];
+      const items = data.data || [];
       
       const parsedTrajectories: Trajectory[] = items.map((item: any) => ({
-        ...item,
-        coordinates: parseWKT(item.wkt_route || ''),
+        id: item.id || '',
+        segment_id: '',
+        start_port: item.orig_port || '',
+        end_port: item.dest_port || '',
+        wkt_route: item.geometry_wkt || '',
+        sea_area: '',
+        segment_attrs: {},
+        ai_description: '',
+        bounds_min_lng: 0,
+        bounds_max_lng: 0,
+        bounds_min_lat: 0,
+        bounds_max_lat: 0,
+        source_file: '',
+        coordinates: parseWKT(item.geometry_wkt || ''),
       })).filter((t: Trajectory) => t.coordinates.length >= 2);
       
       setTrajectories(parsedTrajectories);
-      console.log(`加载了 ${parsedTrajectories.length} 条航迹`);
+      console.log(`加载了 ${parsedTrajectories.length} 条航线数据`);
     } catch (error) {
-      console.error('加载航迹数据失败:', error);
+      console.error('加载航线数据失败:', error);
     }
     setLoadingTrajectories(false);
   }, []);
