@@ -87,6 +87,17 @@ interface RegulationChunk {
 }
 
 export function DataMaintainPanel() {
+  // 动态加载leaflet CSS
+  useEffect(() => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+    return () => {
+      document.head.removeChild(link);
+    };
+  }, []);
+  
   const [activeTab, setActiveTab] = useState<'port' | 'route' | 'regulation' | 'chart' | 'tasks'>('port');
   const [ports, setPorts] = useState<PortData[]>([]);
   const [routes, setRoutes] = useState<RouteData[]>([]);
