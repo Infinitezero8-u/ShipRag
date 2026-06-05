@@ -140,7 +140,7 @@ export function DataMaintainPanel() {
     publisher: '',
     description: ''
   });
-  const [regCategory, setRegCategory] = useState('');
+  const [regCategory, setRegCategory] = useState('海事规章制度');
 
   // 加载数据（支持大数据集）
   const loadPorts = async () => {
@@ -889,8 +889,10 @@ export function DataMaintainPanel() {
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">分类 *</label>
-                <Select value={regCategory || undefined} onValueChange={(v) => setRegCategory(v)}>
-                  <SelectTrigger className="h-8 mt-1"><SelectValue placeholder="选择分类" /></SelectTrigger>
+                <Select value={regCategory} onValueChange={(v) => setRegCategory(v)}>
+                  <SelectTrigger className="h-8 mt-1">
+                    <SelectValue placeholder="请选择分类" />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="海事规章制度">海事规章制度</SelectItem>
                     <SelectItem value="平台运维规范">平台运维规范</SelectItem>

@@ -314,6 +314,56 @@ async function fallbackSearch(
       });
     });
   }
+
+  // 同时搜索port_data表中的向量化港口数据
+  try {
+    const { data: ports, error: portError } = await supabase
+      .from('port_data')
+      .select('id, port_code, name_cn, ctry_name_cn, lon, lat, embedding')
+      .not('embedding', 'is', null)
+      .limit(500);
+
+    if (!portError && ports && ports.length > 0) {
+      const portResults = ports
+        .map(port => {
+          const embedding = port.embedding as unknown as number[];
+          const similarity = cosineSimilarity(queryEmbedding, embedding);
+          return {
+            id: port.id,
+            modality: 'port',
+            title: port.name_cn || port.port_code,
+            content: `港口代码: ${port.port_code}, 中文名: ${port.name_cn}, 国家: ${port.ctry_name_cn}, 经度: ${port.lon}, 纬度: ${port.lat}`,
+            source: 'port_data',
+            similarity,
+          };
+        })
+        .filter(item => item.similarity >= threshold)
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, Math.min(topK, 10));
+
+      // 合并结果
+      filteredResults = [...filteredResults, ...portResults] as typeof filteredResults;
+      // 重新排序
+      filteredResults.sort((a, b) => b.similarity - a.similarity);
+      filteredResults = filteredResults.slice(0, topK);
+    }
+  } catch (e) {
+    console.error('搜索港口数据失败:', e);
+  }
+
+  return NextResponse.json({
+    success: true,
+    query: '',
+    results: filteredResults.map(r => ({
+      id: r.id,
+      modality: r.modality,
+      title: r.title,
+      content: r.content,
+      source: r.source,
+      similarity: r.similarity,
+    })),
+    count: filteredResults.length,
+  });
 }
 
 // 精确搜索：使用关键词匹配

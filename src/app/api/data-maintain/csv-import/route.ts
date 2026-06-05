@@ -20,6 +20,7 @@ function parseCSV(csvText: string): Record<string, string>[] {
     
     if (char === '"' && !inQuotes) {
       inQuotes = true;
+      currentLine += char; // 保留引号字符
     } else if (char === '"' && inQuotes) {
       if (nextChar === '"') {
         // 双引号转义
@@ -27,6 +28,7 @@ function parseCSV(csvText: string): Record<string, string>[] {
         i++;
       } else {
         inQuotes = false;
+        currentLine += char; // 保留引号字符
       }
     } else if (char === '\n' && !inQuotes) {
       if (currentLine.trim()) {
@@ -200,12 +202,19 @@ export async function POST(request: NextRequest) {
       
     } else if (type === 'route') {
       // 航线数据导入
-      console.log('航线CSV解析结果示例:', items.slice(0, 2));
-      console.log('第一条数据geometry_wkt长度:', items[0]?.geometry_wkt?.length);
-      console.log('第一条数据geometry_wkt前100字符:', items[0]?.geometry_wkt?.substring(0, 100));
+      const debugInfo = {
+        itemCount: items.length,
+        sampleKeys: items[0] ? Object.keys(items[0]) : [],
+        sampleData: items[0] || {},
+        geometryWktFromItem: items[0]?.geometry_wkt,
+        geometryWktLength: items[0]?.geometry_wkt?.length || 0
+      };
+      console.log('航线CSV解析调试信息:', JSON.stringify(debugInfo, null, 2));
+      
       const routeItems = items.map(item => {
-        const wkt = item.geometry_wkt || item.geometryWkt || item.GEOMETRY_WKT;
-        console.log('WKT字段值长度:', wkt?.length, 'orig_port:', item.OrigPort || item.orig_port);
+        // 尝试多种可能的字段名
+        const wkt = item.geometry_wkt || item.geometryWkt || item.GEOMETRY_WKT || 
+                    item['geometry_wkt'] || item.geometry_wkt;
         return {
           orig_port: item.OrigPort || item.origPort || item.orig_port || item.startPort || item.start_port,
           dest_port: item.DestPort || item.destPort || item.dest_port || item.endPort || item.end_port,
