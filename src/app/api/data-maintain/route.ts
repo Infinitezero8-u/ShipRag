@@ -5,6 +5,26 @@ import { EmbeddingClient } from 'coze-coding-dev-sdk';
 const supabase = getSupabaseClient();
 const embeddingClient = new EmbeddingClient();
 
+// 创建向量化任务
+async function createVectorizeTask(
+  taskType: 'port' | 'route' | 'regulation',
+  targetId: string,
+  action: 'add' | 'update' | 'delete'
+) {
+  try {
+    await supabase
+      .from('vectorize_tasks')
+      .insert({
+        task_type: taskType,
+        target_id: targetId,
+        action: action,
+        status: 'pending'
+      });
+  } catch (e) {
+    console.error('创建向量化任务失败:', e);
+  }
+}
+
 // GET: 列表、搜索、预览
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -16,23 +36,41 @@ export async function GET(request: NextRequest) {
       const type = searchParams.get('type') || 'port';
       
       if (type === 'port') {
-        const { data, error } = await supabase
-          .from('port_data')
-          .select('*')
-          .order('port_code', { ascending: true })
-          .limit(100);
+        const page = parseInt(searchParams.get('page') || '1');
+        const pageSize = parseInt(searchParams.get('pageSize') || '500');
+        const offset = (page - 1) * pageSize;
+        
+        const [{ data, error }, { count }] = await Promise.all([
+          supabase
+            .from('port_data')
+            .select('*')
+            .order('port_code', { ascending: true })
+            .range(offset, offset + pageSize - 1),
+          supabase
+            .from('port_data')
+            .select('*', { count: 'exact', head: true })
+        ]);
         
         if (error) throw error;
-        return NextResponse.json({ items: data });
+        return NextResponse.json({ items: data, total: count, page, pageSize });
       } else {
-        const { data, error } = await supabase
-          .from('route_data')
-          .select('*')
-          .order('orig_port', { ascending: true })
-          .limit(100);
+        const page = parseInt(searchParams.get('page') || '1');
+        const pageSize = parseInt(searchParams.get('pageSize') || '500');
+        const offset = (page - 1) * pageSize;
+        
+        const [{ data, error }, { count }] = await Promise.all([
+          supabase
+            .from('route_data')
+            .select('*')
+            .order('orig_port', { ascending: true })
+            .range(offset, offset + pageSize - 1),
+          supabase
+            .from('route_data')
+            .select('*', { count: 'exact', head: true })
+        ]);
         
         if (error) throw error;
-        return NextResponse.json({ items: data });
+        return NextResponse.json({ items: data, total: count, page, pageSize });
       }
     }
     
@@ -91,6 +129,136 @@ export async function GET(request: NextRequest) {
       });
     }
     
+    // 获取向量化任务列表
+    if (action === 'tasks') {
+      const status = searchParams.get('status') || 'all';
+      let query = supabase
+        .from('vectorize_tasks')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      
+      if (status !== 'all') {
+        query = query.eq('status', status);
+      }
+      
+      const { data, error } = await query;
+      if (error) throw error;
+      return NextResponse.json({ tasks: data });
+    }
+    
+    // 处理向量化任务
+    if (action === 'process-task') {
+      const taskId = searchParams.get('taskId');
+      if (!taskId) {
+        return NextResponse.json({ error: '缺少taskId' }, { status: 400 });
+      }
+      
+      // 获取任务
+      const { data: task, error: taskError } = await supabase
+        .from('vectorize_tasks')
+        .select('*')
+        .eq('id', taskId)
+        .single();
+      
+      if (taskError || !task) {
+        return NextResponse.json({ error: '任务不存在' }, { status: 404 });
+      }
+      
+      // 更新任务状态为处理中
+      await supabase
+        .from('vectorize_tasks')
+        .update({ status: 'processing', updated_at: new Date().toISOString() })
+        .eq('id', taskId);
+      
+      try {
+        if (task.task_type === 'port') {
+          // 获取港口数据
+          const { data: port, error: portError } = await supabase
+            .from('port_data')
+            .select('*')
+            .eq('port_code', task.target_id)
+            .single();
+          
+          if (portError || !port) {
+            throw new Error('港口数据不存在');
+          }
+          
+          // 生成向量化文本
+          const text = `港口: ${port.name_cn} (${port.port_code}), 国家: ${port.ctry_name_cn}, 经纬度: (${port.lon}, ${port.lat}), 类型: ${port.port_type}`;
+          
+          // 调用向量化API
+          const embedding = await embeddingClient.embedText(text);
+          
+          // 更新港口向量
+          await supabase
+            .from('port_data')
+            .update({ 
+              vector_status: '已向量化',
+              embedding: embedding,
+              updated_at: new Date().toISOString()
+            })
+            .eq('port_code', task.target_id);
+          
+        } else if (task.task_type === 'route') {
+          // 获取航线数据
+          const [origPort, destPort] = task.target_id.split('-');
+          const { data: route, error: routeError } = await supabase
+            .from('route_data')
+            .select('*')
+            .eq('orig_port', origPort)
+            .eq('dest_port', destPort)
+            .single();
+          
+          if (routeError || !route) {
+            throw new Error('航线数据不存在');
+          }
+          
+          // 生成向量化文本
+          const text = `航线: ${route.orig_port} -> ${route.dest_port}, 轨迹: ${route.geometry_wkt}`;
+          
+          // 调用向量化API
+          const embedding = await embeddingClient.embedText(text);
+          
+          // 更新航线向量
+          await supabase
+            .from('route_data')
+            .update({ 
+              vector_status: '已向量化',
+              embedding: embedding,
+              updated_at: new Date().toISOString()
+            })
+            .eq('orig_port', origPort)
+            .eq('dest_port', destPort);
+        }
+        
+        // 更新任务状态为完成
+        await supabase
+          .from('vectorize_tasks')
+          .update({ 
+            status: 'completed', 
+            updated_at: new Date().toISOString(),
+            completed_at: new Date().toISOString()
+          })
+          .eq('id', taskId);
+        
+        return NextResponse.json({ success: true, message: '任务处理完成' });
+        
+      } catch (e) {
+        // 更新任务状态为失败
+        await supabase
+          .from('vectorize_tasks')
+          .update({ 
+            status: 'failed', 
+            error_message: e instanceof Error ? e.message : '处理失败',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', taskId);
+        
+        return NextResponse.json({ error: e instanceof Error ? e.message : '处理失败' }, { status: 500 });
+      }
+    }
+    
     return NextResponse.json({ error: '未知操作' }, { status: 400 });
   } catch (error) {
     console.error('Data maintain error:', error);
@@ -133,6 +301,8 @@ export async function POST(request: NextRequest) {
           .single();
         
         if (error) throw error;
+        // 创建向量化任务
+        await createVectorizeTask('port', formData.portCode, 'add');
         return NextResponse.json({ success: true, data, message: '港口数据新增成功' });
       } else {
         const { data: formData } = body;
@@ -148,6 +318,8 @@ export async function POST(request: NextRequest) {
           .single();
         
         if (error) throw error;
+        // 创建向量化任务
+        await createVectorizeTask('route', `${formData.OrigPort}-${formData.DestPort}`, 'add');
         return NextResponse.json({ success: true, data, message: '航线数据新增成功' });
       }
     }
@@ -179,6 +351,8 @@ export async function POST(request: NextRequest) {
           .single();
         
         if (error) throw error;
+        // 创建向量化任务
+        await createVectorizeTask('port', portCode, 'update');
         return NextResponse.json({ success: true, data, message: '港口数据更新成功' });
       } else {
         const { OrigPort, DestPort, data: formData } = body;
@@ -194,6 +368,8 @@ export async function POST(request: NextRequest) {
           .single();
         
         if (error) throw error;
+        // 创建向量化任务
+        await createVectorizeTask('route', `${OrigPort}-${DestPort}`, 'update');
         return NextResponse.json({ success: true, data, message: '航线数据更新成功' });
       }
     }
@@ -208,6 +384,8 @@ export async function POST(request: NextRequest) {
           .eq('port_code', portCode);
         
         if (error) throw error;
+        // 创建向量化任务（删除向量）
+        await createVectorizeTask('port', portCode, 'delete');
         return NextResponse.json({ success: true, message: '港口数据删除成功' });
       } else {
         const { OrigPort, DestPort } = body;
@@ -218,6 +396,8 @@ export async function POST(request: NextRequest) {
           .eq('dest_port', DestPort);
         
         if (error) throw error;
+        // 创建向量化任务（删除向量）
+        await createVectorizeTask('route', `${OrigPort}-${DestPort}`, 'delete');
         return NextResponse.json({ success: true, message: '航线数据删除成功' });
       }
     }

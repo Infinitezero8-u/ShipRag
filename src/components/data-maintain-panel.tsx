@@ -115,13 +115,27 @@ export function DataMaintainPanel() {
   // 规章制度编辑弹窗
   const [showRegEditModal, setShowRegEditModal] = useState(false);
 
-  // 加载数据
+  // 加载数据（支持大数据集）
   const loadPorts = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/data-maintain?action=list&type=port');
+      // 先获取总数，然后分批加载
+      const res = await fetch('/api/data-maintain?action=list&type=port&pageSize=1000');
       const data = await res.json();
-      setPorts(data.items || []);
+      const total = data.total || 0;
+      let allItems = data.items || [];
+      
+      // 如果还有更多数据，继续加载
+      if (total > 1000) {
+        const totalPages = Math.ceil(total / 1000);
+        for (let page = 2; page <= totalPages; page++) {
+          const resPage = await fetch(`/api/data-maintain?action=list&type=port&pageSize=1000&page=${page}`);
+          const dataPage = await resPage.json();
+          allItems = [...allItems, ...(dataPage.items || [])];
+        }
+      }
+      
+      setPorts(allItems);
     } catch (e) {
       console.error(e);
     }
@@ -131,9 +145,23 @@ export function DataMaintainPanel() {
   const loadRoutes = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/data-maintain?action=list&type=route');
+      // 先获取总数，然后分批加载
+      const res = await fetch('/api/data-maintain?action=list&type=route&pageSize=1000');
       const data = await res.json();
-      setRoutes(data.items || []);
+      const total = data.total || 0;
+      let allItems = data.items || [];
+      
+      // 如果还有更多数据，继续加载
+      if (total > 1000) {
+        const totalPages = Math.ceil(total / 1000);
+        for (let page = 2; page <= totalPages; page++) {
+          const resPage = await fetch(`/api/data-maintain?action=list&type=route&pageSize=1000&page=${page}`);
+          const dataPage = await resPage.json();
+          allItems = [...allItems, ...(dataPage.items || [])];
+        }
+      }
+      
+      setRoutes(allItems);
     } catch (e) {
       console.error(e);
     }
@@ -500,6 +528,9 @@ export function DataMaintainPanel() {
           <TabsTrigger value="chart" className="h-6 text-xs">
             <BarChart3 className="w-3 h-3 mr-1" />海图统计
           </TabsTrigger>
+          <TabsTrigger value="tasks" className="h-6 text-xs">
+            <Layers className="w-3 h-3 mr-1" />向量化任务
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="port" className="mt-2">
@@ -701,6 +732,11 @@ export function DataMaintainPanel() {
         {/* 海图统计Tab */}
         <TabsContent value="chart" className="mt-2">
           <ChartTab ports={ports} routes={routes} />
+        </TabsContent>
+        
+        {/* 向量化任务Tab */}
+        <TabsContent value="tasks" className="mt-2">
+          <VectorizeTasksTab />
         </TabsContent>
       </Tabs>
 
@@ -1019,6 +1055,214 @@ function ChartTab({ ports, routes }: { ports: PortData[]; routes: RouteData[] })
       {/* 说明 */}
       <div className="text-[10px] text-muted-foreground">
         * 区域划分基于港口经纬度坐标，航线按起运港位置归类
+      </div>
+    </div>
+  );
+}
+
+// 向量化任务Tab组件
+interface VectorizeTask {
+  id: string;
+  task_type: string;
+  target_id: string;
+  action: string;
+  status: string;
+  priority: number;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+function VectorizeTasksTab() {
+  const [tasks, setTasks] = useState<VectorizeTask[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [processing, setProcessing] = useState<string | null>(null);
+  
+  // 加载任务列表
+  const loadTasks = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/data-maintain?action=tasks&status=${statusFilter}`);
+      const data = await res.json();
+      setTasks(data.tasks || []);
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
+  };
+  
+  useEffect(() => {
+    loadTasks();
+  }, [statusFilter]);
+  
+  // 处理单个任务
+  const handleProcessTask = async (taskId: string) => {
+    setProcessing(taskId);
+    try {
+      const res = await fetch(`/api/data-maintain?action=process-task&taskId=${taskId}`);
+      const data = await res.json();
+      if (data.success) {
+        loadTasks();
+      } else {
+        alert(data.error || '处理失败');
+      }
+    } catch (e) {
+      alert('处理失败');
+    }
+    setProcessing(null);
+  };
+  
+  // 批量处理待处理任务
+  const handleProcessAll = async () => {
+    const pendingTasks = tasks.filter(t => t.status === 'pending');
+    if (pendingTasks.length === 0) {
+      alert('没有待处理的任务');
+      return;
+    }
+    
+    if (!confirm(`确认处理 ${pendingTasks.length} 个待处理任务？`)) return;
+    
+    for (const task of pendingTasks) {
+      await handleProcessTask(task.id);
+    }
+  };
+  
+  // 状态颜色
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending': return 'text-yellow-600';
+      case 'processing': return 'text-blue-600';
+      case 'completed': return 'text-green-600';
+      case 'failed': return 'text-red-600';
+      default: return 'text-muted-foreground';
+    }
+  };
+  
+  // 状态文本
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'pending': return '待处理';
+      case 'processing': return '处理中';
+      case 'completed': return '已完成';
+      case 'failed': return '失败';
+      default: return status;
+    }
+  };
+  
+  // 操作类型文本
+  const getActionText = (action: string) => {
+    switch (action) {
+      case 'add': return '新增';
+      case 'update': return '更新';
+      case 'delete': return '删除';
+      default: return action;
+    }
+  };
+  
+  // 类型文本
+  const getTypeText = (type: string) => {
+    switch (type) {
+      case 'port': return '港口';
+      case 'route': return '航线';
+      case 'regulation': return '规章';
+      default: return type;
+    }
+  };
+  
+  // 统计
+  const stats = {
+    pending: tasks.filter(t => t.status === 'pending').length,
+    processing: tasks.filter(t => t.status === 'processing').length,
+    completed: tasks.filter(t => t.status === 'completed').length,
+    failed: tasks.filter(t => t.status === 'failed').length
+  };
+  
+  return (
+    <div className="space-y-3">
+      {/* 统计信息 */}
+      <div className="flex items-center gap-4 text-xs">
+        <span className="text-yellow-600">待处理: {stats.pending}</span>
+        <span className="text-blue-600">处理中: {stats.processing}</span>
+        <span className="text-green-600">已完成: {stats.completed}</span>
+        <span className="text-red-600">失败: {stats.failed}</span>
+        
+        <div className="ml-auto flex gap-2">
+          <select 
+            className="h-6 text-xs border rounded px-1"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">全部状态</option>
+            <option value="pending">待处理</option>
+            <option value="processing">处理中</option>
+            <option value="completed">已完成</option>
+            <option value="failed">失败</option>
+          </select>
+          <Button size="sm" className="h-6 text-xs" onClick={handleProcessAll} disabled={stats.pending === 0}>
+            批量处理
+          </Button>
+          <Button size="sm" variant="outline" className="h-6 text-xs" onClick={loadTasks}>
+            刷新
+          </Button>
+        </div>
+      </div>
+      
+      {/* 任务列表 */}
+      <div className="border rounded max-h-[350px] overflow-y-auto">
+        {loading ? (
+          <div className="text-xs text-center py-4 text-muted-foreground">加载中...</div>
+        ) : tasks.length === 0 ? (
+          <div className="text-xs text-center py-4 text-muted-foreground">暂无任务</div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="bg-muted sticky top-0">
+              <tr>
+                <th className="p-2 text-left">类型</th>
+                <th className="p-2 text-left">目标ID</th>
+                <th className="p-2 text-left">操作</th>
+                <th className="p-2 text-left">状态</th>
+                <th className="p-2 text-left">创建时间</th>
+                <th className="p-2 text-left">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task) => (
+                <tr key={task.id} className="border-t">
+                  <td className="p-2">{getTypeText(task.task_type)}</td>
+                  <td className="p-2 font-mono">{task.target_id}</td>
+                  <td className="p-2">{getActionText(task.action)}</td>
+                  <td className={`p-2 ${getStatusColor(task.status)}`}>
+                    {getStatusText(task.status)}
+                    {task.status === 'failed' && task.error_message && (
+                      <span className="ml-1 text-red-500" title={task.error_message}>⚠️</span>
+                    )}
+                  </td>
+                  <td className="p-2 text-muted-foreground">
+                    {new Date(task.created_at).toLocaleString('zh-CN')}
+                  </td>
+                  <td className="p-2">
+                    {task.status === 'pending' && (
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="h-5 text-[10px]"
+                        onClick={() => handleProcessTask(task.id)}
+                        disabled={processing === task.id}
+                      >
+                        {processing === task.id ? '处理中...' : '处理'}
+                      </Button>
+                    )}
+                    {task.status === 'failed' && task.error_message && (
+                      <span className="text-red-500" title={task.error_message}>查看错误</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
@@ -1534,8 +1778,8 @@ function PreviewModal({ item, type, onClose }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-background p-4 rounded-lg max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
-        <div className="flex justify-between items-center mb-3">
+      <div className="bg-background p-4 rounded-lg w-[800px] max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="flex justify-between items-center mb-3 pb-2 border-b">
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-medium">
               {type === 'port' ? '港口预览' : '航线预览'}
@@ -1554,11 +1798,11 @@ function PreviewModal({ item, type, onClose }: {
           <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
         </div>
         
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto min-h-[400px]">
           {previewTab === 'content' ? (
-            <pre className="text-xs bg-muted p-3 rounded overflow-x-auto whitespace-pre-wrap">
-              {JSON.stringify(item, null, 2)}
-            </pre>
+            <div className="bg-muted p-3 rounded">
+              <pre className="text-xs overflow-x-auto whitespace-pre-wrap">{JSON.stringify(item, null, 2)}</pre>
+            </div>
           ) : (
             <div className="h-[500px] rounded overflow-hidden border">
               {isClient && hasCoordinates ? (
