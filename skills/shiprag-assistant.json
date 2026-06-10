@@ -1,0 +1,139 @@
+{
+  "skills": [
+    {
+      "name": "shiprag-assistant",
+      "version": "1.0.0",
+      "description": "海图知识检索与智能问答助手。支持港口查询、航线分析、海图参数检索、规章制度检索、统计查询等海事领域专业问答。",
+      "triggers": [
+        "查询港口",
+        "港口信息",
+        "海图",
+        "航道",
+        "锚地",
+        "航线",
+        "吃水",
+        "水深",
+        "航行",
+        "船舶",
+        "海事",
+        "规章制度",
+        "港口统计",
+        "上传海图数据",
+        "上传港口数据",
+        "导入数据",
+        "向量化",
+        "知识库检索"
+      ],
+      "capabilities": [
+        {
+          "name": "语义搜索",
+          "description": "在海图知识库中进行语义搜索",
+          "api": {
+            "method": "POST",
+            "url": "/api/search",
+            "body": {
+              "query": "string (必填)",
+              "mode": "fuzzy | exact",
+              "topK": "int (默认100)",
+              "threshold": "float (默认0.3)",
+              "filter": "object (可选)",
+              "page": "int",
+              "pageSize": "int"
+            }
+          }
+        },
+        {
+          "name": "智能问答",
+          "description": "基于RAG的智能问答，支持流式输出和多轮对话",
+          "api": {
+            "method": "POST",
+            "url": "/api/rag",
+            "body": {
+              "query": "string (必填)",
+              "stream": "boolean (默认true)",
+              "sessionId": "string (可选，启用多轮对话)",
+              "history": "array (可选)",
+              "responseMode": "brief | detailed",
+              "topK": "int (默认100)"
+            }
+          }
+        },
+        {
+          "name": "文件上传",
+          "description": "上传文件到知识库",
+          "api": {
+            "method": "POST",
+            "url": "/api/upload",
+            "contentType": "multipart/form-data",
+            "body": {
+              "file": "binary (文件)",
+              "url": "string (URL上传时使用)"
+            }
+          }
+        },
+        {
+          "name": "向量化",
+          "description": "对知识条目执行向量化处理",
+          "api": {
+            "method": "POST",
+            "url": "/api/embed",
+            "body": {
+              "batchSize": "int (默认10)",
+              "itemId": "string (可选，单条处理)"
+            }
+          }
+        },
+        {
+          "name": "系统统计",
+          "description": "获取系统运行统计",
+          "api": {
+            "method": "GET",
+            "url": "/api/stats"
+          }
+        },
+        {
+          "name": "规章制度",
+          "description": "检索规章制度文档",
+          "api": {
+            "method": "GET",
+            "url": "/api/regulations",
+            "params": {
+              "category": "maritime_rules | platform_ops | trajectory_annotation | model_training"
+            }
+          }
+        }
+      ],
+      "instructions": "skills/shiprag-assistant.md",
+      "knowledgeBase": {
+        "tables": [
+          "knowledge_items",
+          "port_data",
+          "route_data",
+          "regulation_chunks",
+          "regulations",
+          "trajectories"
+        ],
+        "domains": [
+          "海事",
+          "海图",
+          "港口",
+          "航线",
+          "航运",
+          "航海",
+          "船舶交通"
+        ]
+      },
+      "models": {
+        "embedding": "coze-embedding",
+        "llm": "doubao-seed-1-8-251228",
+        "vision": "doubao-seed-2-0-lite-260215"
+      },
+      "constraints": {
+        "maxContentLength": 8000,
+        "embeddingDimension": 1536,
+        "maxContextTokens": 131072,
+        "similarityThreshold": 0.3
+      }
+    }
+  ]
+}

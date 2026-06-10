@@ -1,0 +1,745 @@
+'use client';
+
+import React, { useState, useCallback, useEffect, DragEvent } from 'react';
+import ReactFlow, {
+  Node, Edge, Controls, Background, Panel,
+  Handle, Position, useNodesState, useEdgesState, addEdge, Connection, ReactFlowProvider
+} from 'reactflow';
+import 'reactflow/dist/style.css';
+
+// ==================== 节点类型定义 ====================
+const NODE_TYPE_CONFIG: Record<string, {
+  label: string;
+  icon: string;
+  color: string;
+  category: string;
+  fields: { key: string; label: string; type: string; default: any; options?: string[]; description?: string }[];
+}> = {
+  chatInput: {
+    label: '用户输入',
+    icon: '💬',
+    color: '#10b981',
+    category: 'input',
+    fields: [
+      { key: 'placeholder', label: '输入提示', type: 'text', default: '请输入您的问题' },
+      { key: 'enableHistory', label: '开启多轮对话', type: 'switch', default: true },
+      { key: 'historyCount', label: '历史轮数', type: 'number', default: 5 },
+    ]
+  },
+  classifyPrompt: {
+    label: '分类Prompt',
+    icon: '🏷️',
+    color: '#f59e0b',
+    category: 'classify',
+    fields: [
+      { key: 'template', label: '分类模板', type: 'textarea', default: '你是意图判断专家...' },
+    ]
+  },
+  classifyLLM: {
+    label: '分类LLM',
+    icon: '🤖',
+    color: '#8b5cf6',
+    category: 'classify',
+    fields: [
+      { key: 'model', label: '模型', type: 'select', default: 'doubao-seed-32k', options: ['doubao-seed-32k', 'deepseek-chat'] },
+      { key: 'temperature', label: 'Temperature', type: 'number', default: 0 },
+    ]
+  },
+  conditionRoute: {
+    label: '条件分支',
+    icon: '🔀',
+    color: '#ec4899',
+    category: 'route',
+    fields: [
+      { key: 'mode', label: '路由模式', type: 'select', default: 'three-way', options: ['three-way', 'two-way'] },
+    ]
+  },
+  queryRewrite: {
+    label: 'Query优化',
+    icon: '✨',
+    color: '#06b6d4',
+    category: 'rag',
+    fields: [
+      { key: 'enabled', label: '启用', type: 'switch', default: true },
+      { key: 'enableSpellCheck', label: '错别字修正', type: 'switch', default: true },
+    ]
+  },
+  embedding: {
+    label: '向量化',
+    icon: '🔢',
+    color: '#6366f1',
+    category: 'rag',
+    fields: [
+      { key: 'model', label: '向量模型', type: 'select', default: 'doubao-embedding', options: ['doubao-embedding', 'bge-m3'] },
+    ]
+  },
+  vectorRetrieval: {
+    label: '向量检索',
+    icon: '🔍',
+    color: '#14b8a6',
+    category: 'rag',
+    fields: [
+      { key: 'topK', label: '召回数量', type: 'number', default: 8 },
+      { key: 'threshold', label: '相似度阈值', type: 'number', default: 0.65 },
+    ]
+  },
+  rerank: {
+    label: '结果重排',
+    icon: '📊',
+    color: '#f97316',
+    category: 'rag',
+    fields: [
+      { key: 'enabled', label: '启用Rerank', type: 'switch', default: true },
+      { key: 'keepTop', label: '保留TOP', type: 'number', default: 5 },
+    ]
+  },
+  prompt: {
+    label: 'Prompt组装',
+    icon: '📝',
+    color: '#84cc16',
+    category: 'rag',
+    fields: [
+      { key: 'systemPrompt', label: '系统提示词', type: 'textarea', default: '你是专业的问答助手...' },
+      { key: 'fallbackMessage', label: '兜底话术', type: 'text', default: '暂未找到相关信息。' },
+    ]
+  },
+  llm: {
+    label: 'LLM生成',
+    icon: '🤖',
+    color: '#8b5cf6',
+    category: 'rag',
+    fields: [
+      { key: 'model', label: '模型', type: 'select', default: 'doubao-seed-32k', options: ['doubao-seed-32k', 'deepseek-chat'] },
+      { key: 'temperature', label: 'Temperature', type: 'number', default: 0.3 },
+      { key: 'maxTokens', label: 'Max Tokens', type: 'number', default: 2000 },
+    ]
+  },
+  sqlPrompt: {
+    label: 'SQL生成',
+    icon: '🗃️',
+    color: '#0ea5e9',
+    category: 'sql',
+    fields: [
+      { key: 'allowedOnlySelect', label: '仅允许SELECT', type: 'switch', default: true },
+    ]
+  },
+  dbExecute: {
+    label: '数据库执行',
+    icon: '🗄️',
+    color: '#22c55e',
+    category: 'sql',
+    fields: [
+      { key: 'timeout', label: '超时(秒)', type: 'number', default: 5 },
+    ]
+  },
+  resultPolish: {
+    label: '结果润色',
+    icon: '✍️',
+    color: '#a855f7',
+    category: 'sql',
+    fields: [
+      { key: 'model', label: '润色模型', type: 'select', default: 'doubao-seed-32k', options: ['doubao-seed-32k', 'deepseek-chat'] },
+    ]
+  },
+  // 新增：RAG缺内容兜底分支
+  ragFallback: {
+    label: 'RAG兜底检测',
+    icon: '🔄',
+    color: '#f59e0b',
+    category: 'fallback',
+    fields: [
+      { key: 'enabled', label: '启用兜底', type: 'switch', default: true, description: 'RAG内容不足时自动走SQL补充' },
+      { key: 'minContentLength', label: '最小内容长度', type: 'number', default: 50, description: 'RAG返回内容小于此值触发兜底' },
+      { key: 'keywords', label: '关键数据词', type: 'text', default: '数量,统计,总计,合计', description: '缺失这些关键词时触发兜底' },
+    ]
+  },
+  contentMerge: {
+    label: '内容合并',
+    icon: '🔗',
+    color: '#10b981',
+    category: 'merge',
+    fields: [
+      { key: 'strategy', label: '合并策略', type: 'select', default: 'supplement', options: ['supplement', 'replace', 'append'], description: 'supplement:补充缺失, replace:替换, append:追加' },
+      { key: 'deduplicate', label: '去重', type: 'switch', default: true },
+    ]
+  },
+  mergeOutput: {
+    label: '输出汇总',
+    icon: '📤',
+    color: '#ef4444',
+    category: 'output',
+    fields: [
+      { key: 'format', label: '输出格式', type: 'select', default: 'markdown', options: ['markdown', 'text', 'json'] },
+    ]
+  },
+  exportNode: {
+    label: '导出结果',
+    icon: '📁',
+    color: '#0ea5e9',
+    category: 'output',
+    fields: [
+      { key: 'format', label: '导出格式', type: 'select', default: 'csv', options: ['csv', 'markdown', 'json'] },
+      { key: 'filename', label: '文件名前缀', type: 'text', default: 'export' },
+      { key: 'includeMetadata', label: '包含元数据', type: 'switch', default: true },
+    ]
+  },
+};
+
+// 不可删除的节点类型
+const UNDELETABLE_TYPES = ['chatInput', 'mergeOutput'];
+
+// ==================== 节点组件 ====================
+function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
+  const config = NODE_TYPE_CONFIG[data?.type];
+  
+  // 如果 config 不存在，显示一个默认的占位节点
+  if (!config) {
+    return (
+      <div
+        className={`px-2 py-1.5 rounded-lg shadow-md border-2 text-xs ${selected ? 'border-blue-500' : 'border-gray-300'}`}
+        style={{ backgroundColor: '#f3f4f6' }}
+      >
+        <Handle type="target" position={Position.Left} className="w-2 h-2 bg-gray-400" />
+        <Handle type="source" position={Position.Right} className="w-2 h-2 bg-gray-400" />
+        <div className="flex items-center gap-1">
+          <span>❓</span>
+          <span className="text-gray-500">{data?.type || '未知节点'}</span>
+        </div>
+      </div>
+    );
+  }
+  
+  const canDelete = !UNDELETABLE_TYPES.includes(data.type);
+  
+  return (
+    <div
+      className={`px-2 py-1.5 rounded-lg shadow-md border-2 text-xs ${selected ? 'border-blue-500' : 'border-transparent'}`}
+      style={{ backgroundColor: config.color + '20', borderColor: selected ? '#3b82f6' : config.color + '50' }}
+    >
+      {data.type !== 'chatInput' && (
+        <Handle type="target" position={Position.Left} className="w-2 h-2 bg-gray-400" />
+      )}
+      
+      {data.type === 'conditionRoute' && (
+        <>
+          <Handle type="source" position={Position.Top} id="rag" className="w-2 h-2 bg-green-500" style={{ left: 12 }} />
+          <Handle type="source" position={Position.Right} id="all" className="w-2 h-2 bg-purple-500" />
+          <Handle type="source" position={Position.Bottom} id="sql" className="w-2 h-2 bg-blue-500" style={{ left: 12 }} />
+        </>
+      )}
+      
+      {data.type !== 'conditionRoute' && data.type !== 'mergeOutput' && (
+        <Handle type="source" position={Position.Right} className="w-2 h-2 bg-gray-400" />
+      )}
+      
+      <div className="flex items-center gap-1">
+        <span>{config.icon}</span>
+        <span style={{ color: config.color }} className="font-medium">{config.label}</span>
+        {!canDelete && <span className="text-gray-400">🔒</span>}
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { custom: CustomNode };
+
+// ==================== 默认节点 ====================
+const createDefaultNodes = (): Node[] => [
+  { id: 'input', type: 'custom', position: { x: 50, y: 150 }, data: { type: 'chatInput' } },
+  { id: 'output', type: 'custom', position: { x: 400, y: 150 }, data: { type: 'mergeOutput' } },
+];
+
+// 默认连线
+const createDefaultEdges = (): Edge[] => [
+  { id: 'e-input-output', source: 'input', sourceHandle: 'source', target: 'output', targetHandle: 'target', style: { stroke: '#94a3b8' }, type: 'smoothstep' },
+];
+
+// ==================== 节点面板 ====================
+const NODE_CATEGORIES = {
+  '输入/输出': ['chatInput', 'mergeOutput'],
+  '分类路由': ['classifyPrompt', 'classifyLLM', 'conditionRoute'],
+  'RAG 分支': ['queryRewrite', 'embedding', 'vectorRetrieval', 'rerank', 'prompt', 'llm'],
+  'SQL 分支': ['sqlPrompt', 'dbExecute', 'resultPolish'],
+};
+
+function NodePalette({ onDragStart, compact = false }: { onDragStart: (type: string) => void; compact?: boolean }) {
+  return (
+    <div className={`bg-white border-r overflow-y-auto ${compact ? 'w-full p-2' : 'w-36 p-2 hidden sm:block'}`}>
+      <h4 className="text-[10px] font-medium text-gray-500 mb-1">拖拽或点击添加</h4>
+      {Object.entries(NODE_CATEGORIES).map(([cat, types]) => (
+        <div key={cat} className="mb-2">
+          <p className="text-[10px] text-gray-400 mb-1">{cat}</p>
+          <div className="space-y-0.5">
+            {types.map((type) => {
+              const config = NODE_TYPE_CONFIG[type];
+              if (!config) return null;
+              return (
+                <div
+                  key={type}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/reactflow', type);
+                    e.dataTransfer.effectAllowed = 'move';
+                    onDragStart(type);
+                  }}
+                  onClick={() => onDragStart(type)} // 点击也可添加
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer hover:bg-gray-100 text-[10px]"
+                  style={{ backgroundColor: config.color + '10' }}
+                >
+                  <span>{config.icon}</span>
+                  <span style={{ color: config.color }}>{config.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ==================== 节点编辑面板 ====================
+function NodeEditPanel({
+  selectedNode,
+  onUpdate,
+  onDelete,
+  onClose
+}: {
+  selectedNode: Node | null;
+  onUpdate: (key: string, value: any) => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  if (!selectedNode) return null;
+  
+  const config = NODE_TYPE_CONFIG[selectedNode.data?.type];
+  
+  // 如果 config 不存在，显示简化面板
+  if (!config) {
+    return (
+      <div className="p-3">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-medium text-sm text-gray-500">未知节点类型</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        <p className="text-xs text-gray-400 mb-2">类型: {selectedNode.data?.type || 'undefined'}</p>
+        <button
+          onClick={onDelete}
+          className="w-full px-2 py-1 bg-red-100 text-red-600 rounded text-xs"
+        >
+          删除节点
+        </button>
+      </div>
+    );
+  }
+  
+  const canDelete = !UNDELETABLE_TYPES.includes(selectedNode.data.type);
+  
+  return (
+    <div className="p-3">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-medium flex items-center gap-2 text-sm">
+          <span>{config.icon}</span>
+          <span>{config.label}</span>
+        </h3>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+      </div>
+      
+      <div className="space-y-2">
+        {config.fields.map((field) => (
+          <div key={field.key}>
+            <label className="text-xs text-gray-500 block mb-0.5">{field.label}</label>
+            {field.type === 'text' && (
+              <input
+                type="text"
+                value={selectedNode.data[field.key] ?? field.default}
+                onChange={(e) => onUpdate(field.key, e.target.value)}
+                className="w-full px-2 py-1 border rounded text-xs"
+              />
+            )}
+            {field.type === 'number' && (
+              <input
+                type="number"
+                value={selectedNode.data[field.key] ?? field.default}
+                onChange={(e) => onUpdate(field.key, Number(e.target.value))}
+                className="w-full px-2 py-1 border rounded text-xs"
+                step={field.key.includes('threshold') || field.key.includes('temperature') ? '0.1' : '1'}
+              />
+            )}
+            {field.type === 'textarea' && (
+              <textarea
+                value={selectedNode.data[field.key] ?? field.default}
+                onChange={(e) => onUpdate(field.key, e.target.value)}
+                className="w-full px-2 py-1 border rounded text-xs h-20"
+              />
+            )}
+            {field.type === 'select' && (
+              <select
+                value={selectedNode.data[field.key] ?? field.default}
+                onChange={(e) => onUpdate(field.key, e.target.value)}
+                className="w-full px-2 py-1 border rounded text-xs"
+              >
+                {field.options?.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            )}
+            {field.type === 'switch' && (
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectedNode.data[field.key] ?? field.default}
+                  onChange={(e) => onUpdate(field.key, e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-xs">{selectedNode.data[field.key] ?? field.default ? '开启' : '关闭'}</span>
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
+      
+      {canDelete && (
+        <button
+          onClick={onDelete}
+          className="w-full mt-4 py-1.5 bg-red-50 text-red-600 rounded text-xs hover:bg-red-100"
+        >
+          删除节点
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ==================== 主组件 ====================
+function WorkflowEditor() {
+  const [nodes, setNodes, onNodesChange] = useNodesState(createDefaultNodes());
+  const [edges, setEdges, onEdgesChange] = useEdgesState(createDefaultEdges());
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
+  const [workflowName, setWorkflowName] = useState('新建工作流');
+  const [saving, setSaving] = useState(false);
+  const [dragType, setDragType] = useState<string | null>(null);
+  const [showNodePanel, setShowNodePanel] = useState(false); // 移动端节点面板展开状态
+  
+  // 从 URL 加载工作流
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    if (id) {
+      setWorkflowId(id);
+      loadWorkflow(id);
+    }
+  }, []);
+  
+  const loadWorkflow = async (id: string) => {
+    try {
+      const res = await fetch(`/api/workflow?id=${id}`);
+      const data = await res.json();
+      
+      // 转换节点格式为 ReactFlow 格式
+      let loadedNodes: Node[] = [];
+      let loadedEdges: Edge[] = [];
+      
+      if (data.nodes && Array.isArray(data.nodes) && data.nodes.length > 0) {
+        // 检查节点格式，如果是旧格式则转换
+        loadedNodes = data.nodes.map((node: any, index: number) => {
+          // 如果节点已经是 ReactFlow 格式（有 id 和 position）
+          if (node.id && node.position) {
+            return node;
+          }
+          // 否则转换旧格式到新格式
+          return {
+            id: node.id || `node_${index}`,
+            type: 'custom',
+            position: { x: 100 + (index % 4) * 220, y: 80 + Math.floor(index / 4) * 120 },
+            data: { type: node.type, name: node.name || NODE_TYPE_CONFIG[node.type]?.label || node.type, ...node },
+          };
+        });
+      } else {
+        // 如果没有节点，使用默认节点
+        loadedNodes = createDefaultNodes();
+      }
+      
+      if (data.edges && Array.isArray(data.edges) && data.edges.length > 0) {
+        // 检查edges格式
+        const firstEdge = data.edges[0];
+        if (firstEdge.from !== undefined && firstEdge.to !== undefined) {
+          // 旧格式 { from, to } 转换为 ReactFlow 格式
+          loadedEdges = data.edges.map((edge: any, index: number) => {
+            const sourceNode = loadedNodes[edge.from];
+            const targetNode = loadedNodes[edge.to];
+            return {
+              id: `edge_${index}`,
+              source: sourceNode?.id || `node_${edge.from}`,
+              target: targetNode?.id || `node_${edge.to}`,
+              sourceHandle: 'source',
+              targetHandle: 'target',
+              style: { stroke: '#94a3b8' },
+              type: 'smoothstep',
+              animated: false,
+            };
+          });
+        } else if (firstEdge.source && firstEdge.target) {
+          // 已经是 ReactFlow 格式
+          loadedEdges = data.edges;
+        }
+      } else {
+        // 如果没有连线，根据节点自动生成连线
+        const nodeIds = loadedNodes.map(n => n.id);
+        if (nodeIds.length >= 2) {
+          // 找到输入和输出节点
+          const inputNode = loadedNodes.find(n => n.data?.type === 'chatInput');
+          const outputNode = loadedNodes.find(n => n.data?.type === 'mergeOutput' || n.data?.type === 'chatOutput');
+          if (inputNode && outputNode) {
+            loadedEdges = [{
+              id: 'e-input-output',
+              source: inputNode.id,
+              sourceHandle: 'source',
+              target: outputNode.id,
+              targetHandle: 'target',
+              style: { stroke: '#94a3b8' },
+              type: 'smoothstep'
+            }];
+          }
+        }
+      }
+      
+      setNodes(loadedNodes);
+      setEdges(loadedEdges);
+      setWorkflowName(data.name || '未命名工作流');
+    } catch (error) {
+      console.error('加载工作流失败:', error);
+      // 加载失败时使用默认节点
+      setNodes(createDefaultNodes());
+      setEdges([]);
+    }
+  };
+  
+  const onConnect = useCallback((params: Connection) => {
+    setEdges((eds) => addEdge({ ...params, animated: true }, eds));
+  }, [setEdges]);
+  
+  const onNodeClick = useCallback((_: any, node: Node) => {
+    setSelectedNode(node);
+  }, []);
+  
+  const onDragOver = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+  
+  const onDrop = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    
+    const type = event.dataTransfer.getData('application/reactflow');
+    if (!type) return;
+    
+    const bounds = (event.target as Element).getBoundingClientRect();
+    const x = event.clientX - bounds.left - 40;
+    const y = event.clientY - bounds.top - 20;
+    
+    const newNode: Node = {
+      id: `${type}_${Date.now()}`,
+      type: 'custom',
+      position: { x, y },
+      data: { type },
+    };
+    
+    setNodes((nds) => [...nds, newNode]);
+    setDragType(null);
+  }, [setNodes]);
+  
+  const updateNodeData = (key: string, value: any) => {
+    if (!selectedNode) return;
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === selectedNode.id
+          ? { ...n, data: { ...n.data, [key]: value } }
+          : n
+      )
+    );
+    setSelectedNode((n) => n ? { ...n, data: { ...n.data, [key]: value } } : null);
+  };
+  
+  const deleteSelectedNode = () => {
+    if (!selectedNode) return;
+    if (UNDELETABLE_TYPES.includes(selectedNode.data.type)) {
+      alert('此节点不可删除');
+      return;
+    }
+    setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
+    setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
+    setSelectedNode(null);
+  };
+  
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        name: workflowName,
+        nodes,
+        edges,
+      };
+      
+      let res;
+      if (workflowId) {
+        res = await fetch('/api/workflow', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: workflowId, ...payload }),
+        });
+      } else {
+        res = await fetch('/api/workflow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      
+      const data = await res.json();
+      if (res.ok) {
+        if (!workflowId) {
+          setWorkflowId(data.id);
+          window.history.replaceState({}, '', `/workflow/edit?id=${data.id}`);
+        }
+        alert('保存成功');
+      } else {
+        alert(data.error || '保存失败');
+      }
+    } catch (error) {
+      console.error('保存失败:', error);
+      alert('保存失败');
+    }
+    setSaving(false);
+  };
+  
+  // 添加节点（支持点击添加）
+  const handleAddNode = (type: string) => {
+    const config = NODE_TYPE_CONFIG[type];
+    if (!config) return;
+    
+    const newNode: Node = {
+      id: `${type}-${Date.now()}`,
+      type: 'custom',
+      position: { x: 200 + Math.random() * 100, y: 100 + Math.random() * 100 },
+      data: { type, ...Object.fromEntries(config.fields.map(f => [f.key, f.default])) }
+    };
+    setNodes([...nodes, newNode]);
+    setShowNodePanel(false); // 添加后关闭面板
+  };
+  
+  return (
+    <div className="h-screen flex flex-col bg-gray-50">
+      {/* 顶部导航 */}
+      <div className="h-10 border-b bg-white flex items-center justify-between px-2 shrink-0">
+        <div className="flex items-center gap-2">
+          <a href="/workflow/manage" className="text-blue-600 text-xs">← 管理</a>
+          <a href="/" className="text-xs font-bold text-gray-700 ml-2 hover:opacity-80">流程编辑</a>
+          <input
+            type="text"
+            value={workflowName}
+            onChange={(e) => setWorkflowName(e.target.value)}
+            className="px-2 py-0.5 border rounded text-xs w-28"
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          {/* 移动端添加节点按钮 */}
+          <button
+            onClick={() => setShowNodePanel(!showNodePanel)}
+            className="sm:hidden px-2 py-1 bg-green-500 text-white rounded text-[10px]"
+          >
+            + 节点
+          </button>
+          <button
+            onClick={() => { setNodes(createDefaultNodes()); setEdges(createDefaultEdges()); setSelectedNode(null); }}
+            className="px-2 py-1 bg-gray-200 rounded text-[10px]"
+          >
+            清空
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-2 py-1 bg-blue-500 text-white rounded text-[10px] disabled:opacity-50"
+          >
+            {saving ? '...' : '保存'}
+          </button>
+        </div>
+      </div>
+      
+      <div className="flex-1 flex relative">
+        {/* 左侧节点面板 - 桌面端 */}
+        <NodePalette onDragStart={handleAddNode} />
+        
+        {/* 移动端节点面板抽屉 */}
+        {showNodePanel && (
+          <div className="sm:hidden fixed inset-0 z-50">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setShowNodePanel(false)} />
+            <div className="absolute left-0 top-10 bottom-0 w-48 bg-white shadow-lg overflow-y-auto">
+              <NodePalette onDragStart={handleAddNode} compact />
+            </div>
+          </div>
+        )}
+        
+        {/* 画布 */}
+        <div className="flex-1">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodeClick={onNodeClick}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            nodeTypes={nodeTypes}
+            fitView
+          >
+            <Background />
+            <Controls className="sm:block hidden" />
+          </ReactFlow>
+        </div>
+        
+        {/* 右侧编辑面板 - 桌面端 */}
+        <div className="w-48 border-l bg-white overflow-y-auto hidden sm:block">
+          {selectedNode ? (
+            <NodeEditPanel
+              selectedNode={selectedNode}
+              onUpdate={updateNodeData}
+              onDelete={deleteSelectedNode}
+              onClose={() => setSelectedNode(null)}
+            />
+          ) : (
+            <div className="p-2 text-gray-400 text-[10px]">
+              <p>点击节点编辑参数</p>
+              <p className="mt-1">💡 用户输入和输出节点不可删除</p>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* 移动端底部编辑面板 */}
+      {selectedNode && (
+        <div className="sm:hidden fixed inset-x-0 bottom-0 bg-white border-t rounded-t-lg shadow-lg z-40 max-h-[50vh] overflow-y-auto">
+          <div className="sticky top-0 bg-white px-3 py-2 flex justify-center border-b">
+            <div className="w-10 h-1 bg-gray-300 rounded-full" />
+          </div>
+          <NodeEditPanel
+            selectedNode={selectedNode}
+            onUpdate={updateNodeData}
+            onDelete={deleteSelectedNode}
+            onClose={() => setSelectedNode(null)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function WorkflowEditPage() {
+  return (
+    <ReactFlowProvider>
+      <WorkflowEditor />
+    </ReactFlowProvider>
+  );
+}

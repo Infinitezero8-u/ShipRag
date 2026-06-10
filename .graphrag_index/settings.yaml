@@ -1,0 +1,31 @@
+chunks:
+  overlap: 100
+  size: 1200
+embeddings:
+  llm:
+    api_base: https://api.coze.cn/v1
+    api_key: ''
+    model: text-embedding-ada-002
+    type: openai_embedding
+encoding_model: cl100k_base
+global_search:
+  search_prompt: '
+
+    You are a maritime knowledge assistant. Given the user query, find exact entity
+
+    matches from the knowledge graph: port names, port codes, countries, routes, and
+
+    any maritime regulations referenced. Return exact matches first, then related
+    entities.
+
+    Prioritize: exact name match > code match > country match > semantic match.
+
+    '
+llm:
+  api_base: https://api.coze.cn/v1
+  api_key: ''
+  max_tokens: 4000
+  model: doubao-seed-1-8-251228
+  temperature: 0
+  type: openai_chat
+skip_workflows: []

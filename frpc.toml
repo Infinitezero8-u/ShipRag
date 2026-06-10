@@ -1,0 +1,11 @@
+serverAddr = "101.32.186.47"
+serverPort = 17000
+auth.method = "token"
+auth.token = "123456"
+
+[[proxies]]
+name = "shiprag-web"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 5000
+remotePort = 17001

@@ -1,0 +1,52 @@
+# ShipRag Skills Configuration
+# Coze Agent 技能注册表
+
+[[skills]]
+name = "shiprag-assistant"
+display = "海图问答助手"
+version = "1.0.0"
+description = "专业海图知识检索与智能问答。查询港口、航线、海图参数、规章制度。"
+icon = "🚢"
+trigger = ["港口", "port", "海图", "chart", "航道", "channel", "锚地", "anchorage", "航线", "route", "吃水", "draft", "水深", "depth", "航标", "船舶", "vessel", "海事", "maritime", "规章制度", "regulation"]
+endpoint = "/api/rag"
+method = "POST"
+streaming = true
+
+[[skills]]
+name = "shiprag-search"
+display = "知识库检索"
+version = "1.0.0"
+description = "在海图知识库中搜索港口、航线、海图数据，支持语义搜索和精确匹配。"
+icon = "🔍"
+trigger = ["搜索", "检索", "查找", "find", "search", "查询", "query"]
+endpoint = "/api/search"
+method = "POST"
+streaming = false
+
+[[skills]]
+name = "shiprag-upload"
+display = "数据上传"
+version = "1.0.0"
+description = "上传海图数据文件（Excel/CSV/JSON/图片）到知识库，自动解析和打标签。"
+icon = "📤"
+trigger = ["上传", "upload", "导入", "import", "添加数据", "录入"]
+endpoint = "/api/upload"
+method = "POST"
+streaming = false
+
+[[skills]]
+name = "shiprag-stats"
+display = "系统统计"
+version = "1.0.0"
+description = "查看系统运行统计，包括知识库条目、航迹数据、训练任务等。"
+icon = "📊"
+trigger = ["统计", "stats", "概览", "overview", "仪表盘", "dashboard"]
+endpoint = "/api/stats"
+method = "GET"
+streaming = false
+
+# 自动完成的后处理脚本
+[hooks]
+on_rag_complete = "保存对话上下文到 conversation_contexts 表"
+on_upload_complete = "提示用户执行向量化: curl -X POST /api/embed"
+on_search_empty = "自动切换到精确搜索模式重试"
