@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient, loadEnv } from '@/storage/database/supabase-client';
+import { getSupabaseClient, loadEnv } from '@/storage/database/local-db';
 import { createClient } from '@supabase/supabase-js';
-import { parseFile, getFileType } from '@/lib/parsers';
-import { HeaderUtils, S3Storage, LLMClient, Config, FetchClient } from 'coze-coding-dev-sdk';
+import { parseFile, getFileType, convertWithRAGAnything, shouldUseRAGAnything } from '@/lib/parsers';
+import { LLMClient } from '@/lib/ollama/llm';
+import { Config } from '@/lib/ollama/config';
 import { v4 as uuidv4 } from 'uuid';
 
 // 直接创建 Supabase 客户端（绕过 createWrappedFetch）
@@ -16,13 +17,18 @@ async function getDirectSupabaseClient() {
 }
 
 // 初始化对象存储
-const storage = new S3Storage({
-  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-  accessKey: "",
-  secretKey: "",
-  bucketName: process.env.COZE_BUCKET_NAME,
-  region: "cn-beijing",
-});
+const storage = null as any; // S3 not needed locally
+
+/**
+ * Upload RAGAnything-extracted images to S3 and generate descriptions
+ */
+async function enrichRAGAnythingImages(
+  parseResult: { items: any[] },
+  _storage: any // S3 not available locally
+): Promise<void> {
+  // Image paths already stored in metadata.imgPath by convertWithRAGAnything
+  // Local embedding happens in embed/route.ts via localPath/imgPath
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,60 +65,82 @@ export async function POST(request: NextRequest) {
 
     // 读取文件内容
     const buffer = Buffer.from(await file.arrayBuffer());
-    
-    // 如果是图片，上传到对象存储并生成描述
+
+    // 图片：存本地 + 可选 S3 + LLM 描述
     let imageUrl: string | undefined;
     let storageKey: string | undefined;
+    let localPath: string | undefined;
     let imageDescription: string | undefined;
     if (fileType === 'image') {
+      // 1. 始终存本地（优先方案）
+      try {
+        const fs = await import('fs/promises');
+        const localDir = '/Volumes/Data/raganything_storage/uploads';
+        await fs.mkdir(localDir, { recursive: true });
+        localPath = `${localDir}/${Date.now()}-${filename}`;
+        await fs.writeFile(localPath, buffer);
+      } catch (e) { /* 本地磁盘不可用，继续 */ }
+
+      // 2. 尝试 S3（可选，失败不影响）
       try {
         storageKey = await storage.uploadFile({
           fileContent: buffer,
           fileName: `images/${filename}`,
           contentType: file.type || 'image/jpeg',
         });
-        // 生成预签名 URL（有效期 7 天）
-        imageUrl = await storage.generatePresignedUrl({
-          key: storageKey,
-          expireTime: 604800, // 7 天
-        });
-        
-        // 使用 LLM 生成图片描述
-        try {
-          const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-          const llmClient = new LLMClient(new Config(), customHeaders);
-          const descriptionResult = await llmClient.invoke(
-            [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: '请用中文简要描述这张图片的内容，不超过100字。' },
-                  { type: 'image_url', image_url: { url: imageUrl } },
-                ],
-              },
-            ],
-            { model: 'doubao-seed-2-0-lite-260215' }
-          );
-          imageDescription = descriptionResult.content || '';
-        } catch (descError) {
-          console.error('生成图片描述失败:', descError);
-          imageDescription = filename; // 使用文件名作为备用描述
+        imageUrl = await storage.generatePresignedUrl({ key: storageKey, expireTime: 604800 });
+      } catch (e) { /* S3 不可用，使用本地路径 */ }
+
+      // 3. 用 Ollama 视觉模型生成描述
+      try {
+        const customHeaders: Record<string, string> = {};
+        const llmClient = new LLMClient(new Config(), customHeaders);
+        const base64 = buffer.toString('base64');
+        const mime = file.type || 'image/jpeg';
+        const descriptionResult = await llmClient.invoke(
+          [{ role: 'user', content: [
+            { type: 'text', text: '请用中文简要描述这张图片的内容，不超过100字。' },
+            { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
+          ]}]
+        );
+        imageDescription = descriptionResult.content || '';
+        if (!imageDescription || imageDescription.trim().length === 0) {
+          imageDescription = filename;
         }
-      } catch (uploadError) {
-        console.error('图片上传失败:', uploadError);
-        // 继续处理，但记录错误
+      } catch (e) {
+        imageDescription = filename;
       }
     }
     
-    // 解析文件
-    const parseResult = await parseFile(buffer, filename, file.type);
+    // 解析文件 (PDF/PPT 优先使用 RAGAnything MinerU)
+    let parseResult;
+    const useRAG = shouldUseRAGAnything() && (fileType === 'pdf' || fileType === 'ppt');
+
+    if (useRAG) {
+      console.log(`[RAGAnything] Attempting MinerU parse for ${filename}`);
+      try {
+        parseResult = await convertWithRAGAnything(buffer, filename);
+        if (!parseResult.success) {
+          console.log(`[RAGAnything] Failed (${parseResult.error}), falling back to MarkItDown`);
+          parseResult = await parseFile(buffer, filename, file.type);
+        } else {
+          // Handle RAGAnything extracted images: upload to S3
+          await enrichRAGAnythingImages(parseResult, storage);
+        }
+      } catch (e) {
+        console.log(`[RAGAnything] Exception, falling back to MarkItDown: ${e}`);
+        parseResult = await parseFile(buffer, filename, file.type);
+      }
+    } else {
+      parseResult = await parseFile(buffer, filename, file.type);
+    }
     
     if (!parseResult.success) {
       return NextResponse.json({ error: parseResult.error }, { status: 400 });
     }
 
     // 获取 Supabase 客户端
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+    const customHeaders: Record<string, string> = {};
     const supabase = await getDirectSupabaseClient();
 
     // 创建文件上传记录
@@ -145,6 +173,7 @@ export async function POST(request: NextRequest) {
           ...item.metadata,
           ...(imageUrl && { imageUrl }),
           ...(storageKey && { storageKey }),
+          ...(localPath && { localPath }),
           ...(imageDescription && { imageDescription }),
         },
         tags: autoTags,
@@ -363,25 +392,14 @@ export async function PATCH(request: NextRequest) {
 // 处理 URL 上传
 async function handleUrlUpload(url: string, request: NextRequest) {
   const supabase = getSupabaseClient();
-  const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-  const config = new Config();
-  const fetchClient = new FetchClient(config, customHeaders);
-  
+
   try {
-    // 使用 FetchClient 获取网页内容
-    const response = await fetchClient.fetch(url);
-    
-    if (response.status_code !== 0) {
-      return NextResponse.json({ 
-        error: `网页解析失败: ${response.status_message || '未知错误'}` 
-      }, { status: 400 });
+    // Fetch URL content
+    const fetchResp = await fetch(url);
+    if (!fetchResp.ok) {
+      return NextResponse.json({ error: `网页获取失败: HTTP ${fetchResp.status}` }, { status: 400 });
     }
-    
-    // 提取文本内容
-    const textContent = response.content
-      .filter((item): item is { type: 'text'; text: string } => item.type === 'text' && !!item.text)
-      .map(item => item.text)
-      .join('\n\n');
+    const textContent = await fetchResp.text();
     
     if (!textContent.trim()) {
       return NextResponse.json({ 
@@ -391,7 +409,7 @@ async function handleUrlUpload(url: string, request: NextRequest) {
     
     // 创建文件记录
     const fileId = uuidv4();
-    const title = response.title || new URL(url).hostname;
+    const title = new URL(url).hostname;
     
     // 保存文件上传记录
     await supabase.from('file_uploads').insert({
@@ -417,9 +435,9 @@ async function handleUrlUpload(url: string, request: NextRequest) {
       source: url,
       metadata: {
         url: url,
-        title: response.title,
-        publish_time: response.publish_time,
-        filetype: response.filetype,
+        title: title,
+        publish_time: null,
+        filetype: 'webpage',
       },
       tags: tags,
     });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient } from '@/storage/database/local-db';
 
 // 默认工作流节点连线关系
 const DEFAULT_EDGES = [

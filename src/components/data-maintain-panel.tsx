@@ -104,6 +104,7 @@ export function DataMaintainPanel() {
   const [ports, setPorts] = useState<PortData[]>([]);
   const [routes, setRoutes] = useState<RouteData[]>([]);
   const [regulations, setRegulations] = useState<RegulationData[]>([]);
+  const [regulationTotal, setRegulationTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [searchCode, setSearchCode] = useState('');
   
@@ -181,7 +182,7 @@ export function DataMaintainPanel() {
       const res = await fetch(`/api/data-maintain?action=list&type=route&pageSize=5000${keyword ? `&search=${encodeURIComponent(keyword)}` : ''}`);
       const data = await res.json();
       setRoutes(data.items || []);
-      setHasRouteSearched(true); // 加载成功后显示数据
+      setHasRouteSearched(!!keyword);
     } catch (e) {
       console.error(e);
     }
@@ -191,9 +192,10 @@ export function DataMaintainPanel() {
   const loadRegulations = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/regulations?page=1&pageSize=50');
+      const res = await fetch('/api/regulations?page=1&pageSize=200');
       const data = await res.json();
       setRegulations(data.items || []);
+      setRegulationTotal(data.total || 0);
     } catch (e) {
       console.error(e);
     }
@@ -218,10 +220,12 @@ export function DataMaintainPanel() {
   // 分页后的数据
   const paginatedPorts = pageSize === 0 ? filteredPorts : filteredPorts.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const paginatedRoutes = pageSize === 0 ? filteredRoutes : filteredRoutes.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  
+  const paginatedRegs = pageSize === 0 ? regulations : regulations.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   // 总页数
   const totalPortPages = pageSize === 0 ? 1 : Math.ceil(filteredPorts.length / pageSize);
   const totalRoutePages = pageSize === 0 ? 1 : Math.ceil(filteredRoutes.length / pageSize);
+  const totalRegPages = pageSize === 0 ? 1 : Math.ceil(regulations.length / pageSize);
 
   // 规章制度操作函数
   const handleRegulationDelete = async (reg: RegulationData) => {
@@ -507,7 +511,7 @@ export function DataMaintainPanel() {
       <div className="flex gap-2 text-xs text-muted-foreground flex-wrap">
         <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">港口: {ports.length}</span>
         <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900 rounded">航线: {routes.length}</span>
-        <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900 rounded">规章: {regulations.length}</span>
+        <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900 rounded">规章: {regulationTotal || regulations.length}</span>
       </div>
 
       {/* 操作按钮行 */}
@@ -802,7 +806,19 @@ export function DataMaintainPanel() {
                   </div>
                 </div>
               ) : (
-                regulations.map((reg) => (
+                <>
+                  <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>共 {regulationTotal || regulations.length} 个文档{pageSize > 0 && totalRegPages > 1 ? ' 第' + currentPage + '/' + totalRegPages + ' 页' : ''}</span>
+                    {pageSize > 0 && totalRegPages > 1 && (
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="outline" className="h-5 text-[10px] px-1" disabled={currentPage === 1} onClick={() => setCurrentPage(1)}>首页</Button>
+                        <Button size="sm" variant="outline" className="h-5 text-[10px] px-1" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>上一页</Button>
+                        <Button size="sm" variant="outline" className="h-5 text-[10px] px-1" disabled={currentPage === totalRegPages} onClick={() => setCurrentPage(p => p + 1)}>下一页</Button>
+                        <Button size="sm" variant="outline" className="h-5 text-[10px] px-1" disabled={currentPage === totalRegPages} onClick={() => setCurrentPage(totalRegPages)}>末页</Button>
+                      </div>
+                    )}
+                  </div>
+                  {paginatedRegs.map((reg) => (
                   <div key={reg.id} className="p-2 bg-muted/20 rounded hover:bg-muted/40">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -855,6 +871,8 @@ export function DataMaintainPanel() {
                     </div>
                   </div>
                 ))
+              }
+              </>
               )}
             </div>
           </div>

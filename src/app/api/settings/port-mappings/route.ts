@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient } from '@/storage/database/local-db';
 
 // 获取端口映射列表
 export async function GET(request: NextRequest) {

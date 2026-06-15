@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient } from '@/storage/database/local-db';
 
 // 航迹上传 API - 支持 Excel/CSV 导入
 export async function POST(request: NextRequest) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { EmbeddingClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { EmbeddingClient } from '@/lib/ollama/embedding';
+import { Config } from '@/lib/ollama/config';
+import { getSupabaseClient } from '@/storage/database/local-db';
 
 // 航迹检索 API
 export async function GET(request: NextRequest) {
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
     
     // 如果有文本查询，进行向量检索
     if (query && query.trim()) {
-      const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+      const customHeaders: Record<string, string> = {};
       const embeddingClient = new EmbeddingClient(new Config(), customHeaders);
       
       // 向量化查询
@@ -174,7 +175,7 @@ export async function POST(request: NextRequest) {
     
     // 如果有文本查询，进行向量检索
     if (query && query.trim()) {
-      const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+      const customHeaders: Record<string, string> = {};
       const embeddingClient = new EmbeddingClient(new Config(), customHeaders);
       
       // 向量化查询

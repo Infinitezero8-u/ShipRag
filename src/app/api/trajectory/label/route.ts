@@ -6,8 +6,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { LLMClient } from '@/lib/ollama/llm';
+import { Config } from '@/lib/ollama/config';
 
 // ============ 标签池定义 ============
 
@@ -148,7 +149,7 @@ async function intelligentLabeling(params: {
   historyData: any;
   similarCases: any[];
 }, headers?: Headers) {
-  const customHeaders = headers ? HeaderUtils.extractForwardHeaders(headers) : {};
+  const customHeaders = headers ? {} : {};
   const llmClient = new LLMClient(new Config(), customHeaders);
   
   // 构建Prompt
@@ -188,7 +189,7 @@ ${params.similarCases.slice(0, 5).map((c: any) =>
   try {
     const response = await llmClient.invoke(
       [{ role: 'user', content: prompt }],
-      { model: 'doubao-seed-2-0-lite-260215', temperature: 0.1 }
+      { model: 'qwen2.5:3b', temperature: 0.1 }
     );
     
     const content = response.content || '';

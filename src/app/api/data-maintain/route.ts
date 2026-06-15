@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { EmbeddingClient } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { EmbeddingClient } from '@/lib/ollama/embedding';
+import { Config } from '@/lib/ollama/config';
 
 const supabase = getSupabaseClient();
 const embeddingClient = new EmbeddingClient();
@@ -40,23 +41,47 @@ export async function GET(request: NextRequest) {
         const pageSize = parseInt(searchParams.get('pageSize') || '500');
         const search = searchParams.get('search') || '';
         const offset = (page - 1) * pageSize;
-        
+
         let query = supabase
           .from('port_data')
           .select('*')
           .order('port_code', { ascending: true });
-        
+
         if (search) {
           query = query.or(`port_code.ilike.%${search}%,name_cn.ilike.%${search}%,ctry_name_cn.ilike.%${search}%`);
         }
-        
+
         const [{ data, error }, { count }] = await Promise.all([
           query.range(offset, offset + pageSize - 1),
           supabase
             .from('port_data')
             .select('*', { count: 'exact', head: true })
         ]);
-        
+
+        if (error) throw error;
+        return NextResponse.json({ items: data, total: count, page, pageSize });
+      } else if (type === 'regulation') {
+        const page = parseInt(searchParams.get('page') || '1');
+        const pageSize = parseInt(searchParams.get('pageSize') || '500');
+        const search = searchParams.get('search') || '';
+        const offset = (page - 1) * pageSize;
+
+        let query = supabase
+          .from('regulations')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (search) {
+          query = query.or(`filename.ilike.%${search}%,original_content.ilike.%${search}%`);
+        }
+
+        const [{ data, error }, { count }] = await Promise.all([
+          query.range(offset, offset + pageSize - 1),
+          supabase
+            .from('regulations')
+            .select('*', { count: 'exact', head: true })
+        ]);
+
         if (error) throw error;
         return NextResponse.json({ items: data, total: count, page, pageSize });
       } else {

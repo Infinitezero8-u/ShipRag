@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient } from '@/storage/database/local-db';
 
 // Haversine 公式计算距离
 function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {

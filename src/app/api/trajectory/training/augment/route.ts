@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { LLMClient } from 'coze-coding-dev-sdk';
+import { LLMClient } from '@/lib/ollama/llm';
 
 const llm = new LLMClient();
 
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
           try {
             const messages = [{ role: 'user' as const, content: prompt }];
             const llmResponse = await llm.invoke(messages, {
-              model: 'doubao-seed-2-0-lite-260215',
+              model: 'qwen2.5:3b',
               temperature: 0.7
             });
 

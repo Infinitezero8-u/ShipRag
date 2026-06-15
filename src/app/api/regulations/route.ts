@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { S3Storage, EmbeddingClient, LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { EmbeddingClient } from '@/lib/ollama/embedding';
+import { Config } from '@/lib/ollama/config';
+import { LLMClient } from '@/lib/ollama/llm';
 import { v4 as uuidv4 } from 'uuid';
+
+// Coze SDK removed - using local alternatives
 
 // 文档分类
 const REGULATION_CATEGORIES = [
@@ -20,21 +24,24 @@ const CATEGORY_LABELS: Record<string, string> = {
   'other': '其他资料'
 };
 
-// 初始化对象存储
-const storage = new S3Storage({
-  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-  accessKey: "",
-  secretKey: "",
-  bucketName: process.env.COZE_BUCKET_NAME,
-  region: "cn-beijing",
-});
+// S3Storage 懒加载，避免模块初始化时连不上 Coze 导致整个路由不可用
+let _storage: any = null;
+function getStorage() {
+  if (!_storage) {
+    // S3Storage not needed locally
+    return null as any;
+_storage = null; // S3 not needed locally
+  }
+  return _storage;
+}
 
 // 获取分类标签
 export async function GET(request: NextRequest) {
+  try {
   const { searchParams } = new URL(request.url);
   const action = searchParams.get('action');
   const id = searchParams.get('id');
-  
+
   const supabase = getSupabaseClient();
   
   // 获取分类列表
@@ -58,17 +65,32 @@ export async function GET(request: NextRequest) {
     if (error || !regulation) {
       return NextResponse.json({ error: '文档不存在' }, { status: 404 });
     }
-    
-    // 获取该文档的所有切片
+
+    // 获取文档切片：优先从表，否则从正文段落拆分
     const { data: chunks } = await supabase
       .from('regulation_chunks')
       .select('*')
       .eq('regulation_id', id)
       .order('chunk_index', { ascending: true });
-    
+
+    let displayChunks = chunks || [];
+    if (displayChunks.length === 0 && regulation.original_content) {
+      const paragraphs = regulation.original_content
+        .split(/\n\n+/)
+        .filter((p: string) => p.trim().length > 0);
+      displayChunks = paragraphs.map((text: string, i: number) => ({
+        id: `${id}-chunk-${i}`,
+        regulation_id: id,
+        chunk_index: i,
+        content: text,
+        char_count: text.length,
+        created_at: regulation.created_at,
+      }));
+    }
+
     return NextResponse.json({
       regulation,
-      chunks: chunks || []
+      chunks: displayChunks
     });
   }
   
@@ -146,6 +168,10 @@ export async function GET(request: NextRequest) {
     page,
     pageSize
   });
+  } catch (e) {
+    console.error('GET regulations error:', e);
+    return NextResponse.json({ error: String(e instanceof Error ? e.message : e) }, { status: 500 });
+  }
 }
 
 // 文档上传与处理
@@ -236,13 +262,13 @@ export async function POST(request: NextRequest) {
     const fileSize = buffer.length;
     
     // 上传到对象存储
-    const storageKey = await storage.uploadFile({
+    const storageKey = await getStorage().uploadFile({
       fileContent: buffer,
       fileName: `regulations/${uuidv4()}/${filename}`,
       contentType: file.type || 'application/octet-stream',
     });
     
-    const storageUrl = await storage.generatePresignedUrl({
+    const storageUrl = await getStorage().generatePresignedUrl({
       key: storageKey,
       expireTime: 604800, // 7 天
     });
@@ -470,7 +496,8 @@ async function handleCategoryRecommendation(filenames: string[], request: NextRe
     return NextResponse.json({ recommendations: [] });
   }
   
-  const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+  // LLM/HeaderUtils not available locally
+  const customHeaders: Record<string, string> = {};
   const llmClient = new LLMClient(new Config(), customHeaders);
   
   const recommendations: Array<{
@@ -498,7 +525,7 @@ async function handleCategoryRecommendation(filenames: string[], request: NextRe
 
       const result = await llmClient.invoke(
         [{ role: 'user', content: prompt }],
-        { model: 'doubao-seed-2-0-lite-260215' }
+        { model: 'qwen2.5:3b' }
       );
       
       const response = result.content || '';
@@ -645,8 +672,9 @@ async function handleRevectorize(id: string, request: NextRequest) {
   }
   
   const supabase = getSupabaseClient();
-  const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-  const embeddingClient = new EmbeddingClient(new Config(), customHeaders);
+
+  const customHeaders: Record<string, string> = {};
+  const embeddingClient = new EmbeddingClient(new Config());
   
   // 获取文档
   const { data: regulation } = await supabase

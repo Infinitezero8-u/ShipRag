@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
+import { LLMClient } from '@/lib/ollama/llm';
+import { Config } from '@/lib/ollama/config';
 
 // SQL 结果润色 API
 export async function POST(request: NextRequest) {
@@ -14,12 +15,12 @@ export async function POST(request: NextRequest) {
 原始提问：${query}
 查询数据：${JSON.stringify(data, null, 2)}`;
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+    const customHeaders: Record<string, string> = {};
     const llmClient = new LLMClient(new Config(), customHeaders);
     
     const response = await llmClient.invoke(
       [{ role: 'user', content: polishPrompt }],
-      { model: 'doubao-seed-2-0-lite-260215' }
+      { model: 'qwen2.5:3b' }
     );
 
     const answer = response.content || '无法生成回答';

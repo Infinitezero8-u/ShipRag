@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { EmbeddingClient, LLMClient, Config, HeaderUtils, S3Storage } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { EmbeddingClient } from '@/lib/ollama/embedding';
+import { Config } from '@/lib/ollama/config';
+import { LLMClient } from '@/lib/ollama/llm';
+// S3 not needed locally
+function extractHeaders() { return {}; }
 import path from 'path';
 
 // 初始化对象存储
-const storage = new S3Storage({
-  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-  accessKey: "",
-  secretKey: "",
-  bucketName: process.env.COZE_BUCKET_NAME,
-  region: "cn-beijing",
-});
+const storage = null as any; // S3 not needed locally
 
 // 初始化 LLM 配置
 const llmConfig = new Config();
@@ -84,7 +82,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { itemId, batchSize = 10, skipDuplicate = true } = body;
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+    const customHeaders: Record<string, string> = {};
     const supabase = getSupabaseClient();
     const embeddingClient = new EmbeddingClient();
 
@@ -137,49 +135,63 @@ export async function POST(request: NextRequest) {
     for (const item of items) {
       // 处理图片类型
       if (item.modality === 'image') {
-        // 从 metadata 获取图片 URL
         const imageUrl = (item.metadata as Record<string, unknown>)?.imageUrl as string | undefined;
-        
-        if (!imageUrl) {
-          failed++;
-          errors.push(`图片 ${item.id} 没有有效的 URL`);
+        const localPath = (item.metadata as Record<string, unknown>)?.localPath as string | undefined;
+        const imgPath = (item.metadata as Record<string, unknown>)?.imgPath as string | undefined;
+
+        // 策略 1: 有本地路径（上传时存/RA解析）→ vision LLM + embedText
+        // 策略 2: 有 S3 URL → download + embedImage
+        // 策略 3: 两者都无 → 直接用标题文本 embedText
+
+        if (imageUrl) {
+          try {
+            const embedding = await embeddingClient.embedImage(imageUrl);
+            const { error: updateError } = await supabase.rpc('update_embedding', {
+              item_id: item.id, embedding_vector: embedding,
+            });
+            if (updateError) { failed++; errors.push(`图片 ${item.id} 更新失败: ${updateError.message}`); }
+            else { processed++; }
+          } catch (e) {
+            failed++; errors.push(`图片 ${item.id} 嵌入失败: ${e instanceof Error ? e.message : String(e)}`);
+          }
           continue;
         }
-        
+
+        // No URL — try local file vision description, otherwise embed title text
+        let imageDesc = item.content;
+        const resolvedPath = localPath || imgPath;
+        if ((!imageDesc || imageDesc === item.title) && resolvedPath) {
+          try {
+            const fs = await import('fs/promises');
+            const buf = await fs.readFile(resolvedPath);
+            const base64 = buf.toString('base64');
+            const mime = resolvedPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+            const llmClient = new LLMClient(new Config(), {});
+            const visResult = await llmClient.invoke([{
+              role: 'user',
+              content: [
+                { type: 'text', text: '请用中文简要描述这张图片的内容，不超过100字。' },
+                { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + base64 } },
+              ],
+            }]);
+            imageDesc = visResult.content || item.title || '图片';
+          } catch (e) {
+            imageDesc = item.title || '图片内容待识别';
+          }
+        }
+
+        // Embed description text
         try {
-          // 1. 使用 MarkItDown 生成图片描述（OCR）
-          let imageDescription = item.content || '';
-          if (!imageDescription || imageDescription.trim().length === 0) {
-            const { execSync } = await import('child_process');
-            const scriptPath = path.join(process.cwd(), 'scripts', 'markitdown_converter.py');
-            const result = execSync(`python3 "${scriptPath}" --url "${imageUrl}"`, {
-              encoding: 'utf-8',
-              timeout: 30000,
-            });
-            const parsed = JSON.parse(result);
-            imageDescription = parsed.content || '图片内容';
-            // 更新描述到数据库
-            await supabase.from('knowledge_items').update({ content: imageDescription }).eq('id', item.id);
-          }
-          
-          // 2. 使用图片嵌入 API
-          const embedding = await embeddingClient.embedImage(imageUrl);
-          
-          // 3. 更新向量
+          if (!imageDesc || imageDesc.trim().length === 0) imageDesc = item.title;
+          const embedding = await embeddingClient.embedText(imageDesc.substring(0, 2000));
+          await supabase.from('knowledge_items').update({ content: imageDesc }).eq('id', item.id);
           const { error: updateError } = await supabase.rpc('update_embedding', {
-            item_id: item.id,
-            embedding_vector: embedding,
+            item_id: item.id, embedding_vector: embedding,
           });
-          
-          if (updateError) {
-            failed++;
-            errors.push(`图片 ${item.id} 向量化失败: ${updateError.message}`);
-          } else {
-            processed++;
-          }
-        } catch (imgError) {
-          failed++;
-          errors.push(`图片 ${item.id} 嵌入失败: ${imgError instanceof Error ? imgError.message : String(imgError)}`);
+          if (updateError) { failed++; errors.push(`图片 ${item.id} 更新失败: ${updateError.message}`); }
+          else { processed++; }
+        } catch (e) {
+          failed++; errors.push(`图片 ${item.id} 嵌入失败: ${e instanceof Error ? e.message : String(e)}`);
         }
         continue;
       }
@@ -189,16 +201,13 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // 判重检查
+      // 判重检查 (仅跳过，不删除)
       if (skipDuplicate) {
         const contentHash = getContentHash(item.content);
         if (contentHashCache.has(contentHash)) {
           skipped++;
-          // 删除重复条目
-          await supabase.from('knowledge_items').delete().eq('id', item.id);
           continue;
         }
-        // 添加到缓存
         contentHashCache.add(contentHash);
       }
 
@@ -354,37 +363,15 @@ export async function DELETE(request: NextRequest) {
 
     let deletedCount = 0;
 
-    // 单条取消（仅取消待向量化条目，不影响已向量化的）
+    // 删除条目（支持已向量化和待向量化）
+    // 单条删除 / 批量删除
     if (singleId) {
-      // 先检查该条目是否为待向量化状态
-      const { data: item, error: checkError } = await supabase
-        .from('knowledge_items')
-        .select('id, embedding')
-        .eq('id', singleId)
-        .single();
-      
-      if (checkError) {
-        console.error('[DELETE] 查询条目失败:', checkError);
-        throw new Error('条目不存在');
-      }
-      
-      if (item.embedding !== null) {
-        throw new Error('该条目已向量化，无法取消');
-      }
-      
-      // 删除待向量化的条目
-      const { count, error } = await supabase
+      const { error } = await supabase
         .from('knowledge_items')
         .delete({ count: 'exact' })
-        .eq('id', singleId)
-        .is('embedding', null);
-
-      if (error) {
-        console.error('[DELETE] 单条删除失败:', error);
-        throw error;
-      }
-      deletedCount = count || 0;
-      console.log('[DELETE] 已删除单条:', deletedCount);
+        .eq('id', singleId);
+      if (error) { console.error('[DELETE] 删除失败:', error); throw error; }
+      deletedCount = 1;
     }
     // 全部取消
     else if (clearAll) {

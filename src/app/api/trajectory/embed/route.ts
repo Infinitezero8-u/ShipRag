@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { LLMClient, EmbeddingClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { LLMClient } from '@/lib/ollama/llm';
+import { EmbeddingClient } from '@/lib/ollama/embedding';
+import { Config } from '@/lib/ollama/config';
+import { getSupabaseClient } from '@/storage/database/local-db';
 
 // 航迹向量化 API
 export async function POST(request: NextRequest) {
@@ -8,7 +10,7 @@ export async function POST(request: NextRequest) {
     const { trajectoryId, prompt } = await request.json();
     
     const supabase = getSupabaseClient();
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+    const customHeaders: Record<string, string> = {};
     
     // 获取待向量化的航迹
     let query = supabase.from('trajectories').select('*');
@@ -51,7 +53,7 @@ WKT航线：${traj.wkt_route}
 
         const llmResponse = await llmClient.invoke(
           [{ role: 'user', content: descPrompt }],
-          { model: 'doubao-seed-2-0-lite-260215' }
+          { model: 'qwen2.5:3b' }
         );
         
         const aiDescription = llmResponse.content || '';

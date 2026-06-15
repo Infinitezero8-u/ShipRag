@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { LLMClient, EmbeddingClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { LLMClient } from '@/lib/ollama/llm';
+import { Config } from '@/lib/ollama/config';
+import { EmbeddingClient } from '@/lib/ollama/embedding';
+const BASE_URL = process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000';
+
 
 interface RagRequest {
   query: string;
@@ -16,40 +20,42 @@ interface RagRequest {
   commandType?: string; // 指令类型：chart_annotation/channel_regulation
 }
 
-// 更新上下文（在AI回复后调用）
+// 更新/保存对话历史
 async function updateContextAfterResponse(sessionId: string, query: string, answer: string): Promise<void> {
   try {
     const supabase = getSupabaseClient();
-    
-    // 获取当前上下文
+
     const { data: existing } = await supabase
       .from('conversation_contexts')
-      .select('messages, total_tokens')
+      .select('context_data, tokens_used')
       .eq('session_id', sessionId)
       .single();
-    
-    const messages = (existing?.messages as Array<{ role: string; content: string }>) || [];
-    
-    // 追加本轮问答
+
+    const contextData = (existing?.context_data as Record<string, any>) || {};
+    const messages = (contextData.messages as Array<{ role: string; content: string; time: string }>) || [];
+
     messages.push(
-      { role: 'user', content: query },
-      { role: 'assistant', content: answer }
+      { role: 'user', content: query, time: new Date().toISOString() },
+      { role: 'assistant', content: answer.substring(0, 500), time: new Date().toISOString() }
     );
-    
-    // 估算 token 数（简单估算：每 4 字符约 1 token）
-    const totalTokens = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
-    
-    // 更新上下文
+
+    const tokensUsed = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+
+    // 获取最后一条用户消息作为标题
+    const lastUserMsg = messages.filter(m => m.role === 'user').pop();
+    const title = lastUserMsg ? lastUserMsg.content.substring(0, 50) : '对话';
+
     await supabase
       .from('conversation_contexts')
       .upsert({
         session_id: sessionId,
-        messages,
-        total_tokens: totalTokens,
+        context_type: 'rag',
+        context_data: { messages, title },
+        tokens_used: tokensUsed,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'session_id' });
   } catch (error) {
-    console.error('更新上下文失败:', error);
+    console.error('保存对话历史失败:', error);
   }
 }
 
@@ -84,14 +90,24 @@ async function executeStatsQuery(supabase: ReturnType<typeof getSupabaseClient>,
   try {
     // 判断查询类型
     if (statsType === 'total' || statsType === 'count') {
-      // 总数查询
-      const { count, error } = await supabase
-        .from('knowledge_items')
-        .select('id', { count: 'exact', head: true });
-      
-      if (!error) {
-        result = `知识库中共有 **${count || 0}** 条记录。`;
-        sql = 'SELECT COUNT(*) FROM knowledge_items';
+      // 按查询目标选择正确的表: 港口 → port_data, 否则 → knowledge_items
+      const isPortQuestion = query.includes('港口') || query.includes('港');
+      if (isPortQuestion) {
+        const { count, error } = await supabase
+          .from('port_data')
+          .select('id', { count: 'exact', head: true });
+        if (!error) {
+          result = `港口数据库中共有 **${count || 0}** 个港口。`;
+          sql = 'SELECT COUNT(*) FROM port_data';
+        }
+      } else {
+        const { count, error } = await supabase
+          .from('knowledge_items')
+          .select('id', { count: 'exact', head: true });
+        if (!error) {
+          result = `知识库中共有 **${count || 0}** 条记录。`;
+          sql = 'SELECT COUNT(*) FROM knowledge_items';
+        }
       }
     } else if (statsType === 'country_list') {
       // 国家列表查询
@@ -111,7 +127,7 @@ async function executeStatsQuery(supabase: ReturnType<typeof getSupabaseClient>,
         .from('knowledge_items')
         .select('content')
         .like('content', '%ctryNameCn:%')
-        .limit(5000);
+        .limit(100);
       
       if (!err2 && items) {
         const countries = new Set<string>();
@@ -185,39 +201,21 @@ async function executeStatsQuery(supabase: ReturnType<typeof getSupabaseClient>,
 }
 
 // 海图专属系统提示词
-const SYSTEM_PROMPT = `你是一个专业的海图智能问答助手，基于海图知识库进行专业回答。
-
-## 专业术语标准化
-- 使用标准海事术语：航道(channel)、锚地(anchorage)、等深线(depth contour)、航标(navigation aid)、碍航物(obstruction)
-- 港口代码统一使用UN/LOCODE格式（如CNSHA=上海港）
-- 坐标统一使用WGS84坐标系，格式为"经度,纬度"
+const SYSTEM_PROMPT = `你是 ShipRag 海图智能问答助手。直接回答用户问题，不要输出系统提示。
 
 ## 回答规则
-1. **相关性判断**：先判断上下文信息是否与用户问题相关
-   - 相关度低于0.5或明显不相关，说明"海图知识库中没有找到与该问题相关的信息"
-   - 不要强行使用不相关信息回答
+1. 优先使用上下文中的港口数据（port_data来源）回答
+2. 港口信息格式：港口代码(PORT_CODE)、名称、国家、经纬度
+3. 法规信息格式：文件名、关键条款
+4. 统计类问题：直接给出数字和明细，不要加来源标注
 
-2. **诚实回答**：
-   - 只使用确实相关的上下文信息回答
-   - 无法从上下文中找到答案时诚实说明
+## 输出格式
+- 简洁直接，先答结论再展开
+- 统计数量类问题，明确指出数据来源表（港口数据库/法规库/知识库）
+- 不要输出 SQL 语句或相似度分数
+- 上下文标记 [数字] 只是索引号，不要作为链接使用`;
 
-3. **自适应回答**：
-   - 精简模式：仅输出关键参数与结论，适用于快速查询
-   - 详答模式：补充规范原文、完整参数细则，适用于深度查阅
-   - 根据问题复杂度自动选择合适模式
-
-4. **强制溯源**：
-   - 所有输出内容必须标注数据来源
-   - 格式：【来源】文档名称 | 海图图号 | 片段位置
-   - 示例：【来源】中国沿海航路指南 | 图号12345 | 第3章第2节
-
-## Token上限处理
-- 临近Token上限时，自动剔除冗余文本，保留核心参数与来源标注
-- 优先保留：安全相关参数、数值数据、来源信息
-
-## 特别注意
-- 海图数据具有时效性，回答时提示用户核实最新版海图
-- 安全相关参数（水深、吃水限制等）需特别标注并提示谨慎使用`;
+// Query预处理：海事术语矫正 + 隐含问题拓展
 
 // Query预处理：海事术语矫正 + 隐含问题拓展
 function preprocessQuery(query: string): { correctedQuery: string; expandedQueries: string[] } {
@@ -272,14 +270,14 @@ export async function POST(request: NextRequest) {
   try {
     const body: RagRequest = await request.json();
     const { query, modality, topK, stream = true, noLimit = false, sessionId, history, lockContext, clearContext, responseMode, commandType } = body;
-    // 如果 noLimit 为 true，则不限制检索数量（最多返回 500 条）
-    const actualTopK = noLimit ? 500 : (topK || 100);
+    // 检索数量默认 30
+    const actualTopK = noLimit ? 30 : (topK || 30);
 
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: '问题不能为空' }, { status: 400 });
     }
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+    const customHeaders: Record<string, string> = {};
     const supabase = getSupabaseClient();
     
     // ========== Query预处理 ==========
@@ -296,51 +294,27 @@ export async function POST(request: NextRequest) {
         // 处理清空上下文指令
         if (clearContext) {
           await supabase.from('conversation_contexts').update({
-            messages: [],
-            summary: null,
-            total_tokens: 0,
-            is_compressed: false,
-            locked_context: null,
+            context_data: { messages: [], title: '对话' },
+            tokens_used: 0,
             updated_at: new Date().toISOString(),
           }).eq('session_id', sessionId);
           contextMessages = [];
           effectiveQuery = correctedQuery;
         } else {
-          // 获取当前上下文（包含锁定状态）
+          // 获取当前上下文
           const { data: existingContext } = await supabase
             .from('conversation_contexts')
-            .select('messages, locked_context')
+            .select('context_data')
             .eq('session_id', sessionId)
             .single();
           
-          lockedContext = existingContext?.locked_context as typeof lockedContext;
-          
-          // 处理锁定上下文指令
-          if (lockContext && existingContext) {
-            // 从历史消息中提取海域和海图信息
-            const historyText = contextMessages.map(m => m.content).join(' ');
-            const chartIdMatch = historyText.match(/图号[：:]\s*(\d+)/g);
-            const portMatch = historyText.match(/[A-Z]{2}[A-Z]{3}/g);
-            
-            lockedContext = {
-              region: portMatch?.[0] || undefined,
-              chartIds: chartIdMatch?.map(m => m.replace(/图号[：:]\s*/, '')) || undefined,
-              sources: [],
-            };
-            
-            await supabase.from('conversation_contexts').update({
-              locked_context: lockedContext,
-            }).eq('session_id', sessionId);
-          }
-          
-          // 如果上下文已锁定，复用锁定的海域和海图范围
-          if (lockedContext) {
-            if (lockedContext.region) {
-              effectiveQuery = `[锁定海域: ${lockedContext.region}] ${correctedQuery}`;
-            }
-            if (lockedContext.chartIds?.length) {
-              effectiveQuery += ` [限定海图: ${lockedContext.chartIds.join(', ')}]`;
-            }
+          const ctxData = existingContext?.context_data as Record<string, any> || {};
+          lockedContext = ctxData?.locked_context as typeof lockedContext || null;
+
+          // 从保存的上下文加载历史消息
+          const savedMessages = (ctxData.messages as Array<{ role: string; content: string }>) || [];
+          if (savedMessages.length > 0) {
+            contextMessages = savedMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
           }
           
           // 1. 拼接新问题到历史对话
@@ -355,11 +329,8 @@ export async function POST(request: NextRequest) {
           // 3. 如果超过 128k，调用大模型总结压缩
           if (estimatedTokens > MAX_TOKENS) {
             const llmClient = new LLMClient(new Config(), customHeaders);
-            const summaryPrompt = `请将以下历史对话压缩为原来的1/3长度，保留关键信息、用户意图、锁定海域和功能状态：
-
-${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}`).join('\n')}
-
-压缩后的摘要：`;
+            const historyLines = contextMessages.map(m => (m.role === 'user' ? '用户' : 'AI') + ': ' + m.content).join('\n');
+            const summaryPrompt = '请将以下历史对话压缩为原来的三分之一长度，保留关键信息、用户意图、锁定海域和功能状态：\n\n' + historyLines + '\n\n压缩后的摘要：';
 
             const summaryResult = await llmClient.invoke([
               { role: 'user', content: summaryPrompt }
@@ -367,17 +338,18 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
             contextSummary = summaryResult.content || '';
             
             // 压缩后的摘要作为上下文
-            effectiveQuery = `[历史摘要]${contextSummary}\n\n[当前问题]${correctedQuery}`;
+            effectiveQuery = '[历史摘要]' + contextSummary + '\n\n[当前问题]' + correctedQuery;
           }
           
           // 保存上下文到数据库
           await supabase.from('conversation_contexts').upsert({
             session_id: sessionId,
-            messages: JSON.parse(JSON.stringify(contextMessages)),
-            summary: contextSummary || null,
-            total_tokens: estimatedTokens,
-            is_compressed: estimatedTokens > MAX_TOKENS,
-            locked_context: lockedContext,
+            context_type: 'rag',
+            context_data: {
+              messages: contextMessages,
+              title: query.substring(0, 50),
+            },
+            tokens_used: estimatedTokens,
             updated_at: new Date().toISOString(),
           }, { onConflict: 'session_id' });
         }
@@ -408,23 +380,28 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
     // 问题分类：调用分类 API 判断走 SQL 还是 RAG
     let isStats = false;
     try {
-      const classifyResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/classify`, {
+      const classifyResponse = await fetch(BASE_URL + '/api/rag/classify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: effectiveQuery }),
       });
       const classifyData = await classifyResponse.json();
-      isStats = classifyData.route === 'SQL';
+      // ALL 路由 + 计数类问题 → 统计分支
+      if (classifyData.route === 'ALL' && /一共|总共|多少个|有几个|数量|统计|多少/.test(query)) {
+        isStats = true;
+      } else {
+        isStats = classifyData.route === 'SQL';
+      }
     } catch (e) {
       // 分类失败，使用本地判断
       const localClassify = isStatsQuery(query);
       isStats = localClassify.isStats;
     }
-    
+
     if (isStats) {
-      // 使用 SQL API 动态生成和执行 SQL
+      // 统计类问题统一走 LLM SQL 生成（支持动态 WHERE/过滤/分组）
       try {
-        const sqlResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/sql`, {
+        const sqlResponse = await fetch(BASE_URL + '/api/rag/sql', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: effectiveQuery }),
@@ -435,7 +412,7 @@ ${contextMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}
         const result = sqlData.result?.[0]?.count ?? sqlData.result ?? 0;
         
         // 润色结果
-        const polishResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/sql-polish`, {
+        const polishResponse = await fetch(BASE_URL + '/api/rag/sql-polish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, data: sqlData.result }),
@@ -536,7 +513,7 @@ ${sessionContext.history.slice(-4).map(h => `Q: ${h.query}\nA: ${h.answer?.subst
 请直接输出改写后的问题，不要解释：`;
 
         const rewriteResponse = await llmClient.invoke([{ role: 'user', content: rewritePrompt }], {
-          model: 'doubao-seed-1-8-251228',
+          model: 'qwen2.5:3b',
           temperature: 0.3,
         });
         rewrittenQuery = rewriteResponse.content?.trim() || effectiveQuery;
@@ -566,20 +543,24 @@ ${sessionContext.history.slice(-4).map(h => `Q: ${h.query}\nA: ${h.answer?.subst
       contextItems = fallbackResult.items;
     }
 
-    // 4. 判断RAG结果是否足够（关键数据检测）
+    // 4. 检查 RAG 结果来源类型
     const ragResultCount = contextItems?.length || 0;
-    const avgSimilarity = contextItems && contextItems.length > 0 
-      ? contextItems.reduce((sum: number, item: { similarity: number }) => sum + item.similarity, 0) / contextItems.length 
+    const avgSimilarity = contextItems && contextItems.length > 0
+      ? contextItems.reduce((sum: number, item: { similarity: number }) => sum + item.similarity, 0) / contextItems.length
       : 0;
-    const isRagInsufficient = ragResultCount < 3 || avgSimilarity < 0.6;
+    const hasPortResults = (contextItems || []).some((item: { source?: string }) => item.source === 'port_data');
+    const hasRegResults = (contextItems || []).some((item: { source?: string }) => item.source === 'regulations');
+
+    // SQL 兜底仅对 knowledge_items 类型触发，port/reg 已在 vector_search 中有精确结果
+    const isRagInsufficient = !hasPortResults && !hasRegResults && (ragResultCount < 3 || avgSimilarity < 0.6);
     let sqlFallbackResult: { sql: string; result: unknown } | null = null;
     let usedFallback = false;
 
-    // 5. RAG结果不足时，自动走SQL补充（兜底分支）
+    // 5. RAG结果不足时，自动走SQL补充（仅 knowledge_items 查询）
     if (isRagInsufficient) {
       console.log(`[RAG不足] 结果数:${ragResultCount}, 平均相似度:${avgSimilarity.toFixed(3)}, 触发SQL兜底`);
       try {
-        const sqlResponse = await fetch(`${process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000'}/api/rag/sql`, {
+        const sqlResponse = await fetch(BASE_URL + '/api/rag/sql', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: rewrittenQuery }),
@@ -595,32 +576,56 @@ ${sessionContext.history.slice(-4).map(h => `Q: ${h.query}\nA: ${h.answer?.subst
       }
     }
 
-    // 6. 构建上下文
-    const context = (contextItems || [])
-      .map((item: { title: string; content: string; source: string; similarity: number }, index: number) => {
-        return `[${index + 1}] 标题: ${item.title}\n来源: ${item.source}\n相关度: ${item.similarity.toFixed(3)}\n内容: ${item.content?.substring(0, 500) || '无内容'}`;
-      })
-      .join('\n\n---\n\n');
+    // 6. 构建上下文（按来源分组，清晰标注）
+    const sourceGroups = { port: [] as any[], regulation: [] as any[], knowledge: [] as any[] };
+    (contextItems || []).forEach((item: any) => {
+      if (item.source === 'port_data') sourceGroups.port.push(item);
+      else if (item.source === 'regulations') sourceGroups.regulation.push(item);
+      else sourceGroups.knowledge.push(item);
+    });
 
-    // SQL补充数据格式化
-    const sqlContext = sqlFallbackResult 
-      ? `\n\n【数据库补充数据】\nSQL: ${sqlFallbackResult.sql}\n结果: ${JSON.stringify(sqlFallbackResult.result, null, 2).substring(0, 1000)}`
-      : '';
+    let contextParts: string[] = [];
+    if (sourceGroups.port.length > 0) {
+      contextParts.push('【港口数据库 port_data】\n' + sourceGroups.port.map((item, i) =>
+        `${item.title} | ${item.content?.substring(0, 200) || ''}`
+      ).join('\n'));
+    }
+    if (sourceGroups.regulation.length > 0) {
+      contextParts.push('【规章制度库 regulations】\n' + sourceGroups.regulation.map((item, i) =>
+        `${item.title} | ${item.content?.substring(0, 300) || ''}`
+      ).join('\n'));
+    }
+    if (sourceGroups.knowledge.length > 0) {
+      contextParts.push('【知识库 knowledge_items】\n' + sourceGroups.knowledge.map((item, i) =>
+        `[${i + 1}] ${item.title} (相关度:${(item.similarity || 0).toFixed(2)})\n${item.content?.substring(0, 300) || ''}`
+      ).join('\n'));
+    }
+    const context = contextParts.join('\n\n---\n\n') || '未找到相关信息';
+
+    // SQL补充数据（不暴露原始SQL给LLM）
+    let sqlContext = '';
+    if (sqlFallbackResult) {
+      const data = sqlFallbackResult.result;
+      if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object' && data[0] !== null) {
+        const keys = Object.keys(data[0]);
+        sqlContext = `\n\n【统计补充（knowledge_items 表）】\n${keys.join(' | ')}\n` +
+          data.slice(0, 20).map((r: any) => keys.map(k => r[k]).join(' | ')).join('\n');
+      } else {
+        sqlContext = `\n\n【统计补充】\n${JSON.stringify(data).substring(0, 500)}`;
+      }
+    }
 
     // 7. 构建消息（包含指令和模式提示）
     const messages = [
       { role: 'system' as const, content: SYSTEM_PROMPT + modeInstruction + instructionPrompt },
       { 
         role: 'user' as const, 
-        content: `上下文信息：
+        content: `以下是与用户问题相关的检索信息：
+
 ${context || '未找到相关信息'}${sqlContext}
 
-${expandedQueries.length > 0 ? `隐含检索维度：${expandedQueries.join('、')}\n` : ''}
 用户问题：${rewrittenQuery}
-
-注意：所有输出内容必须标注来源，格式为【知识库来源】文档名称 | 【数据库来源】表名.字段
-${usedFallback ? '\n提示：RAG检索结果不足，已自动补充数据库查询结果，请综合两部分数据回答。' : ''}
-${ragResultCount === 0 && !usedFallback ? '\n警告：未找到任何相关知识库内容，请如实告知用户"暂无相关资料"，禁止编造内容。' : ''}`
+${ragResultCount === 0 && !usedFallback ? '\n未找到任何相关资料，请如实告知用户，不要编造内容。' : ''}`
       },
     ];
 
@@ -633,7 +638,7 @@ ${ragResultCount === 0 && !usedFallback ? '\n警告：未找到任何相关知�
         async start(controller) {
           try {
             const llmStream = llmClient.stream(messages, {
-              model: 'doubao-seed-1-8-251228',
+              model: 'qwen2.5:3b',
               temperature: 0.7,
             });
 
@@ -665,7 +670,7 @@ ${ragResultCount === 0 && !usedFallback ? '\n警告：未找到任何相关知�
     } else {
       // 非流式响应
       const response = await llmClient.invoke(messages, {
-        model: 'doubao-seed-1-8-251228',
+        model: 'qwen2.5:3b',
         temperature: 0.7,
       });
 

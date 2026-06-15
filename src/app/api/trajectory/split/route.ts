@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient } from '@/storage/database/local-db';
 
 // 解析 WKT LINESTRING 获取坐标数组
 function parseWKT(wkt: string): [number, number][] {

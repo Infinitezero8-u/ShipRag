@@ -345,6 +345,191 @@ export async function convertWithMarkItDown(buffer: Buffer, filename: string): P
 }
 
 /**
+ * RAGAnything content item from MinerU parser
+ */
+interface RAGAnythingContentItem {
+  type: string;
+  text?: string;
+  img_path?: string;
+  image_caption?: string[];
+  table_body?: string;
+  table_caption?: string[];
+  text_level?: number;
+  bbox?: number[];
+  page_idx?: number;
+}
+
+/**
+ * RAGAnything parse result (from Python script)
+ */
+interface RAGAnythingResult {
+  success: boolean;
+  error?: string;
+  filename?: string;
+  content_list?: RAGAnythingContentItem[];
+  doc_id?: string;
+  page_count?: number;
+  parser_used?: string;
+}
+
+/**
+ * 使用 RAGAnything MinerU 解析 PDF/PPT 等复杂文档
+ * 需要: OPENAI_API_KEY (optional, for VLM image captioning)
+ * 需要: pip install 'raganything[all]'
+ */
+export async function convertWithRAGAnything(buffer: Buffer, filename: string): Promise<ParseResult> {
+  try {
+    const base64Content = buffer.toString('base64');
+    const scriptPath = path.join(process.cwd(), 'scripts', 'raganything_parser.py');
+
+    const result: RAGAnythingResult = await new Promise((resolve, reject) => {
+      const proc = spawn('python3', [scriptPath, '--stdin', filename], {
+        timeout: 300000, // 5 min timeout for large PDFs
+        env: {
+          ...process.env,
+          MINERU_MODEL_SOURCE: process.env.MINERU_MODEL_SOURCE || 'modelscope',
+        },
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (data) => { stdout += data.toString(); });
+      proc.stderr.on('data', (data) => { stderr += data.toString(); });
+
+      proc.on('error', (err) => reject(err));
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(stderr || `RAGAnything exited with code ${code}`));
+        } else {
+          try {
+            resolve(JSON.parse(stdout));
+          } catch (e) {
+            reject(new Error(`RAGAnything invalid JSON: ${stdout.substring(0, 200)}`));
+          }
+        }
+      });
+
+      proc.stdin.write(base64Content);
+      proc.stdin.end();
+    });
+
+    if (!result.success || !result.content_list) {
+      return { success: false, items: [], error: result.error || 'RAGAnything parse failed' };
+    }
+
+    console.log(`[RAGAnything] ${filename}: ${result.content_list.length} blocks, ${result.page_count} pages, parser=${result.parser_used}`);
+
+    return transformContentListToParsedItems(result.content_list, filename);
+
+  } catch (error) {
+    return {
+      success: false,
+      items: [],
+      error: `RAGAnything failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * 将 RAGAnything content_list 转换为 ShipRag ParsedItem[]
+ */
+function transformContentListToParsedItems(
+  contentList: RAGAnythingContentItem[],
+  filename: string
+): ParseResult {
+  const items: ParsedItem[] = [];
+
+  for (let i = 0; i < contentList.length; i++) {
+    const block = contentList[i];
+    const pageIdx = block.page_idx ?? 0;
+
+    if (block.type === 'text' && block.text) {
+      // Only keep meaningful text (skip single-line headers that are just numbers)
+      const text = block.text.trim();
+      if (text.length < 5) continue; // skip too-short fragments
+
+      const level = block.text_level || 0;
+      const titlePrefix = level <= 2 ? `[H${level}] ` : '';
+
+      items.push({
+        id: generateId(),
+        modality: 'pdf',
+        title: `${filename} - P${pageIdx + 1}${titlePrefix}`,
+        content: text,
+        metadata: {
+          source: filename,
+          pageIdx,
+          textLevel: level,
+          bbox: block.bbox,
+          type: 'text',
+        },
+      });
+    } else if (block.type === 'image' && block.img_path) {
+      // Image: store path for later S3 upload + LLM description
+      const caption = (block.image_caption || []).join('; ');
+      items.push({
+        id: generateId(),
+        modality: 'image',
+        title: `${filename} - P${pageIdx + 1} Image`,
+        content: caption || '', // will be enriched by upload route
+        metadata: {
+          source: filename,
+          pageIdx,
+          imgPath: block.img_path,
+          imageCaption: block.image_caption,
+          type: 'image',
+        },
+      });
+    } else if (block.type === 'table' && block.table_body) {
+      // Table: store markdown directly
+      const caption = (block.table_caption || []).join('; ');
+      items.push({
+        id: generateId(),
+        modality: 'pdf',
+        title: `${filename} - P${pageIdx + 1} Table${caption ? ': ' + caption : ''}`,
+        content: block.table_body,
+        metadata: {
+          source: filename,
+          pageIdx,
+          tableCaption: block.table_caption,
+          type: 'table',
+        },
+      });
+    }
+    // equation type is skipped for now (LaTeX doesn't embed well)
+  }
+
+  // If we got too few items, create one summary item with all text
+  if (items.length === 0) {
+    const allText = contentList
+      .filter(b => b.type === 'text' && b.text)
+      .map(b => b.text)
+      .join('\n\n');
+    if (allText) {
+      items.push({
+        id: generateId(),
+        modality: 'pdf',
+        title: filename,
+        content: allText,
+        metadata: { source: filename, type: 'full_text' },
+      });
+    }
+  }
+
+  return { success: true, items };
+}
+
+/**
+ * 检查是否应该使用 RAGAnything 解析
+ */
+export function shouldUseRAGAnything(): boolean {
+  // Feature toggle via env
+  if (process.env.RAG_ENRICHMENT_ENABLED !== 'true') return false;
+  return true;
+}
+
+/**
  * 统一解析入口
  */
 export async function parseFile(

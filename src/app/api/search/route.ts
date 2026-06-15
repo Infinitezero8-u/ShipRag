@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { EmbeddingClient, HeaderUtils } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { EmbeddingClient } from '@/lib/ollama/embedding';
+// HeaderUtils stub (local dev)
+function extractHeaders() { return {}; }
 
 interface SearchParams {
   query: string;
@@ -19,7 +21,7 @@ export async function POST(request: NextRequest) {
     const { 
       query, 
       modality, 
-      topK = 100, 
+      topK = 30,
       threshold = 0.3, 
       filter, 
       mode = 'fuzzy',
@@ -31,7 +33,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '查询内容不能为空' }, { status: 400 });
     }
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const supabase = getSupabaseClient();
 
     // 如果指定了标签过滤，使用标签优先搜索
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
         .from('port_data')
         .select('id, port_code, name_cn, ctry_name_cn, lon, lat, embedding')
         .not('embedding', 'is', null)
-        .limit(500);
+        .limit(100);
 
       if (!portError && ports && ports.length > 0) {
         const portResults = ports
@@ -308,7 +309,8 @@ async function fallbackSearch(
     query = query.eq('modality', modality);
   }
 
-  const { data: items, error: queryError } = await query.limit(1000);
+  const poolSize = Math.max(topK * 3, 50);
+  const { data: items, error: queryError } = await query.limit(poolSize);
 
   if (queryError) {
     return NextResponse.json({ error: `查询失败: ${queryError.message}` }, { status: 500 });
@@ -366,7 +368,7 @@ async function fallbackSearch(
       .from('port_data')
       .select('id, port_code, name_cn, ctry_name_cn, lon, lat, embedding')
       .not('embedding', 'is', null)
-      .limit(500);
+      .limit(Math.max(topK * 3, 50));
 
     if (!portError && ports && ports.length > 0) {
       const portResults = ports
@@ -421,81 +423,97 @@ async function exactSearch(
   page: number = 1,
   pageSize: number = 20
 ) {
-  // 构建搜索查询
-  let searchQuery = supabase
-    .from('knowledge_items')
-    .select('id, modality, title, content, source, metadata, created_at, tags', { count: 'exact' })
-    .not('embedding', 'is', null); // 只搜索已向量化的条目
-  
-  // 添加关键词搜索条件（搜索 title 和 content）
-  searchQuery = searchQuery.or(`title.ilike.%${query}%,content.ilike.%${query}%`);
-  
-  // 限定模态
-  if (modality) {
-    searchQuery = searchQuery.eq('modality', modality);
+  const allResults: any[] = [];
+
+  // 1. 搜索 knowledge_items
+  if (!modality || modality !== 'port') {
+    let q = supabase
+      .from('knowledge_items')
+      .select('id, modality, title, content, source, metadata, created_at, tags', { count: 'exact' })
+      .not('embedding', 'is', null)
+      .or(`title.ilike.%${query}%,content.ilike.%${query}%`)
+      .limit(topK || 100);
+
+    const { data, error } = await q;
+    if (!error && data) {
+      allResults.push(...data.map((r: any) => ({ ...r, similarity: 1.0, status: 'embedded' })));
+    }
   }
-  
-  // 限制返回数量
-  searchQuery = searchQuery.limit(topK || 100);
-  
-  const { data: results, error, count } = await searchQuery;
-  
-  if (error) {
-    return NextResponse.json({ error: `精确搜索失败: ${error.message}` }, { status: 500 });
+
+  // 2. 搜索 port_data
+  if (!modality || modality === 'port') {
+    const { data: ports } = await supabase
+      .from('port_data')
+      .select('id, port_code, name_cn, ctry_name_cn, lon, lat')
+      .or(`port_code.ilike.%${query}%,name_cn.ilike.%${query}%,ctry_name_cn.ilike.%${query}%`)
+      .limit(topK || 100);
+
+    if (ports) {
+      for (const p of ports) {
+        allResults.push({
+          id: p.id,
+          modality: 'port',
+          title: p.name_cn || p.port_code,
+          content: `港口代码: ${p.port_code}, 中文名: ${p.name_cn}, 国家: ${p.ctry_name_cn}, 经度: ${p.lon}, 纬度: ${p.lat}`,
+          source: 'port_data',
+          similarity: 1.0,
+          status: 'embedded',
+        });
+      }
+    }
   }
-  
-  // 应用过滤器
-  let filteredResults = results || [];
-  if (filter && filteredResults.length > 0) {
-    filteredResults = filteredResults.filter((item: { content?: string; metadata?: Record<string, unknown> }) => {
-      return Object.entries(filter).every(([key, value]) => {
-        // 从 content 中提取字段值进行匹配
-        const content = item.content || '';
-        const regex = new RegExp(`${key}:\\s*([^,]+)`, 'i');
-        const match = content.match(regex);
-        if (match) {
-          return match[1].trim().toLowerCase() === value.toLowerCase();
-        }
-        // 也检查 metadata
-        if (item.metadata && typeof item.metadata === 'object') {
-          const metadataValue = (item.metadata as Record<string, unknown>)[key];
-          if (metadataValue) {
-            return String(metadataValue).toLowerCase() === value.toLowerCase();
-          }
-        }
-        return false;
-      });
-    });
+
+  // 3. 搜索 regulations
+  if (!modality || modality === 'regulation') {
+    const { data: regs } = await supabase
+      .from('regulations')
+      .select('id, filename, original_content')
+      .or(`filename.ilike.%${query}%,original_content.ilike.%${query}%`)
+      .limit(topK || 100);
+
+    if (regs) {
+      for (const r of regs) {
+        allResults.push({
+          id: r.id,
+          modality: 'pdf',
+          title: r.filename,
+          content: r.original_content?.substring(0, 500) || '',
+          source: 'regulations',
+          similarity: 1.0,
+          status: 'embedded',
+        });
+      }
+    }
   }
-  
-  // 添加状态标识
-  const resultsWithStatus = filteredResults.map((item: { id: string; modality: string; title: string; content: string; source: string; metadata: Record<string, unknown>; created_at: string }) => ({
-    ...item,
-    status: 'embedded',
-    similarity: 1.0, // 精确匹配相似度为 1
-  }));
-  
-  // 分页处理
-  const totalCount = resultsWithStatus.length;
+
+  // 去重 + 排序
+  const seen = new Set<string>();
+  const uniqueResults = allResults.filter(r => {
+    const key = `${r.modality}:${r.title}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => b.similarity - a.similarity).slice(0, topK || 100);
+
+  // 分页
+  const totalCount = uniqueResults.length;
   const totalPages = Math.ceil(totalCount / pageSize);
   const startIndex = (page - 1) * pageSize;
-  const paginatedResults = resultsWithStatus.slice(startIndex, startIndex + pageSize);
-  
+  const paginatedResults = uniqueResults.slice(startIndex, startIndex + pageSize);
+
   return NextResponse.json({
     success: true,
     query,
     mode: 'exact',
     results: paginatedResults,
     count: paginatedResults.length,
-    pagination: {
-      page,
-      pageSize,
-      totalCount,
-      totalPages,
-      hasMore: page < totalPages,
-    },
+    pagination: { page, pageSize, totalCount, totalPages, hasMore: page < totalPages },
   });
 }
+export {}; // 模块声明
+
+// 删除旧的 exactSearch 余下部分
+async function _oldExactSearchDeleted() {}
 
 // 基于标签的搜索
 async function tagBasedSearch(
@@ -503,7 +521,7 @@ async function tagBasedSearch(
   query: string,
   tag: string,
   modality?: string,
-  topK: number = 100,
+  topK: number = 30,
   threshold: number = 0.3,
   page: number = 1,
   pageSize: number = 20

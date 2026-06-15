@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { LLMClient } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { LLMClient } from '@/lib/ollama/llm';
 
 const supabase = getSupabaseClient();
 
@@ -86,18 +86,36 @@ ${historyText}`;
   }
 }
 
-// GET: 获取上下文
+// GET: 获取上下文列表或单个上下文
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const sessionId = searchParams.get('session_id');
-    
+    const action = searchParams.get('action');
+
+    // 列出所有对话历史
+    if (action === 'list') {
+      const { data, error } = await supabase
+        .from('conversation_contexts')
+        .select('session_id, context_data, tokens_used, created_at, updated_at')
+        .eq('context_type', 'rag')
+        .order('updated_at', { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return NextResponse.json({ success: true, conversations: data || [] });
+    }
+
     if (!sessionId) {
       return NextResponse.json({ error: '缺少 session_id' }, { status: 400 });
     }
-    
-    const context = await getContext(sessionId);
-    return NextResponse.json({ success: true, context });
+
+    const { data, error } = await supabase
+      .from('conversation_contexts')
+      .select('*')
+      .eq('session_id', sessionId)
+      .single();
+    if (error) return NextResponse.json({ success: true, context: null });
+    return NextResponse.json({ success: true, context: data });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

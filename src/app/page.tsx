@@ -1,1397 +1,508 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { DataMaintainPanel } from '@/components/data-maintain-panel';
-import { 
-  Upload, 
-  Search, 
-  MessageSquare, 
-  FileText, 
-  Image, 
-  FileSpreadsheet,
-  Loader2,
-  Send,
-  Play,
-  Pause,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  Eye,
-  Settings,
-  Download
+import {
+  Upload, Search, MessageSquare, FileText, Image, FileSpreadsheet,
+  Loader2, Send, Play, Pause, X, ChevronLeft, ChevronRight, Eye, Trash2,
+  Database, BarChart3, Map, Settings, Download, FileUp, Filter
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
-// 动态导入海图组件
+// 海图组件（懒加载）
 const SeaMapComponent = dynamic(() => import('@/app/sea-chart/SeaMap'), {
   ssr: false,
-  loading: () => (
-    <div className="h-full w-full flex items-center justify-center bg-gray-100">
-      <div className="text-gray-500">加载地图中...</div>
-    </div>
-  ),
+  loading: () => <div className="h-64 flex items-center justify-center bg-slate-100 rounded-lg text-slate-400 text-sm">海图加载中...</div>,
 });
 
-// 内嵌海图组件
-function SeaChartEmbed() {
-  const [ports, setPorts] = useState<{id: string; name: string; lat: number; lng: number; country?: string; ctryCode?: string}[]>([]);
-  const [routes, setRoutes] = useState<{id: string; coordinates: [number, number][]}[]>([]);
-  const [loading, setLoading] = useState(true);
+// ── 类型定义 ──────────────────────────────────
+type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json';
+type Panel = 'home' | 'rag' | 'search' | 'upload' | 'maintain' | 'chart' | 'trajectory' | 'training' | 'inference' | 'workflow' | 'dashboard' | 'settings' | 'label' | 'autoresearch';
+interface KnowItem { id: string; modality: string; title: string; content: string; source: string; similarity?: number; status: string; metadata?: Record<string, unknown>; }
+interface PagInfo { page: number; pageSize: number; totalCount: number; totalPages: number; hasMore: boolean; }
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        // 加载港口数据（全部）
-        const portsRes = await fetch('/api/data-maintain?action=list&type=port&limit=10000');
-        const portsData = await portsRes.json();
-        if (portsData.success && portsData.data) {
-          const mappedPorts = portsData.data.map((p: {port_code: string; name_cn: string; lat: number; lon: number; ctry_name_cn?: string; ctry_code?: string}) => ({
-            id: p.port_code,
-            name: p.name_cn,
-            lat: p.lat,
-            lng: p.lon,
-            country: p.ctry_name_cn,
-            ctryCode: p.ctry_code,
-          })).filter((p: {lat: number; lng: number}) => p.lat && p.lng);
-          setPorts(mappedPorts);
-        }
+// ── 模块卡片（按分类分组）───────────────
+const CATEGORIES = [
+  { title: '知识引擎', items: [
+    { id: 'rag' as Panel,       label: '智能问答', icon: '💬', color: '#8b5cf6' },
+    { id: 'search' as Panel,    label: '知识检索', icon: '🔍', color: '#0ea5e9' },
+    { id: 'upload' as Panel,    label: '文件上传', icon: '📤', color: '#10b981' },
+    { id: 'maintain' as Panel,  label: '数据维护', icon: '🗄️', color: '#f59e0b' },
+    { id: 'autoresearch' as Panel, label: '知识管理', icon: '📋', color: '#f97316' },
+  ]},
+  { title: '航迹平台', items: [
+    { id: 'trajectory' as Panel,label: '航迹分析', icon: '📈', color: '#06b6d4' },
+    { id: 'training' as Panel,  label: '航迹训练', icon: '🧠', color: '#ec4899' },
+    { id: 'inference' as Panel, label: '航迹推理', icon: '🎯', color: '#a855f7' },
+    { id: 'label' as Panel,     label: '航迹标注', icon: '🏷️', color: '#eab308' },
+  ]},
+  { title: '数据视图', items: [
+    { id: 'chart' as Panel,     label: '海图',     icon: '🗺️', color: '#f43f5e' },
+    { id: 'dashboard' as Panel, label: '仪表盘',   icon: '📊', color: '#14b8a6' },
+  ]},
+  { title: '系统管理', items: [
+    { id: 'workflow' as Panel,  label: '工作流',   icon: '⚙️', color: '#64748b' },
+    { id: 'settings' as Panel,  label: '系统设置', icon: '⚡', color: '#78716c' },
+  ]},
+];
 
-        // 加载航线数据（全部）
-        const routesRes = await fetch('/api/data-maintain?action=list&type=route&limit=10000');
-        const routesData = await routesRes.json();
-        if (routesData.success && routesData.data) {
-          const mappedRoutes = routesData.data
-            .filter((r: {geometry_wkt?: string}) => r.geometry_wkt)
-            .map((r: {route_code: string; geometry_wkt: string}) => {
-              try {
-                const match = r.geometry_wkt.match(/LINESTRING\s*\((.*)\)/i);
-                if (match) {
-                  const coords = match[1].split(',').map((pair: string) => {
-                    const [lng, lat] = pair.trim().split(/\s+/).map(Number);
-                    return [lng, lat] as [number, number];
-                  });
-                  return { id: r.route_code, coordinates: coords };
-                }
-                return null;
-              } catch {
-                return null;
-              }
-            })
-            .filter(Boolean) as {id: string; coordinates: [number, number][]}[];
-          setRoutes(mappedRoutes);
-        }
-      } catch (error) {
-        console.error('加载海图数据失败:', error);
-      } finally {
-        setLoading(false);
+// ── 问答面板（含历史）────────────────────────
+function RagPanel({ back }: { back: () => void }) {
+  const [q, setQ] = useState('');
+  const [ans, setAns] = useState('');
+  const [src, setSrc] = useState<{ title?: string; content?: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [sid, setSid] = useState(() => 'rag-' + Date.now());
+  const [history, setHistory] = useState<{ session_id: string; title: string; time: string }[]>([]);
+  const [showHistory, setShowHistory] = useState(true);
+
+  // 进入面板时自动加载历史
+  useEffect(() => { loadHistory(); }, []);
+
+  // 加载历史
+  const loadHistory = async () => {
+    try {
+      const r = await fetch('/api/context?action=list');
+      const d = await r.json();
+      if (d.success) {
+        setHistory((d.conversations || []).map((c: any) => ({
+          session_id: c.session_id,
+          title: (c.context_data?.title || c.context_data?.messages?.[0]?.content || '对话').substring(0, 30),
+          time: c.updated_at ? new Date(c.updated_at).toLocaleString('zh-CN') : '',
+        })));
       }
-    };
-    loadData();
-  }, []);
+    } catch { /* ignore */ }
+  };
 
-  if (loading) {
-    return (
-      <div className="h-full w-full flex items-center justify-center bg-gray-100">
-        <div className="text-gray-500">加载数据中...</div>
-      </div>
-    );
-  }
+  // 发送问题
+  const ask = async () => {
+    if (!q.trim()) return;
+    setLoading(true); setAns(''); setSrc([]);
+    setShowHistory(false);
+    try {
+      const r = await fetch('/api/rag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, stream: false, sessionId: sid }),
+      });
+      const d = await r.json();
+      setAns(d.answer || d.error || '无结果');
+      setSrc(d.sources || []);
+    } catch { setAns('请求失败'); }
+    setLoading(false);
+  };
+
+  // 加载历史对话
+  const loadConversation = async (id: string) => {
+    setSid(id);
+    setShowHistory(false);
+    try {
+      const r = await fetch('/api/context?session_id=' + id);
+      const d = await r.json();
+      if (d.success && d.context?.context_data?.messages) {
+        const msgs = d.context.context_data.messages;
+        setQ(msgs.filter((m: any) => m.role === 'user').pop()?.content || '');
+      }
+    } catch { /* ignore */ }
+  };
+
+  // 新对话
+  const newChat = () => {
+    setSid('rag-' + Date.now());
+    setQ(''); setAns(''); setSrc([]); setShowHistory(false);
+  };
 
   return (
-    <SeaMapComponent
-      mapCenter={[20, 110]}
-      mapZoom={3}
-      showSeaMap={true}
-      showPorts={true}
-      showTrack={false}
-      showTrajectories={true}
-      allPorts={ports}
-      selectedCountries={['CN', 'US', 'OTHER']}
-      mockTrack={[]}
-      customTrack={[]}
-      trajectories={routes.map(r => ({
-        id: r.id,
-        segment_id: r.id,
-        start_port: null,
-        end_port: null,
-        wkt_route: null,
-        sea_area: null,
-        ai_description: null,
-        coordinates: r.coordinates,
-      }))}
-      selectedTrajectory={null}
-      onMapClick={() => {}}
-    />
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={back} className="text-slate-500">
+            <ChevronLeft className="w-4 h-4 mr-1" />返回
+          </Button>
+          <h2 className="font-bold text-sm">💬 智能问答</h2>
+        </div>
+        <div className="flex gap-1">
+          <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => { loadHistory(); setShowHistory(!showHistory); }}>
+            📋 {showHistory ? '关闭' : '历史'}
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={newChat}>➕ 新建</Button>
+        </div>
+      </div>
+
+      {/* 历史面板 */}
+      {showHistory && (
+        <div className="bg-slate-50 rounded-lg p-3 max-h-64 overflow-y-auto space-y-1">
+          {history.length === 0 && <div className="text-xs text-slate-400 text-center py-4">暂无对话记录</div>}
+          {history.map(h => (
+            <button key={h.session_id} onClick={() => loadConversation(h.session_id)}
+              className={`w-full text-left p-2 rounded text-xs hover:bg-slate-200 flex items-center justify-between ${h.session_id === sid ? 'bg-blue-50' : ''}`}>
+              <span className="truncate">{h.title}</span>
+              <span className="text-[10px] text-slate-400 shrink-0 ml-2">{h.time}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 输入区 */}
+      <div className="flex gap-2">
+        <Textarea value={q} onChange={e => setQ(e.target.value)} placeholder="输入问题..." className="flex-1 text-sm" rows={3}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }} />
+        <Button onClick={ask} disabled={loading} size="sm" className="h-auto"><Send className="w-4 h-4" /></Button>
+      </div>
+
+      {/* 回答 */}
+      {loading && <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" />思考中...</div>}
+      {ans && <div className="bg-white border rounded-lg p-3 text-sm whitespace-pre-wrap">{ans}</div>}
+      {src.length > 0 && (
+        <details className="text-xs text-slate-400">
+          <summary className="cursor-pointer">📎 引用来源 ({src.length})</summary>
+          <ul className="mt-1 space-y-1">{src.map((s, i) => <li key={i} className="truncate">{s.title || '未知'}</li>)}</ul>
+        </details>
+      )}
+    </div>
   );
 }
 
-type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json' | 'trajectory';
-
-const modalityIcons: Record<Modality, React.ReactNode> = {
-  text: <FileText className="w-4 h-4" />,
-  image: <Image className="w-4 h-4" />,
-  excel: <FileSpreadsheet className="w-4 h-4" />,
-  doc: <FileText className="w-4 h-4" />,
-  md: <FileText className="w-4 h-4" />,
-  json: <FileText className="w-4 h-4" />,
-  trajectory: <FileSpreadsheet className="w-4 h-4" />,
-};
-
-const modalityLabels: Record<Modality, string> = {
-  text: '文本',
-  image: '图片',
-  excel: 'Excel',
-  doc: '文档',
-  md: 'MD',
-  json: 'JSON',
-  trajectory: '航迹',
-};
-
-interface KnowledgeItem {
-  id: string;
-  modality: string;
-  title: string;
-  content: string;
-  source: string;
-  similarity?: number;
-  status: 'embedded' | 'pending';
-  metadata?: Record<string, unknown>;
+// ── 子页面内嵌组件 ───────────────────────────
+function IframePanel({ title, src, back }: { title: string; src: string; back: () => void }) {
+  return (
+    <div className="space-y-3 flex flex-col h-[calc(100vh-2rem)]">
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={back}>
+          <ChevronLeft className="w-4 h-4 mr-1" />返回
+        </Button>
+        <span className="font-bold text-sm">{title}</span>
+      </div>
+      <iframe src={src} className="flex-1 w-full border-0 rounded-lg" title={title} />
+    </div>
+  );
 }
 
-interface Pagination {
-  page: number;
-  pageSize: number;
-  totalCount: number;
-  totalPages: number;
-  hasMore: boolean;
-}
-
+// ── 主页面 ────────────────────────────────────
 export default function RagPage() {
-  const [showHome, setShowHome] = useState(false); // 是否显示首页
-  const [activeTab, setActiveTab] = useState('rag'); // 默认问答
-  
-  // 上传状态
+  const [panel, setPanel] = useState<Panel>('home');
+  const [embedStatus, setEmbedStatus] = useState<{ total: number; embedded: number; pending: number } | null>(null);
+
+  // 上传
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{
-    success: boolean;
-    filename?: string;
-    itemCount?: number;
-    error?: string;
-  } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [urlInput, setUrlInput] = useState('');
-  
-  // 向量化状态
-  const [embedStatus, setEmbedStatus] = useState<{
-    total: number;
-    embedded: number;
-    pending: number;
-  } | null>(null);
-  const [embedding, setEmbedding] = useState(false);
-  const [autoEmbedding, setAutoEmbedding] = useState(false);
-  const autoEmbeddingRef = useRef(false); // 用于在 async 循环中正确检测停止信号
-  const [embedProgress, setEmbedProgress] = useState({ processed: 0, failed: 0 });
-  
-  // 展开/折叠状态
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
-  const [detailItems, setDetailItems] = useState<KnowledgeItem[]>([]);
-  const [detailLoading, setDetailLoading] = useState(false);
-  
-  // 搜索状态
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchModality, setSearchModality] = useState<string>('');
-  const [searchMode, setSearchMode] = useState<'fuzzy' | 'exact'>('fuzzy');
-  const [searchTag, setSearchTag] = useState<string>(''); // 标签过滤
-  const [availableTags, setAvailableTags] = useState<{name: string, count: number}[]>([]); // 可用标签列表
-  const [searching, setSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState<KnowledgeItem[]>([]);
-  const [searchPagination, setSearchPagination] = useState<Pagination | null>(null);
-  const [searchPage, setSearchPage] = useState(1);
-  
-  // 预览状态
-  const [previewItem, setPreviewItem] = useState<KnowledgeItem | null>(null);
-  
-  // RAG 状态
-  const [ragQuery, setRagQuery] = useState('');
-  const [ragAnswer, setRagAnswer] = useState('');
-  const [ragSources, setRagSources] = useState<{title?: string, content?: string, source?: string}[]>([]);
-  const [ragLoading, setRagLoading] = useState(false);
-  const [ragTokenLimit, setRagTokenLimit] = useState(50000); // 用户可调整的 token 上限
-  const [ragSessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2)}`); // 会话ID
-  const [showSourceDialog, setShowSourceDialog] = useState(false); // 来源弹窗
-  const answerRef = useRef<HTMLDivElement>(null);
-
-  // 获取向量化状态
-  const fetchEmbedStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/embed');
-      const data = await res.json();
-      setEmbedStatus({
-        total: data.total || 0,
-        embedded: data.embedded || 0,
-        pending: data.pending || 0,
-      });
-    } catch (error) {
-      console.error('获取状态失败:', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchEmbedStatus();
-    fetchAvailableTags();
-    const interval = setInterval(fetchEmbedStatus, 5000);
-    return () => clearInterval(interval);
-  }, [fetchEmbedStatus]);
-  
-  // 获取可用标签列表
-  const fetchAvailableTags = async () => {
-    try {
-      const res = await fetch('/api/search?action=tags');
-      const data = await res.json();
-      if (data.success) {
-        setAvailableTags(data.tags || []);
-      }
-    } catch (error) {
-      console.error('获取标签列表失败:', error);
-    }
-  };
-
-  // 文件上传
-  const handleUpload = async () => {
-    const fileInput = fileInputRef.current;
-    if (!fileInput?.files?.length) return;
-
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append('file', file);
-
-    setUploading(true);
-    setUploadResult(null);
-
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      setUploadResult(data);
-      if (data.success) {
-        fetchEmbedStatus();
-      }
-    } catch (error) {
-      setUploadResult({ success: false, error: '上传失败' });
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  // URL 解析上传
-  const handleUrlUpload = async () => {
-    if (!urlInput.trim()) return;
-    
-    setUploading(true);
-    setUploadResult(null);
-
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlInput.trim() }),
-      });
-      const data = await res.json();
-      setUploadResult({
-        success: data.success,
-        filename: data.title || urlInput,
-        itemCount: data.itemCount || 0,
-        error: data.error,
-      });
-      if (data.success) {
-        setUrlInput('');
-        fetchEmbedStatus();
-      }
-    } catch (error) {
-      setUploadResult({ success: false, error: '网页解析失败' });
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  // 单次向量化
-  const handleEmbed = async () => {
-    setEmbedding(true);
-    try {
-      await fetch('/api/embed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batchSize: 50 }),
-      });
-      fetchEmbedStatus();
-    } finally {
-      setEmbedding(false);
-    }
-  };
-
-  // 自动向量化
-  const toggleAutoEmbed = async () => {
-    if (autoEmbedding) {
-      // 停止向量化
-      autoEmbeddingRef.current = false;
-      setAutoEmbedding(false);
-      
-      // 询问是否删除待处理条目
-      if (embedStatus && embedStatus.pending > 0) {
-        if (confirm(`是否删除剩余 ${embedStatus.pending} 条待向量化的条目？`)) {
-          try {
-            const res = await fetch('/api/embed', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ clearAll: true }),
-            });
-            const data = await res.json();
-            alert(`已删除 ${data.deleted} 条待处理条目`);
-            fetchEmbedStatus();
-          } catch (error) {
-            console.error('删除待处理条目失败:', error);
-          }
-        }
-      }
-      return;
-    }
-
-    // 开始向量化
-    autoEmbeddingRef.current = true;
-    setAutoEmbedding(true);
-    setEmbedProgress({ processed: 0, failed: 0 });
-
-    while (autoEmbeddingRef.current) {
-      try {
-        const res = await fetch('/api/embed', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ batchSize: 50 }),
-        });
-        const data = await res.json();
-        
-        setEmbedProgress(prev => ({
-          processed: prev.processed + (data.processed || 0),
-          failed: prev.failed + (data.failed || 0),
-        }));
-
-        // 如果没有处理任何条目，或者没有更多待处理条目，自动停止
-        if (data.processed === 0 || data.pending === 0) {
-          autoEmbeddingRef.current = false;
-          setAutoEmbedding(false);
-          break;
-        }
-        
-        await fetchEmbedStatus();
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
-        console.error('自动向量化出错:', error);
-        autoEmbeddingRef.current = false;
-        setAutoEmbedding(false);
-        break;
-      }
-    }
-  };
-
-  // 获取详情列表
-  const fetchDetailItems = async (type: 'embedded' | 'pending' | 'all') => {
-    setDetailLoading(true);
-    try {
-      const res = await fetch(`/api/search?type=${type}&limit=20`);
-      const data = await res.json();
-      setDetailItems(data.items || []);
-    } finally {
-      setDetailLoading(false);
-    }
-  };
-
-  const toggleSection = (section: string) => {
-    if (expandedSection === section) {
-      setExpandedSection(null);
-    } else {
-      setExpandedSection(section);
-      fetchDetailItems(section as 'embedded' | 'pending' | 'all');
-    }
-  };
-
-  // 全部取消
-  const handleCancelAll = async () => {
-    if (!confirm('确定要删除所有待向量化的条目吗？\n\n注意：已向量化的数据不会被删除。')) return;
-    try {
-      console.log('[全部取消] 开始执行...');
-      const res = await fetch('/api/embed', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clearAll: true }),
-      });
-      const data = await res.json();
-      console.log('[全部取消] 响应:', data);
-      
-      if (data.success) {
-        // 显示实际删除数量
-        const stats = data.stats || { total: 0, embedded: 0, pending: 0 };
-        alert(`✅ 成功删除 ${data.deleted} 条待向量化条目\n\n当前统计：\n- 总条目: ${stats.total}\n- 已向量化: ${stats.embedded}\n- 待处理: ${stats.pending}`);
-        
-        // 强制刷新状态（从服务器重新拉取）
-        console.log('[全部取消] 强制刷新统计...');
-        await fetchEmbedStatus();
-        
-        // 如果当前展开的是待处理列表，也刷新它
-        if (expandedSection === 'pending') {
-          await fetchDetailItems('pending');
-        }
-      } else {
-        alert(`❌ 删除失败: ${data.error || '未知错误'}`);
-      }
-    } catch (error) {
-      console.error('[全部取消] 错误:', error);
-      alert('取消失败: ' + (error instanceof Error ? error.message : '网络错误'));
-    }
-  };
-  
-  // 单条取消
-  const handleCancelSingle = async (id: string) => {
-    if (!confirm('确定要取消该条目的向量化吗？')) return;
-    try {
-      const res = await fetch('/api/embed', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ singleId: id }),
-      });
-      const data = await res.json();
-      
-      if (data.success) {
-        // 强制刷新状态
-        await fetchEmbedStatus();
-        if (expandedSection === 'pending') {
-          await fetchDetailItems('pending');
-        }
-      } else {
-        alert(`取消失败: ${data.error || '未知错误'}`);
-      }
-    } catch (error) {
-      console.error('[单条取消] 错误:', error);
-      alert('取消失败');
-    }
-  };
+  const [uploadMsg, setUploadMsg] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   // 搜索
-  const handleSearch = async (page: number = 1) => {
-    if (!searchQuery.trim() && !searchTag) return;
-    setSearching(true);
-    setSearchPage(page);
+  const [sq, setSq] = useState('');
+  const [sMode, setSMode] = useState<'fuzzy' | 'exact'>('fuzzy');
+  const [sResults, setSResults] = useState<KnowItem[]>([]);
+  const [sPage, setSPage] = useState<PagInfo | null>(null);
+  const [sLoading, setSLoading] = useState(false);
+  const [sPageNum, setSPageNum] = useState(1);
+
+  // RAG
+  const [rQuery, setRQuery] = useState('');
+  const [rAnswer, setRAnswer] = useState('');
+  const [rSources, setRSources] = useState<{ title?: string; content?: string }[]>([]);
+  const [rLoading, setRLoading] = useState(false);
+
+  // 嵌入
+  const [embedding, setEmbedding] = useState(false);
+  const [eProgress, setEProgress] = useState({ done: 0, fail: 0 });
+
+  // 港口/航线数据（海图用）
+  const [chartData, setChartData] = useState<{ ports: any[]; routes: any[] }>({ ports: [], routes: [] });
+
+  // ── 加载嵌入状态 ──
+  const loadStatus = async () => {
     try {
-      // 构建过滤条件
-      const filter: Record<string, string> = {};
-      if (searchModality) filter.modality = searchModality;
-      if (searchTag) filter.tags = searchTag;
-      
-      const res = await fetch('/api/search', {
+      const r = await fetch('/api/embed');
+      const d = await r.json();
+      if (d.success) setEmbedStatus({ total: d.total, embedded: d.embedded, pending: d.pending });
+    } catch { /* ignore */ }
+  };
+  useEffect(() => { loadStatus(); }, []);
+
+  // ── 上传 ──
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploading(true); setUploadMsg('');
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const r = await fetch('/api/upload', { method: 'POST', body: fd });
+      const d = await r.json();
+      setUploadMsg(d.error ? `❌ ${d.error}` : `✅ ${f.name} (${d.itemCount || 0} 条)`);
+      loadStatus();
+    } catch { setUploadMsg('❌ 上传失败'); }
+    setUploading(false);
+  };
+
+  // ── 搜索 ──
+  const doSearch = async (page = 1) => {
+    if (!sq.trim()) return;
+    setSLoading(true);
+    try {
+      const r = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: searchQuery || searchTag, // 如果没有查询词，用标签作为查询词
-          topK: 500, // 获取更多结果用于分页
-          threshold: 0.3,
-          mode: searchMode,
-          filter: Object.keys(filter).length > 0 ? filter : undefined,
-          page,
-          pageSize: 10,
-        }),
+        body: JSON.stringify({ query: sq, mode: sMode, topK: 30, page, pageSize: 10 }),
       });
-      const data = await res.json();
-      setSearchResults(data.results || []);
-      setSearchPagination(data.pagination || null);
-    } finally {
-      setSearching(false);
-    }
+      const d = await r.json();
+      setSResults(d.results || []);
+      setSPage(d.pagination);
+      setSPageNum(page);
+    } catch { /* ignore */ }
+    setSLoading(false);
   };
 
-  // RAG 问答（支持指令参数）
-  const handleRagQuery = async (options?: {
-    lockContext?: boolean;
-    clearContext?: boolean;
-    responseMode?: 'brief' | 'detailed';
-    commandType?: string;
-  }) => {
-    if (!ragQuery.trim()) return;
-    setRagLoading(true);
-    setRagAnswer('');
-    setRagSources([]);
-
+  // ── RAG 问答 ──
+  const doRag = async () => {
+    if (!rQuery.trim()) return;
+    setRLoading(true); setRAnswer(''); setRSources([]);
     try {
-      // 计算 topK 基于用户设置的 token 上限（假设每条约 200 tokens）
-      const calculatedTopK = Math.floor(ragTokenLimit / 200);
-      
-      const res = await fetch('/api/rag', {
+      const r = await fetch('/api/rag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          query: ragQuery, 
-          topK: calculatedTopK,
-          noLimit: true,
-          sessionId: ragSessionId,
-          lockContext: options?.lockContext,
-          clearContext: options?.clearContext,
-          responseMode: options?.responseMode,
-          commandType: options?.commandType,
-          stream: false, // 使用非流式模式以便获取sources
-        }),
+        body: JSON.stringify({ query: rQuery, stream: false }),
       });
-
-      const data = await res.json();
-      if (data.success) {
-        setRagAnswer(data.answer || '');
-        setRagSources(data.sources || []);
-      } else {
-        setRagAnswer(data.error || '请求失败');
-      }
-    } catch (error) {
-      setRagAnswer('请求出错，请重试');
-      console.error('RAG请求错误:', error);
-    } finally {
-      setRagLoading(false);
-    }
+      const d = await r.json();
+      setRAnswer(d.answer || d.error || '无结果');
+      setRSources(d.sources || []);
+    } catch { setRAnswer('问答请求失败'); }
+    setRLoading(false);
   };
 
-  // 获取图片描述
-  const getImageDescription = (item: KnowledgeItem): string => {
-    if (item.metadata?.description) {
-      return item.metadata.description as string;
+  // ── 嵌入 ──
+  const batchEmbed = async () => {
+    setEmbedding(true); setEProgress({ done: 0, fail: 0 });
+    let totalDone = 0, totalFail = 0;
+    while (true) {
+      try {
+        const r = await fetch('/api/embed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchSize: 200, skipDuplicate: false }),
+        });
+        const d = await r.json();
+        totalDone += d.processed || 0;
+        totalFail += d.failed || 0;
+        setEProgress({ done: totalDone, fail: totalFail });
+        if (d.pending === 0) break;
+      } catch { totalFail++; break; }
     }
-    if (item.content && item.content.length > 0) {
-      return item.content.substring(0, 150);
-    }
-    return '图片已向量化，暂无描述';
+    setEmbedding(false);
+    loadStatus();
   };
 
-  return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-4xl mx-auto p-3 sm:p-4">
-        {/* 标题 */}
-        <div className="flex items-center justify-between mb-2">
-          <h1 className="text-xl sm:text-2xl font-bold">跨模态 RAG 知识检索</h1>
-        </div>
-        
-        {/* 导航链接 */}
-        <div className="flex items-center gap-4 mb-4 text-sm">
-          <button onClick={() => setShowHome(true)} className="text-gray-600 hover:text-gray-900 flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-            首页
-          </button>
-          <a href="/workflow" className="text-purple-600 hover:text-purple-800 flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
-            工作流
-          </a>
-          <a href="/manage" className="text-blue-600 hover:text-blue-800 flex items-center gap-1">
-            <Settings className="w-4 h-4" />
-            管理
-          </a>
-        </div>
+  // ── 删除条目 ──
+  const delItem = async (id: string, title: string) => {
+    if (!confirm(`删除 "${title}"？`)) return;
+    await fetch('/api/embed', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ singleId: id }) });
+    setSResults(p => p.filter(x => x.id !== id));
+    loadStatus();
+  };
 
-        {/* 首页功能选择 */}
-        {showHome ? (
-          <div className="flex flex-col gap-6 mt-8">
-            <p className="text-center text-muted-foreground text-sm">选择功能开始使用</p>
-            <div className="grid grid-cols-1 gap-4">
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => { setShowHome(false); setActiveTab('rag'); }}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
-                    <MessageSquare className="w-6 h-6 text-green-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">💬 智能问答</h3>
-                    <p className="text-sm text-muted-foreground">基于知识库的 RAG 智能问答</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
-              
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => { setShowHome(false); setActiveTab('sea-chart'); }}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
-                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">🗺️ 海图显示</h3>
-                    <p className="text-sm text-muted-foreground">港口航线分布可视化</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
-              
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => { setShowHome(false); setActiveTab('search'); }}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
-                    <Search className="w-6 h-6 text-purple-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">🔍 知识检索</h3>
-                    <p className="text-sm text-muted-foreground">语义搜索知识条目</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
-              
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => { setShowHome(false); setActiveTab('upload'); }}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Upload className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">📤 文件上传</h3>
-                    <p className="text-sm text-muted-foreground">上传文件构建知识库</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
-              
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => window.location.href = '/workflow/manage'}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
-                    <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">⚙️ 工作流管理</h3>
-                    <p className="text-sm text-muted-foreground">管理和编辑 RAG 工作流</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
-              
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => window.location.href = '/segment-label'}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-cyan-100 flex items-center justify-center">
-                    <svg className="w-6 h-6 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">🏷️ 航迹标注平台</h3>
-                    <p className="text-sm text-muted-foreground">航段行为和意图标注管理</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
-              
-              <Card 
-                className="cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]" 
-                onClick={() => window.location.href = '/trajectory-training'}
-              >
-                <CardContent className="p-6 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center">
-                    <svg className="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.755-.988-2.386l-.548-.547z" /></svg>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">🧠 航迹训练平台</h3>
-                    <p className="text-sm text-muted-foreground">分类模型训练、版本管理和推理</p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        ) : (
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="flex items-center justify-between mb-4">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setShowHome(true)}
-              className="text-muted-foreground"
-            >
-              <ChevronLeft className="w-4 h-4 mr-1" />
-              返回
-            </Button>
-            <TabsList className="grid grid-cols-5 gap-1">
-              <TabsTrigger value="rag" className="text-xs">💬 问答</TabsTrigger>
-              <TabsTrigger value="search" className="text-xs">🔍 检索</TabsTrigger>
-              <TabsTrigger value="upload" className="text-xs">📤 上传</TabsTrigger>
-              <TabsTrigger value="maintain" className="text-xs">🗄️ 维护</TabsTrigger>
-              <TabsTrigger value="sea-chart" className="text-xs">🗺️ 海图</TabsTrigger>
-            </TabsList>
-            <div className="w-16" /> {/* 占位 */}
-          </div>
+  // ── 加载海图数据 ──
+  const loadChart = async () => {
+    if (chartData.ports.length > 0) return;
+    try {
+      const [pr, rr] = await Promise.all([
+        fetch('/api/data-maintain?action=list&type=port&pageSize=5000'),
+        fetch('/api/data-maintain?action=list&type=route&pageSize=5000'),
+      ]);
+      const pd = await pr.json();
+      const rd = await rr.json();
+      setChartData({
+        ports: (pd.items || []).map((p: any) => ({ id: p.port_code, name: p.name_cn, lat: p.lat, lng: p.lon, country: p.ctry_name_cn, ctryCode: p.ctry_code })).filter((p: any) => p.lat && p.lng),
+        routes: (rd.items || []).filter((r: any) => r.geometry_wkt).map((r: any) => {
+          const m = r.geometry_wkt.match(/LINESTRING\s*\((.*)\)/i);
+          if (!m) return null;
+          return { id: r.id, coordinates: m[1].split(',').map((p: string) => p.trim().split(/\s+/).map(Number) as [number, number]) };
+        }).filter(Boolean),
+      });
+    } catch { /* ignore */ }
+  };
 
-          {/* 文件上传 */}
-          <TabsContent value="upload">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">文件上传</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* 上传区域 */}
-                <div className="border-2 border-dashed rounded-lg p-4 text-center">
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleUpload}
-                    accept=".txt,.md,.json,.xlsx,.xls,.csv,.docx,.pdf,.pptx,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a"
-                    className="hidden"
-                  />
-                  <Button 
-                    onClick={() => fileInputRef.current?.click()} 
-                    disabled={uploading}
-                    className="w-full h-10 text-sm"
-                  >
-                    {uploading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        上传中...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="w-4 h-4 mr-2" />
-                        选择文件
-                      </>
-                    )}
-                  </Button>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    支持 Excel、Word、PDF、PPT、图片、音频、JSON、MD
-                  </p>
-                </div>
+  // ── 返回箭头 ──
+  const BackBtn = () => (
+    <Button variant="ghost" size="sm" onClick={() => setPanel('home')} className="text-slate-500">
+      <ChevronLeft className="w-4 h-4 mr-1" />返回
+    </Button>
+  );
 
-                {/* URL 解析 */}
-                <div className="space-y-2">
-                  <Label className="text-sm">或输入网页链接</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="https://example.com/article"
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      className="flex-1 text-sm h-9"
-                    />
-                    <Button 
-                      onClick={handleUrlUpload}
-                      disabled={uploading || !urlInput.trim()}
-                      size="sm"
-                      className="h-9"
-                    >
-                      {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : '解析'}
-                    </Button>
-                  </div>
-                </div>
-
-                {/* 上传结果 */}
-                {uploadResult && (
-                  <div className={`p-3 rounded-lg text-sm ${uploadResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                    {uploadResult.success 
-                      ? `✅ ${uploadResult.filename} - ${uploadResult.itemCount} 条` 
-                      : `❌ ${uploadResult.error}`}
-                  </div>
-                )}
-
-                {/* 统计卡片 */}
-                {embedStatus && (
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      onClick={() => toggleSection('all')}
-                      className="p-3 bg-muted rounded-lg text-center"
-                    >
-                      <div className="text-2xl font-bold">{embedStatus.total}</div>
-                      <div className="text-xs text-muted-foreground">知识条目</div>
-                    </button>
-                    <button
-                      onClick={() => toggleSection('embedded')}
-                      className="p-3 bg-green-100 rounded-lg text-center"
-                    >
-                      <div className="text-2xl font-bold text-green-700">{embedStatus.embedded}</div>
-                      <div className="text-xs text-green-600">已向量化</div>
-                    </button>
-                    <button
-                      onClick={() => toggleSection('pending')}
-                      className="p-3 bg-yellow-100 rounded-lg text-center"
-                    >
-                      <div className="text-2xl font-bold text-yellow-700">{embedStatus.pending}</div>
-                      <div className="text-xs text-yellow-600">待处理</div>
-                    </button>
-                  </div>
-                )}
-
-                {/* 向量化进度 */}
-                {autoEmbedding && (
-                  <div className="space-y-2">
-                    <Progress value={(embedProgress.processed / (embedStatus?.total || 1)) * 100} />
-                    <p className="text-xs text-center text-muted-foreground">
-                      已处理 {embedProgress.processed} 条，失败 {embedProgress.failed} 条
-                    </p>
-                  </div>
-                )}
-
-                {/* 展开详情 */}
-                {expandedSection && (
-                  <div className="border rounded-lg p-3 max-h-60 overflow-y-auto space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium">
-                        {expandedSection === 'all' ? '全部' : expandedSection === 'embedded' ? '已向量化' : '待处理'}
+  // ── 渲染面板 ──
+  const renderPanel = () => {
+    switch (panel) {
+      // =================== 智能问答 ===================
+      case 'rag':
+        return <RagPanel back={() => setPanel('home')} />;
+      // =================== 知识检索 ===================
+      case 'search':
+        return (
+          <div className="space-y-4">
+            <BackBtn />
+            <Card><CardContent className="p-4 space-y-3">
+              <h2 className="font-bold text-lg">🔍 知识检索</h2>
+              <div className="flex gap-2">
+                <Input value={sq} onChange={e => setSq(e.target.value)} placeholder="搜索知识库..." className="text-sm" onKeyDown={e => e.key === 'Enter' && doSearch()} />
+                <select value={sMode} onChange={e => setSMode(e.target.value as any)} className="text-xs border rounded px-2">
+                  <option value="fuzzy">语义</option><option value="exact">精确</option>
+                </select>
+                <Button size="sm" onClick={() => doSearch()} disabled={sLoading}><Search className="w-4 h-4" /></Button>
+              </div>
+              {sLoading && <div className="text-sm text-slate-400">搜索中...</div>}
+              {sPage && <div className="text-xs text-slate-400">共 {sPage.totalCount} 条，第 {sPage.page}/{sPage.totalPages} 页</div>}
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {sResults.map((r, i) => (
+                  <div key={r.id || i} className="p-2 bg-slate-50 rounded hover:bg-slate-100 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Badge variant="outline" className="text-[10px]">{r.modality}</Badge>
+                        <span className="font-medium truncate max-w-[200px]">{r.title?.substring(0, 40)}</span>
                       </span>
-                      <Button variant="ghost" size="sm" onClick={() => setExpandedSection(null)}>
-                        <X className="w-4 h-4" />
-                      </Button>
+                      <span className="flex items-center gap-1">
+                        {r.similarity !== undefined && <span className="text-green-600 font-bold">{(r.similarity * 100).toFixed(0)}%</span>}
+                        <Trash2 className="w-3 h-3 text-red-400 cursor-pointer hover:text-red-600" onClick={() => delItem(r.id, r.title)} />
+                      </span>
                     </div>
-                    {detailLoading ? (
-                      <div className="text-center py-4"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></div>
-                    ) : (
-                      detailItems.slice(0, 10).map(item => (
-                        <div key={item.id} className="text-xs p-2 bg-muted rounded flex justify-between">
-                          <span className="truncate flex-1">{item.title}</span>
-                          <Badge variant="outline" className="ml-2 text-xs">{modalityLabels[item.modality as Modality] || item.modality}</Badge>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {/* 向量化按钮 */}
-                {embedStatus && embedStatus.pending > 0 && (
-                  <div className="space-y-2">
-                    <Button 
-                      onClick={toggleAutoEmbed} 
-                      disabled={embedding}
-                      className="w-full h-11"
-                      variant={autoEmbedding ? "destructive" : "default"}
-                    >
-                      {autoEmbedding ? (
-                        <>
-                          <Pause className="w-4 h-4 mr-2" />
-                          停止向量化
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4 mr-2" />
-                          自动向量化 ({embedStatus.pending} 条)
-                        </>
-                      )}
-                    </Button>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button onClick={handleEmbed} disabled={embedding || autoEmbedding} variant="outline" className="h-10">
-                        单次处理
-                      </Button>
-                      <Button onClick={handleCancelAll} variant="destructive" disabled={autoEmbedding} className="h-10">
-                        全部取消
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 知识检索 */}
-          <TabsContent value="search">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">智能检索</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* 搜索框 */}
-                <div className="space-y-2">
-                  <Input
-                    placeholder="输入检索内容..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch(1)}
-                    className="h-11 text-base"
-                  />
-                  
-                  {/* 搜索选项 */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <select
-                      className="h-10 px-3 border rounded-md text-sm"
-                      value={searchMode}
-                      onChange={(e) => setSearchMode(e.target.value as 'fuzzy' | 'exact')}
-                    >
-                      <option value="fuzzy">🔍 模糊搜索</option>
-                      <option value="exact">🎯 精确搜索</option>
-                    </select>
-                    <select
-                      className="h-10 px-3 border rounded-md text-sm"
-                      value={searchModality}
-                      onChange={(e) => setSearchModality(e.target.value)}
-                    >
-                      <option value="">全部类型</option>
-                      <option value="excel">Excel</option>
-                      <option value="text">文本</option>
-                      <option value="doc">文档</option>
-                      <option value="image">图片</option>
-                    </select>
-                  </div>
-                  
-                  {/* 标签过滤 */}
-                  <select
-                    className="h-10 px-3 border rounded-md text-sm w-full"
-                    value={searchTag}
-                    onChange={(e) => { setSearchTag(e.target.value); if (e.target.value) handleSearch(1); }}
-                  >
-                    <option value="">全部标签</option>
-                    {availableTags.slice(0, 20).map(t => (
-                      <option key={t.name} value={t.name}>🏷️ {t.name} ({t.count})</option>
-                    ))}
-                  </select>
-                  
-                  <Button onClick={() => handleSearch(1)} disabled={searching} className="w-full h-11">
-                    {searching ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        搜索中...
-                      </>
-                    ) : (
-                      <>
-                        <Search className="w-4 h-4 mr-2" />
-                        搜索
-                      </>
-                    )}
-                  </Button>
-                </div>
-
-                {/* 分页信息 */}
-                {searchPagination && searchPagination.totalCount > 0 && (
-                  <div className="flex justify-between items-center text-sm text-muted-foreground px-1">
-                    <span>共 {searchPagination.totalCount} 条结果</span>
-                    <span>第 {searchPagination.page}/{searchPagination.totalPages} 页</span>
-                  </div>
-                )}
-
-                {/* 搜索结果 */}
-                <div className="space-y-2">
-                  {searchResults.map((result, index) => (
-                    <div 
-                      key={result.id || index} 
-                      className="p-2 bg-muted rounded-lg cursor-pointer hover:bg-muted/80"
-                      onClick={() => setPreviewItem(result)}
-                    >
-                      <div className="flex gap-2">
-                        {/* 图片缩略图 */}
-                        {result.modality === 'image' && result.metadata && ('imageUrl' in result.metadata || 'storageUrl' in result.metadata) && (
-                          <img 
-                            src={(result.metadata.imageUrl || result.metadata.storageUrl) as string} 
-                            alt={result.title}
-                            className="w-16 h-16 object-cover rounded border shrink-0"
-                          />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1 mb-1">
-                            <Badge variant="outline" className="text-xs shrink-0">
-                              {modalityLabels[result.modality as Modality] || result.modality}
-                            </Badge>
-                            <span className="font-medium text-xs truncate">{result.title}</span>
-                            {result.similarity !== undefined && (
-                              <span className="text-xs text-green-600 font-bold ml-auto shrink-0">
-                                {(result.similarity * 100).toFixed(0)}%
-                              </span>
-                            )}
-                            <Eye className="w-3 h-3 text-muted-foreground shrink-0" />
-                          </div>
-                          {/* 图片描述摘要 */}
-                          {result.modality === 'image' ? (
-                            <p className="text-xs text-blue-600 line-clamp-2">
-                              📷 {getImageDescription(result) || '暂无描述'}
-                            </p>
-                          ) : result.modality === 'excel' ? (
-                            <p className="text-xs text-muted-foreground line-clamp-2">
-                              📊 {result.content?.substring(0, 100)}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground line-clamp-2">
-                              {result.content?.substring(0, 100)}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 分页按钮 */}
-                {searchPagination && searchPagination.totalPages > 1 && (
-                  <div className="flex justify-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={searchPage <= 1 || searching}
-                      onClick={() => handleSearch(searchPage - 1)}
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </Button>
-                    <span className="flex items-center px-3 text-sm">
-                      {searchPage} / {searchPagination.totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={!searchPagination.hasMore || searching}
-                      onClick={() => handleSearch(searchPage + 1)}
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 智能问答 */}
-          <TabsContent value="rag">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">RAG 智能问答</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* Token 上限设置 */}
-                <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
-                  <Settings className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Token上限:</span>
-                  <input
-                    type="range"
-                    min="10000"
-                    max="100000"
-                    step="5000"
-                    value={ragTokenLimit}
-                    onChange={(e) => setRagTokenLimit(Number(e.target.value))}
-                    className="flex-1 h-2"
-                  />
-                  <span className="text-xs font-medium w-16 text-right">
-                    {(ragTokenLimit / 1000).toFixed(0)}K
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  <Textarea
-                    placeholder="输入您的问题..."
-                    value={ragQuery}
-                    onChange={(e) => setRagQuery(e.target.value)}
-                    rows={2}
-                    className="text-base"
-                  />
-                  
-                  {/* 快捷按钮行1：上下文控制 */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ clearContext: true })}
-                      disabled={ragLoading}
-                      className="text-xs h-8"
-                    >
-                      清空上下文
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ lockContext: true })}
-                      disabled={ragLoading}
-                      className="text-xs h-8"
-                    >
-                      锁定上下文
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ responseMode: 'brief' })}
-                      disabled={ragLoading}
-                      className="text-xs h-8"
-                    >
-                      精简回答
-                    </Button>
-                  </div>
-                  
-                  {/* 快捷按钮行2：回答模式 */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ responseMode: 'detailed' })}
-                      disabled={ragLoading}
-                      className="text-xs h-8"
-                    >
-                      详细回答
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ commandType: 'chart_annotation' })}
-                      disabled={ragLoading}
-                      className="text-xs h-8"
-                    >
-                      查询海图标注
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ commandType: 'channel_regulation' })}
-                      disabled={ragLoading}
-                      className="text-xs h-8"
-                    >
-                      航道通航规范
-                    </Button>
-                  </div>
-                  
-                  {/* 快捷按钮行3：新增功能 */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ commandType: 'compliance_check' })}
-                      disabled={ragLoading || !ragAnswer}
-                      className="text-xs h-8 text-orange-600"
-                    >
-                      合规自查
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ commandType: 'extract_table' })}
-                      disabled={ragLoading || !ragAnswer}
-                      className="text-xs h-8 text-blue-600"
-                    >
-                      数据提取制表
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleRagQuery({ commandType: 'translate_terms' })}
-                      disabled={ragLoading || !ragAnswer}
-                      className="text-xs h-8 text-purple-600"
-                    >
-                      翻译专业术语
-                    </Button>
-                  </div>
-                  
-                  <Button onClick={() => handleRagQuery()} disabled={ragLoading} className="w-full h-11">
-                    {ragLoading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        思考中...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4 mr-2" />
-                        提问
-                      </>
-                    )}
-                  </Button>
-                </div>
-
-                {/* 回答 */}
-                {ragAnswer && (
-                  <div className="p-3 bg-muted rounded-lg">
-                    <div className="flex items-start gap-2">
-                      <MessageSquare className="w-4 h-4 mt-1 text-primary shrink-0" />
-                      <div className="flex-1 whitespace-pre-wrap text-sm" ref={answerRef}>
-                        {ragAnswer}
-                      </div>
-                    </div>
-                    
-                    {/* 回答操作按钮 */}
-                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          // 导出PDF功能
-                          const content = `问题：${ragQuery}\n\n回答：\n${ragAnswer}\n\n${ragSources.length > 0 ? `来源：\n${ragSources.map((s: {title?: string, content?: string}) => `- ${s.title || '未知来源'}`).join('\n')}` : ''}`;
-                          const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = `海图问答_${new Date().toISOString().slice(0,10)}.txt`;
-                          a.click();
-                          URL.revokeObjectURL(url);
-                        }}
-                        className="text-xs h-7"
-                      >
-                        <Download className="w-3 h-3 mr-1" />
-                        导出回答
-                      </Button>
-                      {ragSources.length > 0 && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowSourceDialog(true)}
-                          className="text-xs h-7"
-                        >
-                          <FileText className="w-3 h-3 mr-1" />
-                          查看来源({ragSources.length})
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 数据维护 */}
-          <TabsContent value="maintain">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">数据维护</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <DataMaintainPanel />
-              </CardContent>
-            </Card>
-          </TabsContent>
-          
-          {/* 海图显示 */}
-          <TabsContent value="sea-chart">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">海图显示</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[600px] w-full rounded-lg overflow-hidden border">
-                  <SeaChartEmbed />
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-        )}
-
-        {/* 预览弹窗 */}
-        {previewItem && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-2 z-50" onClick={() => setPreviewItem(null)}>
-            <div 
-              ref={(el) => { if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
-              className="bg-background rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto" 
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="p-3 border-b flex justify-between items-center sticky top-0 bg-background">
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">
-                    {modalityLabels[previewItem.modality as Modality] || previewItem.modality}
-                  </Badge>
-                  <span className="font-medium text-sm">{previewItem.title}</span>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => setPreviewItem(null)}>
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="p-3 space-y-3">
-                {/* 图片附件 */}
-                {previewItem.modality === 'image' && (
-                  <div className="space-y-2">
-                    {previewItem.metadata && ('imageUrl' in previewItem.metadata || 'storageUrl' in previewItem.metadata) && (
-                      <div className="relative">
-                        <img 
-                          src={(previewItem.metadata.imageUrl || previewItem.metadata.storageUrl) as string} 
-                          alt={previewItem.title}
-                          className="w-full max-h-64 object-contain rounded-lg border"
-                        />
-                        <Badge className="absolute top-2 left-2" variant="secondary">📷 附件</Badge>
-                      </div>
-                    )}
-                    <div className="p-2 bg-blue-50 rounded-lg">
-                      <p className="text-xs text-blue-800 font-medium mb-1">图片描述</p>
-                      <p className="text-sm text-blue-700">{getImageDescription(previewItem) || '暂无描述'}</p>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Excel 表格展示 */}
-                {previewItem.modality === 'excel' && (
-                  <div className="space-y-2">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs border-collapse">
-                        <tbody>
-                          {(() => {
-                            // 解析 content 为表格
-                            const fields = previewItem.content.split(', ').map(f => f.split(': '));
-                            return fields.map((field, i) => (
-                              <tr key={i} className={i % 2 === 0 ? 'bg-muted/50' : ''}>
-                                <td className="border px-2 py-1 font-medium w-1/3">{field[0]}</td>
-                                <td className="border px-2 py-1">{field[1]}</td>
-                              </tr>
-                            ));
-                          })()}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="flex gap-2">
-                      <Badge variant="outline" className="text-xs">📊 表格数据</Badge>
-                      <Badge variant="outline" className="text-xs">{previewItem.source}</Badge>
-                    </div>
-                  </div>
-                )}
-                
-                {/* 其他类型内容 */}
-                {previewItem.modality !== 'image' && previewItem.modality !== 'excel' && (
-                  <div className="p-2 bg-muted rounded-lg">
-                    <p className="text-xs font-medium mb-1">内容</p>
-                    <p className="text-sm whitespace-pre-wrap break-all">{previewItem.content}</p>
-                  </div>
-                )}
-                
-                <div className="flex justify-between text-xs text-muted-foreground pt-2 border-t">
-                  <span>来源: {previewItem.source}</span>
-                  {previewItem.similarity !== undefined && (
-                    <span className="text-green-600 font-medium">相似度: {(previewItem.similarity * 100).toFixed(1)}%</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 来源弹窗 */}
-        {showSourceDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowSourceDialog(false)}>
-            <div className="bg-background rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden" onClick={e => e.stopPropagation()}>
-              <div className="p-3 border-b flex items-center justify-between">
-                <h3 className="font-semibold text-sm">📚 引用来源</h3>
-                <Button variant="ghost" size="sm" onClick={() => setShowSourceDialog(false)} className="h-7 w-7 p-0">
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="p-3 overflow-y-auto max-h-[calc(80vh-60px)]">
-                {ragSources.map((source, idx) => (
-                  <div key={idx} className="p-3 bg-muted rounded-lg mb-2 last:mb-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <FileText className="w-4 h-4 text-primary" />
-                      <span className="font-medium text-sm">{source.title || `来源 ${idx + 1}`}</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground bg-background p-2 rounded border max-h-32 overflow-y-auto">
-                      {source.content ? source.content.substring(0, 500) + (source.content.length > 500 ? '...' : '') : '无内容'}
-                    </div>
-                    {source.source && (
-                      <div className="text-[10px] text-muted-foreground mt-1">
-                        文件: {source.source}
-                      </div>
-                    )}
+                    <p className="text-slate-500 truncate mt-1">{r.content?.substring(0, 80)}</p>
                   </div>
                 ))}
               </div>
-            </div>
+              {sPage && sPage.totalPages > 1 && (
+                <div className="flex gap-1 justify-center">
+                  <Button size="sm" variant="outline" className="h-6 text-xs" disabled={sPageNum <= 1} onClick={() => doSearch(sPageNum - 1)}>上一页</Button>
+                  <span className="text-xs px-2 py-1">{sPageNum}/{sPage.totalPages}</span>
+                  <Button size="sm" variant="outline" className="h-6 text-xs" disabled={sPageNum >= sPage.totalPages} onClick={() => doSearch(sPageNum + 1)}>下一页</Button>
+                </div>
+              )}
+            </CardContent></Card>
           </div>
-        )}
-      </div>
-    </div>
+        );
+      // =================== 文件上传 ===================
+      case 'upload':
+        return (
+          <div className="space-y-4">
+            <BackBtn />
+            <Card><CardContent className="p-4 space-y-3">
+              <h2 className="font-bold text-lg">📤 文件上传</h2>
+              <input type="file" ref={fileRef} onChange={handleUpload} accept=".txt,.md,.json,.xlsx,.xls,.csv,.docx,.pdf,.pptx,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a" className="hidden" />
+              <Button onClick={() => fileRef.current?.click()} disabled={uploading} className="w-full h-12 text-sm">
+                {uploading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />上传中...</> : <><Upload className="w-4 h-4 mr-2" />选择文件</>}
+              </Button>
+              <p className="text-xs text-slate-400 text-center">Excel / Word / PDF / PPT / 图片 / 音频 / JSON / MD</p>
+              {uploadMsg && <div className={`text-xs text-center ${uploadMsg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{uploadMsg}</div>}
+              <div className="border-t pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">向量化状态</span>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={batchEmbed} disabled={embedding}>
+                    {embedding ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />向量化中</> : <><Database className="w-3 h-3 mr-1" />执行向量化</>}
+                  </Button>
+                </div>
+                {embedStatus && (
+                  <div className="grid grid-cols-3 gap-2 mt-3">
+                    <div className="bg-slate-50 p-2 rounded text-center"><div className="font-bold text-lg">{embedStatus.total}</div><div className="text-[10px] text-slate-400">总条目</div></div>
+                    <div className="bg-green-50 p-2 rounded text-center"><div className="font-bold text-lg text-green-700">{embedStatus.embedded}</div><div className="text-[10px] text-green-600">已向量化</div></div>
+                    <div className="bg-yellow-50 p-2 rounded text-center"><div className="font-bold text-lg text-yellow-700">{embedStatus.pending}</div><div className="text-[10px] text-yellow-600">待处理</div></div>
+                  </div>
+                )}
+                {embedding && <Progress value={embedStatus ? (embedStatus.embedded / embedStatus.total) * 100 : 0} className="mt-2" />}
+              </div>
+            </CardContent></Card>
+          </div>
+        );
+      // =================== 数据维护 ===================
+      case 'maintain':
+        return (
+          <div className="space-y-4">
+            <BackBtn />
+            <DataMaintainPanel />
+          </div>
+        );
+      // =================== 海图 ===================
+      case 'chart':
+        return (
+          <div className="space-y-4">
+            <BackBtn />
+            <Card><CardContent className="p-2">
+              <div className="h-64 w-full rounded-lg overflow-hidden">
+                <SeaMapComponent
+                  mapCenter={[20, 110]} mapZoom={3}
+                  showSeaMap={true} showPorts={true} showTrack={false} showTrajectories={true}
+                  allPorts={chartData.ports}
+                  selectedCountries={['CN', 'US', 'OTHER']}
+                  mockTrack={[]} customTrack={[]}
+                  trajectories={chartData.routes.map((r: any) => ({ id: r.id, segment_id: r.id, start_port: null, end_port: null, wkt_route: null, sea_area: null, ai_description: null, coordinates: r.coordinates }))}
+                  selectedTrajectory={null}
+                  onMapClick={() => {}}
+                />
+              </div>
+            </CardContent></Card>
+          </div>
+        );
+      // =================== 其他功能（跳转子页面） ===================
+      case 'trajectory':  return <IframePanel title="航迹分析" src="/trajectory" back={() => setPanel('home')} />;
+      case 'training':    return <IframePanel title="航迹训练" src="/trajectory-training" back={() => setPanel('home')} />;
+      case 'inference':   return <IframePanel title="航迹推理" src="/trajectory-inference" back={() => setPanel('home')} />;
+      case 'workflow':    return <IframePanel title="工作流" src="/workflow" back={() => setPanel('home')} />;
+      case 'dashboard':   return <IframePanel title="仪表盘" src="/dashboard" back={() => setPanel('home')} />;
+      case 'settings':    return <IframePanel title="设置" src="/settings" back={() => setPanel('home')} />;
+      case 'label':        return <IframePanel title="标注" src="/segment-label" back={() => setPanel('home')} />;
+      case 'autoresearch': return <IframePanel title="知识管理" src="/manage" back={() => setPanel('home')} />;
+      // =================== 首页 ===================
+      default:
+        return (
+          <div className="space-y-6">
+            {/* 标题 */}
+            <div className="text-center">
+              <h1 className="text-2xl font-bold text-slate-800">ShipRag</h1>
+              <p className="text-sm text-slate-400 mt-1">跨模态 RAG 知识检索系统</p>
+            </div>
+            {/* 统计条 */}
+            {embedStatus && (
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-slate-50 rounded-lg p-2 text-center"><div className="font-bold">{embedStatus.total}</div><div className="text-[10px] text-slate-400">总条目</div></div>
+                <div className="bg-green-50 rounded-lg p-2 text-center"><div className="font-bold text-green-700">{embedStatus.embedded}</div><div className="text-[10px] text-green-500">已向量化</div></div>
+                <div className="bg-yellow-50 rounded-lg p-2 text-center"><div className="font-bold text-yellow-700">{embedStatus.pending}</div><div className="text-[10px] text-yellow-500">待处理</div></div>
+              </div>
+            )}
+            {/* 功能卡片（按分类分组） */}
+            {CATEGORIES.map(cat => (
+              <div key={cat.title} className="space-y-1.5">
+                <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider pl-1">{cat.title}</h3>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {cat.items.map(m => (
+                    <button
+                      key={m.id}
+                      onClick={() => { setPanel(m.id as Panel); if (m.id === 'chart') loadChart(); }}
+                      className="rounded-lg shadow-sm active:scale-95 transition-all flex flex-col items-center justify-center gap-1 py-3 text-white"
+                      style={{ background: m.color }}
+                    >
+                      <span className="text-lg">{m.icon}</span>
+                      <span className="font-medium text-[10px]">{m.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {/* 一键向量化 */}
+            {embedStatus && embedStatus.pending > 0 && (
+              <Button onClick={batchEmbed} disabled={embedding} className="w-full h-10 text-sm bg-indigo-500 hover:bg-indigo-600">
+                {embedding ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />向量化中...</> : <><Database className="w-4 h-4 mr-2" />一键向量化 ({embedStatus.pending} 条)</>}
+              </Button>
+            )}
+          </div>
+        );
+    }
+  };
+
+  return (
+    <main className="max-w-lg mx-auto p-4 min-h-screen bg-white">
+      {renderPanel()}
+    </main>
   );
 }

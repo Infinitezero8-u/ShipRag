@@ -835,75 +835,297 @@ export default function ManagePage() {
       {/* 编辑条目弹窗 */}
       {editingItem && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-auto">
-            <div className="p-4 border-b flex items-center justify-between">
-              <h2 className="font-bold text-lg">编辑条目</h2>
-              <button onClick={closeEdit} className="text-gray-500 hover:text-gray-700">✕</button>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[92vh] overflow-auto">
+            {/* 头部：类型图标 + 标题行 */}
+            <div className="p-4 border-b flex items-center justify-between bg-gray-50 sticky top-0 z-10">
+              <div className="flex items-center gap-3">
+                {/* 类型图标 */}
+                <span className="text-3xl">
+                  {editingItem.modality === 'image' ? '🖼️' :
+                   editingItem.modality === 'text' ? '📝' :
+                   editingItem.modality === 'pdf' ? '📕' :
+                   editingItem.modality === 'excel' ? '📊' :
+                   editingItem.modality === 'json' ? '💾' :
+                   editingItem.modality === 'url' ? '🌐' :
+                   editingItem.modality === 'port' ? '⚓' :
+                   editingItem.modality === 'route' ? '🗺️' : '📄'}
+                </span>
+                <div>
+                  <h2 className="font-bold text-lg text-gray-800">
+                    编辑{editingItem.modality === 'image' ? '图片' :
+                         editingItem.modality === 'text' ? '文本' :
+                         editingItem.modality === 'pdf' ? 'PDF文档' :
+                         editingItem.modality === 'excel' ? 'Excel表格' :
+                         editingItem.modality === 'json' ? 'JSON数据' :
+                         editingItem.modality === 'url' ? '网页链接' :
+                         editingItem.modality === 'port' ? '港口数据' :
+                         editingItem.modality === 'route' ? '航线数据' : '知识'}条目
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    ID: {editingItem.id?.substring(0, 8)}... | 来源文件: {editingItem.source || '无'} | 创建时间: {new Date(editingItem.created_at).toLocaleString('zh-CN')}
+                  </p>
+                </div>
+              </div>
+              <button onClick={closeEdit} className="text-gray-400 hover:text-gray-700 text-xl leading-none" title="关闭">✕</button>
             </div>
-            <div className="p-4 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">标题</label>
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">内容</label>
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  rows={6}
-                  className="w-full px-3 py-2 border rounded-lg text-sm resize-none"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">标签</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {editTags.map(tag => (
-                    <span key={tag} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-sm flex items-center gap-1">
-                      {tag}
-                      <button onClick={() => removeTag(tag)} className="text-blue-500 hover:text-blue-700">×</button>
-                    </span>
-                  ))}
+
+            <div className="p-5 space-y-5">
+              {/* ====== 图片条目：左侧预览 + 右侧表单双栏布局 ====== */}
+              {editingItem.modality === 'image' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* 左栏：图片预览 */}
+                  <div className="space-y-3">
+                    <label className="block text-sm font-semibold text-gray-700">
+                      🖼️ 原始图片预览
+                      <span className="text-xs text-gray-400 font-normal ml-2">（用于对照查看，不可修改）</span>
+                    </label>
+                    <div className="border rounded-lg overflow-hidden bg-gray-100 min-h-[200px] flex items-center justify-center">
+                      {editingItem.content?.match(/\.(png|jpg|jpeg|gif|webp|bmp|svg)(\?|$)/i) ? (
+                        <img
+                          src={editingItem.content}
+                          alt={editingItem.title}
+                          className="max-w-full max-h-[400px] object-contain"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                          }}
+                        />
+                      ) : null}
+                      <div className={`p-8 text-center text-gray-400 ${editingItem.content?.match(/\.(png|jpg|jpeg|gif|webp|bmp|svg)(\?|$)/i) ? 'hidden' : ''}`}>
+                        <div className="text-5xl mb-3">🖼️</div>
+                        <div className="text-sm">图片预览不可用</div>
+                        <div className="text-xs mt-1">（图片链接可能已过期或无有效URL）</div>
+                      </div>
+                    </div>
+
+                    {/* 图片元信息 */}
+                    <div className="bg-blue-50 rounded-lg p-3 text-xs space-y-1">
+                      <div className="font-semibold text-blue-800 mb-1">📋 图片条目的内容填写指南</div>
+                      <p className="text-blue-700">图片条目的「标题」和「内容」字段共同构成该图片的可检索信息。</p>
+                      <ul className="list-disc list-inside text-blue-600 space-y-0.5 mt-1">
+                        <li><strong>标题：</strong>简洁概括图片主题，建议格式「[场景]-[主体]-[关键信息]」。例如：「港口全景-洋山港-2024年6月集装箱码头作业」</li>
+                        <li><strong>内容：</strong>对图片的详细文字描述，越详尽越好。描述越丰富，RAG检索时命中率越高。建议包含以下维度：</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* 右栏：编辑表单 */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">
+                        标题 <span className="text-red-500">*</span>
+                        <span className="text-xs text-gray-400 font-normal ml-2">（必填，建议 10-80 字）</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        placeholder="例如：上海洋山深水港集装箱码头全景-2024年6月繁忙作业场景"
+                        className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                      <div className="flex justify-between mt-1">
+                        <span className="text-xs text-gray-400">简明扼要地概括图片主题，方便列表浏览时快速识别</span>
+                        <span className={`text-xs ${editTitle.length < 5 ? 'text-red-500' : editTitle.length > 120 ? 'text-orange-500' : 'text-green-600'}`}>
+                          {editTitle.length} 字 {editTitle.length < 5 ? '（标题偏短，不利于检索）' : editTitle.length > 120 ? '（标题偏长，建议精简）' : '✓'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">
+                        详细描述 <span className="text-red-500">*</span>
+                        <span className="text-xs text-gray-400 font-normal ml-2">（必填，建议 200-2000 字，描述越详细检索效果越好）</span>
+                      </label>
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-2 text-xs text-yellow-800">
+                        💡 <strong>提示：</strong>请对照左侧图片，从以下维度尽可能详细地描述图片内容——
+                        ① 拍摄场景/地点（港口/航道/锚地/码头 + 具体名称）；② 画面主体（船舶/设施/人物/事件 + 数量/类型/特征）；③ 关键细节（船名/MMSI/集装箱编号/航标/天气/时间等可见信息）；
+                        ④ 业务上下文（该图片展示的业务环节/流程阶段/对应的操作规程）；⑤ 技术参数（如已知的拍摄参数/图像来源/分辨率）。
+                      </div>
+                      <textarea
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                        rows={12}
+                        placeholder={`请对照图片，详细描述以下内容：
+
+【拍摄场景】说明拍摄地点（港口/码头/航道名称）、拍摄角度、天气状况、时间（白天/夜间/黄昏）
+【画面主体】描述图片中的主要对象：船舶（船型/船名/MMSI/颜色/大小）、港口设施（泊位/岸桥/堆场/仓库）、人员（岗位/活动）
+【关键细节】标注可见的关键信息：船体标识、集装箱编号、航标灯质、信号旗、缆绳状态
+【业务上下文】该图片所处的业务环节（靠泊作业/装卸作业/危险品检查/维修保养/应急响应）、对应的操作规程或规章制度
+【技术参数】如已知：图片来源（无人机/摄像头/手机拍摄）、分辨率、拍摄设备型号`}
+                        className="w-full px-3 py-2 border rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-sans leading-relaxed"
+                      />
+                      <div className="flex justify-between mt-1">
+                        <span className="text-xs text-gray-400">
+                          详细描述将直接影响RAG语义检索的召回精度，请勿留空或仅填写简短内容
+                        </span>
+                        <span className={`text-xs ${editContent.length < 50 ? 'text-red-500 font-bold' : editContent.length < 200 ? 'text-orange-500' : editContent.length > 5000 ? 'text-orange-500' : 'text-green-600'}`}>
+                          {editContent.length} 字
+                          {editContent.length < 50 ? ' ⚠️ 描述过短，向量检索命中率极低' :
+                           editContent.length < 200 ? ' ⚡ 描述偏短，建议补充更多细节' :
+                           editContent.length > 5000 ? ' 📝 内容充足' : ' ✅ 内容充实'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 标签 */}
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">
+                        标签
+                        <span className="text-xs text-gray-400 font-normal ml-2">（用于分类筛选，按 Enter 添加）</span>
+                      </label>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {editTags.map(tag => (
+                          <span key={tag} className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-full text-sm flex items-center gap-1.5">
+                            <span className="text-blue-400">#</span>{tag}
+                            <button onClick={() => removeTag(tag)} className="text-blue-400 hover:text-red-600 ml-0.5" title="移除标签">×</button>
+                          </span>
+                        ))}
+                        {editTags.length === 0 && (
+                          <span className="text-xs text-gray-400 italic">尚未添加标签，建议添加 2-5 个标签以提升检索效果</span>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newTag}
+                          onChange={(e) => setNewTag(e.target.value)}
+                          placeholder="输入标签名后按回车（如：集装箱船、洋山港、夜间作业）"
+                          className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                          onKeyDown={(e) => e.key === 'Enter' && addTag()}
+                        />
+                        <button onClick={addTag} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">添加</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* ====== 非图片条目：单栏布局 ====== */
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      标题 <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      placeholder={
+                        editingItem.modality === 'port' ? '港口名称，如：上海港' :
+                        editingItem.modality === 'route' ? '航线名称，如：上海→新加坡' :
+                        editingItem.modality === 'text' ? '文档标题，如：2024年度港口安全操作规程' :
+                        editingItem.modality === 'pdf' ? 'PDF文档标题' :
+                        editingItem.modality === 'excel' ? '表格标题，如：2024年Q1港口吞吐量统计' :
+                        editingItem.modality === 'url' ? '网页标题' : '条目标题'
+                      }
+                      className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <div className="flex justify-between mt-1">
+                      <span className="text-xs text-gray-400">简明扼要概括本条目的核心内容</span>
+                      <span className={`text-xs ${editTitle.length < 3 ? 'text-red-500' : editTitle.length > 150 ? 'text-orange-500' : 'text-green-600'}`}>
+                        {editTitle.length} 字 {editTitle.length < 3 ? '（太短）' : '✓'}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      内容 <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      rows={editingItem.modality === 'text' || editingItem.modality === 'pdf' ? 15 : 8}
+                      placeholder={
+                        editingItem.modality === 'port'
+                          ? '港口名称、所属国家/地区、经纬度坐标、港口类型（海港/河港/内河港）、主要货种、码头设施、航道水深等信息'
+                          : editingItem.modality === 'route'
+                          ? '航线起点、终点、途经主要港口、航线距离（海里）、通常航速、适用船型等信息'
+                          : editingItem.modality === 'text' || editingItem.modality === 'pdf'
+                          ? '请在此粘贴或编辑文档的完整文本内容。内容将用于向量化检索，请确保内容准确完整。'
+                          : editingItem.modality === 'excel'
+                          ? '请在此粘贴或编辑表格的结构化数据内容。建议保留列名和关键数据行。'
+                          : editingItem.modality === 'json'
+                          ? '请在此编辑 JSON 数据内容。注意保持合法的 JSON 格式。'
+                          : editingItem.modality === 'url'
+                          ? '请在此编辑网页的正文内容（已自动提取）。如果内容不完整，可手动补充。'
+                          : '请在此编辑条目的正文内容'
+                      }
+                      className="w-full px-3 py-2 border rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <div className="flex justify-between mt-1">
+                      <span className="text-xs text-gray-400">
+                        {editingItem.modality === 'image'
+                          ? '图片描述将影响RAG语义检索精度'
+                          : '内容将作为向量化检索的主要数据源'}
+                      </span>
+                      <span className={`text-xs ${editContent.length < 20 ? 'text-red-500 font-bold' : editContent.length < 100 ? 'text-orange-500' : 'text-green-600'}`}>
+                        {editContent.length} 字
+                        {editContent.length < 20 ? ' ⚠️ 过短' : editContent.length < 100 ? ' ⚡ 偏短' : ' ✅'}
+                      </span>
+                    </div>
+                  </div>
+                  {/* 标签 */}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      标签
+                      <span className="text-xs text-gray-400 font-normal ml-2">（用于分类筛选，按 Enter 添加）</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {editTags.map(tag => (
+                        <span key={tag} className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-full text-sm flex items-center gap-1.5">
+                          <span className="text-blue-400">#</span>{tag}
+                          <button onClick={() => removeTag(tag)} className="text-blue-400 hover:text-red-600 ml-0.5" title="移除标签">×</button>
+                        </span>
+                      ))}
+                      {editTags.length === 0 && (
+                        <span className="text-xs text-gray-400 italic">尚未添加标签</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        placeholder="输入标签名后按回车"
+                        className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                        onKeyDown={(e) => e.key === 'Enter' && addTag()}
+                      />
+                      <button onClick={addTag} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">添加</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 底部：条目元信息 + 操作按钮 */}
+              <div className="flex items-center justify-between pt-3 border-t">
+                <div className="flex items-center gap-4 text-xs text-gray-500">
+                  <span className={`px-2 py-0.5 rounded ${editingItem.status === 'embedded' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                    {editingItem.status === 'embedded' ? '已向量化 ✓' : '待向量化'}
+                  </span>
+                  <span>类型: <strong>{editingItem.modality}</strong></span>
+                  <span>来源: <strong>{editingItem.source || '未知'}</strong></span>
+                  <span>ID: <code className="text-gray-400 text-xs">{editingItem.id?.substring(0, 12)}...</code></span>
                 </div>
                 <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
-                    placeholder="输入新标签"
-                    className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                    onKeyDown={(e) => e.key === 'Enter' && addTag()}
-                  />
                   <button
-                    onClick={addTag}
-                    className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm"
+                    onClick={closeEdit}
+                    className="px-5 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50 font-medium"
                   >
-                    添加
+                    取消
+                  </button>
+                  <button
+                    onClick={saveEdit}
+                    disabled={saving || editTitle.trim().length === 0 || editContent.trim().length === 0}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed font-medium shadow-sm"
+                    title={
+                      editTitle.trim().length === 0 ? '标题不能为空' :
+                      editContent.trim().length === 0 ? '内容不能为空' :
+                      saving ? '正在保存...' : '保存修改'
+                    }
+                  >
+                    {saving ? '⏳ 保存中...' : '💾 保存修改'}
                   </button>
                 </div>
               </div>
-              <div className="text-xs text-gray-500">
-                类型: {editingItem.modality} · 来源: {editingItem.source}
-              </div>
-            </div>
-            <div className="p-4 border-t flex gap-2 justify-end">
-              <button
-                onClick={closeEdit}
-                className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50"
-              >
-                取消
-              </button>
-              <button
-                onClick={saveEdit}
-                disabled={saving}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
-              >
-                {saving ? '保存中...' : '保存'}
-              </button>
             </div>
           </div>
         </div>

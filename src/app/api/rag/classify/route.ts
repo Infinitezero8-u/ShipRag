@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
+import { LLMClient } from '@/lib/ollama/llm';
+import { Config } from '@/lib/ollama/config';
 
 // 问题分类 API - 支持三分类：RAG / SQL / ALL
 export async function POST(request: NextRequest) {
@@ -17,12 +18,12 @@ export async function POST(request: NextRequest) {
 仅输出标签文本：RAG / SQL / ALL，不要多余内容。
 用户提问：${query}`;
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+    const customHeaders: Record<string, string> = {};
     const llmClient = new LLMClient(new Config(), customHeaders);
     
     const response = await llmClient.invoke(
       [{ role: 'user', content: classifyPrompt }],
-      { model: 'doubao-seed-2-0-lite-260215', temperature: 0 }
+      { model: 'qwen2.5:3b', temperature: 0 }
     );
 
     const result = response.content || 'RAG';

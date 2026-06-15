@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { LLMClient } from 'coze-coding-dev-sdk';
+import { getSupabaseClient } from '@/storage/database/local-db';
+import { LLMClient } from '@/lib/ollama/llm';
 
 // 推理分类
 export async function POST() {
