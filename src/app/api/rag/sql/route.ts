@@ -19,10 +19,12 @@ export async function POST(request: NextRequest) {
 
     // 1. LLM 生成 SQL
     const prompt = '已知表结构:\n' + SCHEMA +
-      '\n按问题意图选正确表（港口→port_data，法规→regulations），生成SELECT，统计用COUNT(*)。只输出SQL。' +
-      '\n示例: "亚洲有多少港口" → SELECT COUNT(*) FROM port_data WHERE continent_name_cn = \'亚洲\'\n' +
-      '示例: "越南有几个港口" → SELECT COUNT(*) FROM port_data WHERE ctry_name_cn = \'越南\'\n' +
-      '用户问题：' + query;
+      '\n按问题意图选正确表，生成SELECT。只输出SQL。' +
+      '\n统计: COUNT(*) + WHERE 精确过滤' +
+      '\n列举: SELECT port_code, name_cn, ctry_name_cn FROM port_data WHERE ctry_name_cn = \'美国\'' +
+      '\n列举: SELECT port_code, name_cn FROM port_data WHERE continent_name_cn = \'亚洲\'' +
+      '\n列举: SELECT filename FROM regulations' +
+      '\n用户问题：' + query;
 
     const llm = new LLMClient(new Config(), {});
     const resp = await llm.invoke([{ role: 'user', content: prompt }], { model: 'qwen2.5:3b' });
@@ -65,7 +67,20 @@ export async function POST(request: NextRequest) {
           result = [{ count: count || 0 }];
         }
       } else {
-        const { data } = await supabase.from(table).select('*').limit(20);
+        // 列举类查询，返回最多 500 行
+        const cols = table === 'port_data' ? 'port_code, name_cn, ctry_name_cn, continent_name_cn, lat, lon'
+          : table === 'regulations' ? 'filename, file_type, categories'
+          : '*';
+        // Parse WHERE conditions for non-COUNT
+        let q = supabase.from(table).select(cols).limit(500);
+        let cond = false;
+        for (const m of sql.matchAll(/(\w+)\s*=\s*'([^']+)'/g)) {
+          q = q.eq(m[1], m[2]); cond = true;
+        }
+        for (const m of sql.matchAll(/(\w+)\s+like\s+'%([^']+)%'/gi)) {
+          q = q.ilike(m[1], '%' + m[2] + '%'); cond = true;
+        }
+        const { data } = cond ? await q : await q;
         result = data || [];
       }
     } catch (ex) {

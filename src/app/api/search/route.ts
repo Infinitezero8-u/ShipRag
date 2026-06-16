@@ -623,6 +623,25 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const action = searchParams.get('action');
+    // 图片预览代理：读取本地文件返回图片
+    if (action === 'preview-image') {
+      const fsp = await import('fs/promises');
+      const imgPath = searchParams.get('path') || '';
+      const base = '/Volumes/Data/raganything_storage';
+      if (!imgPath.startsWith(base)) {
+        return new NextResponse('Forbidden', { status: 403 });
+      }
+      try {
+        const buf = await fsp.readFile(imgPath);
+        const ext = imgPath.split('.').pop()?.toLowerCase() || 'png';
+        const mt: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+        return new NextResponse(buf, { headers: { 'Content-Type': mt[ext] || 'image/png' } });
+      } catch {
+        return new NextResponse('Image not found', { status: 404 });
+      }
+    }
+
+
     
     // 获取标签列表
     if (action === 'tags') {

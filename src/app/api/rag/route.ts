@@ -36,7 +36,7 @@ async function updateContextAfterResponse(sessionId: string, query: string, answ
 
     messages.push(
       { role: 'user', content: query, time: new Date().toISOString() },
-      { role: 'assistant', content: answer.substring(0, 500), time: new Date().toISOString() }
+      { role: 'assistant', content: answer.substring(0, 3000), time: new Date().toISOString() }
     );
 
     const tokensUsed = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
@@ -301,20 +301,29 @@ export async function POST(request: NextRequest) {
           contextMessages = [];
           effectiveQuery = correctedQuery;
         } else {
-          // 获取当前上下文
+          // 获取当前上下文（兼容新旧格式）
           const { data: existingContext } = await supabase
             .from('conversation_contexts')
-            .select('context_data')
+            .select('*')
             .eq('session_id', sessionId)
             .single();
-          
-          const ctxData = existingContext?.context_data as Record<string, any> || {};
+
+          const ctxData = (existingContext?.context_data as Record<string, any>) || {};
           lockedContext = ctxData?.locked_context as typeof lockedContext || null;
 
-          // 从保存的上下文加载历史消息
-          const savedMessages = (ctxData.messages as Array<{ role: string; content: string }>) || [];
+          // 加载历史消息：优先新格式 (context_data.messages)，兼容旧格式 (messages 列)
+          let savedMessages: Array<{ role: string; content: string }> = (ctxData.messages) || [];
+          if (savedMessages.length === 0 && (existingContext as any)?.messages) {
+            // 旧格式：平坦列 messages
+            savedMessages = (existingContext as any).messages || [];
+          }
           if (savedMessages.length > 0) {
             contextMessages = savedMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+            // 自动迁移：保存到新格式
+            await supabase.from('conversation_contexts').update({
+              context_data: { messages: savedMessages },
+              updated_at: new Date().toISOString(),
+            }).eq('session_id', sessionId);
           }
           
           // 1. 拼接新问题到历史对话
@@ -375,10 +384,11 @@ export async function POST(request: NextRequest) {
         ? '\n\n[回答模式]详细回答：补充规范原文、完整参数细则、安全提示。'
         : '';
     
-    // ========== 原有问答逻辑 ==========
-    
-    // 问题分类：调用分类 API 判断走 SQL 还是 RAG
-    let isStats = false;
+    // ========== 问题分类 ==========
+    const embeddingClient = new EmbeddingClient();
+    const llmClient = new LLMClient(new Config(), customHeaders);
+
+    let classifyRoute = 'RAG'; // RAG | SQL | ALL | CHAT | LIST
     try {
       const classifyResponse = await fetch(BASE_URL + '/api/rag/classify', {
         method: 'POST',
@@ -386,18 +396,111 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({ query: effectiveQuery }),
       });
       const classifyData = await classifyResponse.json();
-      // ALL 路由 + 计数类问题 → 统计分支
-      if (classifyData.route === 'ALL' && /一共|总共|多少个|有几个|数量|统计|多少/.test(query)) {
-        isStats = true;
-      } else {
-        isStats = classifyData.route === 'SQL';
-      }
+      classifyRoute = classifyData.route || 'RAG';
     } catch (e) {
       // 分类失败，使用本地判断
       const localClassify = isStatsQuery(query);
-      isStats = localClassify.isStats;
+      classifyRoute = localClassify.isStats ? 'SQL' : 'RAG';
     }
 
+    // 兜底：有历史消息 + 短问题 → 强制 CHAT
+    if (classifyRoute !== 'CHAT' && contextMessages.length > 2 && query.length < 20) {
+      classifyRoute = 'CHAT';
+    }
+
+    // CHAT 分支：纯对话/元问题，不需要向量检索或统计查询
+    if (classifyRoute === 'CHAT') {
+      // 排除当前问题，只看历史
+      const historyOnly = contextMessages.slice(0, -1);
+      const historyText = historyOnly.map(m =>
+        (m.role === 'user' ? '用户提问' : 'AI回答') + ': ' + m.content.substring(0, 2000)
+      ).join('\n\n');
+      const chatContent = historyOnly.length > 0
+        ? '以下是本对话的历史记录（共 ' + historyOnly.length + ' 条消息，当前问题不算在内）：\n\n' + historyText + '\n\n用户当前问题：' + effectiveQuery + '\n\n请严格根据对话历史回答。如果是元问题（如"上一个问题是什么"），直接告诉我上一个用户提问的内容；如果没有历史记录，告诉用户这是第一条消息。'
+        : '本对话尚无历史记录，用户当前问题：' + effectiveQuery + '\n\n请如实告知用户目前没有对话历史，无法回答元问题。';
+
+      if (stream) {
+        let fullAnswer = '';
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+          async start(controller) {
+            try {
+              const llmStream = llmClient.stream([{ role: 'user', content: chatContent }], { model: 'qwen2.5:3b', temperature: 0.7 });
+              for await (const chunk of llmStream) {
+                if (chunk.content) { fullAnswer += chunk.content.toString(); controller.enqueue(encoder.encode(chunk.content.toString())); }
+              }
+              if (sessionId) updateContextAfterResponse(sessionId, query, fullAnswer).catch(console.error);
+              controller.close();
+            } catch (e) { controller.enqueue(encoder.encode('聊天响应失败')); controller.close(); }
+          },
+        });
+        return new Response(readable, { headers: { 'Content-Type': 'text/event-stream' } });
+      } else {
+        const chatResp = await llmClient.invoke([{ role: 'user', content: chatContent }], { model: 'qwen2.5:3b', temperature: 0.7 });
+        if (sessionId) await updateContextAfterResponse(sessionId, query, chatResp.content);
+        return NextResponse.json({ success: true, answer: chatResp.content, queryType: 'chat', sources: [] });
+      }
+    }
+
+    // LIST 分支：列举类查询，LLM 生成 SELECT → 执行 → 格式化列表
+    if (classifyRoute === 'LIST') {
+      try {
+        const sqlResp = await fetch(BASE_URL + '/api/rag/sql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: effectiveQuery }),
+        });
+        const sqlData = await sqlResp.json();
+        const resultRows = sqlData.result || [];
+
+        if (!Array.isArray(resultRows) || resultRows.length === 0) {
+          const answer = '未查询到相关数据。';
+          if (stream) {
+            const enc = new TextEncoder();
+            const rd = new ReadableStream({ async start(c) { c.enqueue(enc.encode(answer)); c.close(); } });
+            return new Response(rd, { headers: { 'Content-Type': 'text/event-stream' } });
+          }
+          return NextResponse.json({ success: true, answer, queryType: 'list', sources: [] });
+        }
+
+        // 格式化为列表
+        const keys = Object.keys(resultRows[0]);
+        let listText = '';
+        if (keys.length === 1) {
+          // 单列结果（如 regulations 的 filename 列表）
+          listText = resultRows.map((r: any, i: number) => `${i + 1}. ${r[keys[0]]}`).join('\n');
+        } else if (keys.includes('name_cn') || keys.includes('port_code')) {
+          // 港口数据
+          listText = resultRows.slice(0, 50).map((r: any, i: number) =>
+            `${i + 1}. ${r.name_cn || r.filename || r.port_code} (${r.port_code || ''}) ${r.ctry_name_cn ? '- ' + r.ctry_name_cn : ''}`
+          ).join('\n');
+        } else {
+          listText = resultRows.slice(0, 50).map((r: any, i: number) =>
+            `${i + 1}. ${Object.values(r).filter(v => v).slice(0, 3).join(' | ')}`
+          ).join('\n');
+        }
+
+        const totalCount = resultRows.length;
+        const header = `共查询到 ${totalCount} 条结果：\n${totalCount > 50 ? '（仅显示前50条）\n' : ''}`;
+        const answer = header + '\n' + listText;
+
+        if (stream) {
+          const enc = new TextEncoder();
+          const rd = new ReadableStream({
+            async start(c) { c.enqueue(enc.encode(answer)); if (sessionId) { updateContextAfterResponse(sessionId, query, answer).catch(() => {}); } c.close(); }
+          });
+          return new Response(rd, { headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        if (sessionId) await updateContextAfterResponse(sessionId, query, answer);
+        return NextResponse.json({ success: true, answer, queryType: 'list', sql: sqlData.sql, sources: [] });
+      } catch (e) {
+        // LIST fallback: 使用关键词在向量结果中过滤
+        // Will fall through to RAG below
+      }
+    }
+
+    // 统计分支
+    const isStats = (classifyRoute === 'SQL') || (classifyRoute === 'ALL' && /一共|总共|多少个|有几个|数量|统计|多少/.test(query));
     if (isStats) {
       // 统计类问题统一走 LLM SQL 生成（支持动态 WHERE/过滤/分组）
       try {
@@ -482,9 +585,6 @@ export async function POST(request: NextRequest) {
     }
 
     // 非统计问题，走 RAG 流程
-    const embeddingClient = new EmbeddingClient();
-    const llmClient = new LLMClient(new Config(), customHeaders);
-
     // 构建session上下文对象
     const sessionContext = {
       history: contextMessages.map((m) => ({
@@ -615,18 +715,22 @@ ${sessionContext.history.slice(-4).map(h => `Q: ${h.query}\nA: ${h.answer?.subst
       }
     }
 
-    // 7. 构建消息（包含指令和模式提示）
-    const messages = [
-      { role: 'system' as const, content: SYSTEM_PROMPT + modeInstruction + instructionPrompt },
-      { 
-        role: 'user' as const, 
-        content: `以下是与用户问题相关的检索信息：
+    // 7. 构建消息（始终注入近期对话历史）
+    const recentHistory = contextMessages.slice(-4).map(m =>
+      (m.role === 'user' ? '用户提问: ' : 'AI回答: ') + m.content
+    ).join('\n\n');
+
+    const userContent = `以下是与用户问题相关的检索信息：
 
 ${context || '未找到相关信息'}${sqlContext}
 
+${recentHistory ? '近期对话历史：\n' + recentHistory + '\n' : ''}
 用户问题：${rewrittenQuery}
-${ragResultCount === 0 && !usedFallback ? '\n未找到任何相关资料，请如实告知用户，不要编造内容。' : ''}`
-      },
+${ragResultCount === 0 && !usedFallback ? '\n未找到任何相关资料，请如实告知用户，不要编造内容。' : ''}`;
+
+    const messages = [
+      { role: 'system' as const, content: SYSTEM_PROMPT + modeInstruction + instructionPrompt },
+      { role: 'user' as const, content: userContent },
     ];
 
     // 5. 调用 LLM 生成回答

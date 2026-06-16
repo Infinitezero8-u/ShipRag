@@ -2,6 +2,34 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { truncateMiddle } from '@/lib/utils';
+
+// 图片预览辅助函数
+function getImgSrc(item: any): string | null {
+  const m = (item?.metadata || {}) as Record<string, any>;
+  const raw = m?.imageUrl || m?.localUrl || m?.localPath || m?.storageKey || item?.content;
+  if (!raw) return null;
+  const s = String(raw);
+  if (s.startsWith('http')) return s;
+  // 本地文件路径必须走预览代理，不能直接返回（浏览器无法访问 filesystem path）
+  if (s.startsWith('/Volumes/') || s.startsWith('/tmp/')) return '/api/search?action=preview-image&path=' + encodeURIComponent(s);
+  if (/\.(png|jpg|jpeg|gif|webp|bmp|svg)(\?|$)/i.test(s)) return s;
+  return null;
+}
+
+function ImgPreview({ item }: { item: any }) {
+  const [imgFail, setImgFail] = useState(false);
+  const src = getImgSrc(item);
+  if (!src || imgFail) return (
+    <div className="p-8 text-center text-gray-400">
+      <div className="text-5xl mb-3">🖼️</div>
+      <div className="text-sm">图片预览不可用</div>
+      <div className="text-xs mt-1">（图片链接可能已过期或无有效URL）</div>
+    </div>
+  );
+  return <img src={src} alt={item?.title || ''} className="max-w-full max-h-[400px] object-contain"
+    onError={() => setImgFail(true)} />;
+}
 
 interface FileUpload {
   id: string;
@@ -551,7 +579,7 @@ export default function ManagePage() {
                          file.file_type === 'url' ? '🌐' : '📄'}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="font-medium text-gray-800 truncate">{file.filename}</div>
+                        <div className="font-medium text-gray-800 truncate whitespace-nowrap" title={file.filename}>{truncateMiddle(file.filename, 30)}</div>
                         <div className="text-xs text-gray-500">
                           {formatFileSize(file.file_size)} · {file.item_count} 条目 · {file.status}
                         </div>
@@ -715,7 +743,7 @@ export default function ManagePage() {
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-gray-800">{item.title}</span>
+                            <span className="font-medium text-gray-800 truncate whitespace-nowrap" title={item.title}>{truncateMiddle(item.title || '', 28)}</span>
                             <span className={`text-xs px-1 rounded ${
                               item.status === 'embedded' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'
                             }`}>
@@ -880,22 +908,7 @@ export default function ManagePage() {
                       <span className="text-xs text-gray-400 font-normal ml-2">（用于对照查看，不可修改）</span>
                     </label>
                     <div className="border rounded-lg overflow-hidden bg-gray-100 min-h-[200px] flex items-center justify-center">
-                      {editingItem.content?.match(/\.(png|jpg|jpeg|gif|webp|bmp|svg)(\?|$)/i) ? (
-                        <img
-                          src={editingItem.content}
-                          alt={editingItem.title}
-                          className="max-w-full max-h-[400px] object-contain"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                            (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                          }}
-                        />
-                      ) : null}
-                      <div className={`p-8 text-center text-gray-400 ${editingItem.content?.match(/\.(png|jpg|jpeg|gif|webp|bmp|svg)(\?|$)/i) ? 'hidden' : ''}`}>
-                        <div className="text-5xl mb-3">🖼️</div>
-                        <div className="text-sm">图片预览不可用</div>
-                        <div className="text-xs mt-1">（图片链接可能已过期或无有效URL）</div>
-                      </div>
+                      <ImgPreview item={editingItem} />
                     </div>
 
                     {/* 图片元信息 */}

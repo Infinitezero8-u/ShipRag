@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { truncateMiddle } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -24,8 +25,8 @@ const SeaMapComponent = dynamic(() => import('@/app/sea-chart/SeaMap'), {
 
 // ── 类型定义 ──────────────────────────────────
 type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json';
-type Panel = 'home' | 'rag' | 'search' | 'upload' | 'maintain' | 'chart' | 'trajectory' | 'training' | 'inference' | 'workflow' | 'dashboard' | 'settings' | 'label' | 'autoresearch';
-interface KnowItem { id: string; modality: string; title: string; content: string; source: string; similarity?: number; status: string; metadata?: Record<string, unknown>; }
+type Panel = 'home' | 'rag' | 'search' | 'upload' | 'maintain' | 'chart' | 'trajectory' | 'training' | 'inference' | 'workflow' | 'dashboard' | 'settings' | 'label' | 'autoresearch' | 'overview';
+interface KnowItem { id: string; modality: string; title: string; content: string; source: string; similarity?: number; status?: string; metadata?: Record<string, unknown>; }
 interface PagInfo { page: number; pageSize: number; totalCount: number; totalPages: number; hasMore: boolean; }
 
 // ── 模块卡片（按分类分组）───────────────
@@ -44,8 +45,9 @@ const CATEGORIES = [
     { id: 'label' as Panel,     label: '航迹标注', icon: '🏷️', color: '#eab308' },
   ]},
   { title: '数据视图', items: [
+    { id: 'overview' as Panel,  label: '数据概览', icon: '📊', color: '#14b8a6' },
     { id: 'chart' as Panel,     label: '海图',     icon: '🗺️', color: '#f43f5e' },
-    { id: 'dashboard' as Panel, label: '仪表盘',   icon: '📊', color: '#14b8a6' },
+    { id: 'dashboard' as Panel, label: '仪表盘',   icon: '📉', color: '#8b5cf6' },
   ]},
   { title: '系统管理', items: [
     { id: 'workflow' as Panel,  label: '工作流',   icon: '⚙️', color: '#64748b' },
@@ -53,120 +55,449 @@ const CATEGORIES = [
   ]},
 ];
 
-// ── 问答面板（含历史）────────────────────────
+// ── 微信风格对话面板 ──────────────────────────
 function RagPanel({ back }: { back: () => void }) {
   const [q, setQ] = useState('');
-  const [ans, setAns] = useState('');
-  const [src, setSrc] = useState<{ title?: string; content?: string }[]>([]);
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; time: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [sid, setSid] = useState(() => 'rag-' + Date.now());
-  const [history, setHistory] = useState<{ session_id: string; title: string; time: string }[]>([]);
-  const [showHistory, setShowHistory] = useState(true);
+  const [convList, setConvList] = useState<{ session_id: string; title: string; time: string }[]>([]);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const msgEndRef = useRef<HTMLDivElement>(null);
 
-  // 进入面板时自动加载历史
-  useEffect(() => { loadHistory(); }, []);
-
-  // 加载历史
-  const loadHistory = async () => {
+  // 加载对话列表
+  const loadConvList = async () => {
     try {
       const r = await fetch('/api/context?action=list');
       const d = await r.json();
       if (d.success) {
-        setHistory((d.conversations || []).map((c: any) => ({
-          session_id: c.session_id,
-          title: (c.context_data?.title || c.context_data?.messages?.[0]?.content || '对话').substring(0, 30),
-          time: c.updated_at ? new Date(c.updated_at).toLocaleString('zh-CN') : '',
-        })));
+        setConvList((d.conversations || []).map((c: any) => {
+          const msgs = c.context_data?.messages || [];
+          const q = msgs.filter((m: any) => m.role === 'user').pop();
+          return {
+            session_id: c.session_id,
+            title: (q?.content || '对话').substring(0, 40),
+            time: c.updated_at ? new Date(c.updated_at).toLocaleString('zh-CN') : '',
+          };
+        }));
       }
     } catch { /* ignore */ }
   };
+  useEffect(() => { loadConvList(); }, []);
 
-  // 发送问题
+  // 自动滚动到底部
+  useEffect(() => { msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // 发送
   const ask = async () => {
     if (!q.trim()) return;
-    setLoading(true); setAns(''); setSrc([]);
-    setShowHistory(false);
+    const curQ = q; setQ('');
+    const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    setMessages(prev => [...prev, { role: 'user', content: curQ, time: now }]);
+    setLoading(true);
     try {
       const r = await fetch('/api/rag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, stream: false, sessionId: sid }),
+        body: JSON.stringify({ query: curQ, stream: false, sessionId: sid }),
       });
       const d = await r.json();
-      setAns(d.answer || d.error || '无结果');
-      setSrc(d.sources || []);
-    } catch { setAns('请求失败'); }
+      const curA = d.answer || d.error || '无结果';
+      setMessages(prev => [...prev, { role: 'assistant', content: curA, time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }]);
+      loadConvList();
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: '请求失败', time: now }]);
+    }
     setLoading(false);
   };
 
   // 加载历史对话
-  const loadConversation = async (id: string) => {
+  const loadConv = async (id: string) => {
     setSid(id);
-    setShowHistory(false);
+    setMessages([]);
     try {
       const r = await fetch('/api/context?session_id=' + id);
       const d = await r.json();
       if (d.success && d.context?.context_data?.messages) {
         const msgs = d.context.context_data.messages;
-        setQ(msgs.filter((m: any) => m.role === 'user').pop()?.content || '');
+        setMessages(msgs.map((m: any) => ({
+          role: m.role,
+          content: m.content,
+          time: m.time ? new Date(m.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '',
+        })));
       }
     } catch { /* ignore */ }
   };
 
-  // 新对话
   const newChat = () => {
     setSid('rag-' + Date.now());
-    setQ(''); setAns(''); setSrc([]); setShowHistory(false);
+    setMessages([]);
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={back} className="text-slate-500">
-            <ChevronLeft className="w-4 h-4 mr-1" />返回
-          </Button>
-          <h2 className="font-bold text-sm">💬 智能问答</h2>
+    <div className="flex" style={{ height: 'calc(100vh - 6rem)' }}>
+      {/* 左侧对话列表 */}
+      {showSidebar && (
+        <div className="w-[140px] shrink-0 border-r bg-slate-50 flex flex-col mr-3">
+          <div className="p-2 border-b flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-slate-600">对话列表</span>
+            <div className="flex gap-1">
+              <button onClick={newChat} className="text-[10px] text-blue-500 hover:text-blue-700" title="新建">+</button>
+              <button onClick={() => setShowSidebar(false)} className="text-[10px] text-slate-400 hover:text-slate-600" title="收起">✕</button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
+            {convList.length === 0 && <div className="text-[10px] text-slate-400 text-center py-4">暂无对话</div>}
+            {convList.map(c => (
+              <button key={c.session_id} onClick={() => loadConv(c.session_id)}
+                className={`w-full text-left p-1.5 rounded text-[10px] truncate whitespace-nowrap leading-tight hover:bg-slate-200 ${c.session_id === sid ? 'bg-blue-100 font-medium' : ''}`}>
+                <div className="truncate whitespace-nowrap">{c.title}</div>
+                <div className="text-[9px] text-slate-400">{c.time.split(' ')[0] || c.time}</div>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex gap-1">
-          <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => { loadHistory(); setShowHistory(!showHistory); }}>
-            📋 {showHistory ? '关闭' : '历史'}
-          </Button>
+      )}
+
+      {/* 右侧主聊天区 */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* 顶栏 */}
+        <div className="flex items-center justify-between mb-2 shrink-0">
+          <div className="flex items-center gap-2">
+            {!showSidebar && (
+              <Button variant="ghost" size="sm" onClick={() => { setShowSidebar(true); loadConvList(); }} className="text-slate-400" title="展开列表">☰</Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={back} className="text-slate-500">
+              <ChevronLeft className="w-4 h-4 mr-1" />返回
+            </Button>
+            <h2 className="font-bold text-sm">💬 智能问答</h2>
+          </div>
+          {!showSidebar && <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => { setShowSidebar(true); loadConvList(); }}>📋 历史</Button>}
           <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={newChat}>➕ 新建</Button>
         </div>
-      </div>
 
-      {/* 历史面板 */}
-      {showHistory && (
-        <div className="bg-slate-50 rounded-lg p-3 max-h-64 overflow-y-auto space-y-1">
-          {history.length === 0 && <div className="text-xs text-slate-400 text-center py-4">暂无对话记录</div>}
-          {history.map(h => (
-            <button key={h.session_id} onClick={() => loadConversation(h.session_id)}
-              className={`w-full text-left p-2 rounded text-xs hover:bg-slate-200 flex items-center justify-between ${h.session_id === sid ? 'bg-blue-50' : ''}`}>
-              <span className="truncate">{h.title}</span>
-              <span className="text-[10px] text-slate-400 shrink-0 ml-2">{h.time}</span>
-            </button>
+        {/* 消息区 */}
+        <div className="flex-1 overflow-y-auto px-1 space-y-3 min-h-0">
+          {messages.length === 0 && !loading && (
+            <div className="text-center text-slate-400 text-xs py-8">开始新的对话吧</div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {/* 头像 */}
+              <div className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-white text-[11px] font-bold ${m.role === 'user' ? 'order-2 ml-2 bg-blue-400' : 'order-1 mr-2 bg-emerald-400'}`}>
+                {m.role === 'user' ? '我' : 'AI'}
+              </div>
+              {/* 气泡 */}
+              <div className={`max-w-[85%] ${m.role === 'user' ? 'order-1' : 'order-2'}`}>
+                <div className={`text-[10px] mb-0.5 ${m.role === 'user' ? 'text-right text-blue-500' : 'text-left text-emerald-600'}`}>
+                  {m.role === 'user' ? '我' : 'ShipRag AI'}
+                  {m.time && <span className="text-slate-400 ml-1">{m.time}</span>}
+                </div>
+                <div className={`px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap break-words ${
+                  m.role === 'user'
+                    ? 'bg-blue-500 text-white rounded-tr-md'
+                    : 'bg-slate-100 text-slate-800 rounded-tl-md'
+                }`}>
+                  {m.content}
+                </div>
+              </div>
+            </div>
           ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="w-7 h-7 rounded-full bg-emerald-400 flex items-center justify-center text-white text-[11px] font-bold mr-2">AI</div>
+              <div className="bg-slate-100 px-3 py-2 rounded-2xl rounded-tl-md text-sm text-slate-500">
+                <Loader2 className="w-4 h-4 inline animate-spin mr-1" />思考中...
+              </div>
+            </div>
+          )}
+          <div ref={msgEndRef} />
         </div>
-      )}
 
-      {/* 输入区 */}
-      <div className="flex gap-2">
-        <Textarea value={q} onChange={e => setQ(e.target.value)} placeholder="输入问题..." className="flex-1 text-sm" rows={3}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }} />
-        <Button onClick={ask} disabled={loading} size="sm" className="h-auto"><Send className="w-4 h-4" /></Button>
+        {/* 输入区 */}
+        <div className="flex gap-2 shrink-0 pt-2 border-t mt-2">
+          <Textarea value={q} onChange={e => setQ(e.target.value)}
+            placeholder="输入问题..."
+            className="flex-1 text-sm resize-none" rows={2}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }} />
+          <Button onClick={ask} disabled={loading} size="sm" className="h-auto shrink-0 self-end">
+            <Send className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
-
-      {/* 回答 */}
-      {loading && <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" />思考中...</div>}
-      {ans && <div className="bg-white border rounded-lg p-3 text-sm whitespace-pre-wrap">{ans}</div>}
-      {src.length > 0 && (
-        <details className="text-xs text-slate-400">
-          <summary className="cursor-pointer">📎 引用来源 ({src.length})</summary>
-          <ul className="mt-1 space-y-1">{src.map((s, i) => <li key={i} className="truncate">{s.title || '未知'}</li>)}</ul>
-        </details>
-      )}
     </div>
+  );
+}
+
+// ── 条目预览浮窗 ─────────────────────────────
+function PreviewModal({ item, tab, onClose, onTab, onSaved }: {
+  item: { id: string; modality: string; title: string; content: string; source: string; similarity?: number; status?: string; metadata?: Record<string, unknown> };
+  tab: string; onClose: () => void; onTab: (t: 'preview' | 'raw' | 'edit') => void;
+  onSaved?: () => void;
+}) {
+  const imgUrl = (item.metadata?.imageUrl as string) || (item.metadata?.localUrl as string) || (item.metadata?.localPath as string);
+  const isImage = item.modality === 'image';
+  const imgSrc = imgUrl ? (imgUrl.startsWith('/') ? imgUrl : '/api/search?action=preview-image&path=' + encodeURIComponent(imgUrl)) : '';
+  const rawData = item.content ? (item.modality === 'json' ? (function(){ try { return JSON.stringify(JSON.parse(item.content), null, 2); } catch { return item.content; } })() : item.content) : JSON.stringify(item, null, 2);
+
+  // 编辑表单状态
+  const [editTitle, setEditTitle] = useState(item.title || '');
+  const [editContent, setEditContent] = useState(item.content || '');
+  const [editMetadata, setEditMetadata] = useState(JSON.stringify(item.metadata || {}, null, 2));
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
+  const [generatingDesc, setGeneratingDesc] = useState(false);
+
+  // 用 Ollama 视觉模型重新生成图片描述
+  const handleGenerateDescription = async () => {
+    const imgPath = (item.metadata?.localPath as string) || (item.metadata?.imageUrl as string);
+    if (!imgPath) { setSaveMsg('❌ 无本地图片路径'); return; }
+    setGeneratingDesc(true); setSaveMsg('');
+    try {
+      // 读取本地文件转 base64
+      let base64: string;
+      if (imgPath.startsWith('/')) {
+        const r = await fetch('/api/search?action=preview-image&path=' + encodeURIComponent(imgPath));
+        const buf = await r.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        base64 = btoa(binary);
+      } else if (imgPath.startsWith('http')) {
+        const r = await fetch(imgPath);
+        const buf = await r.arrayBuffer();
+        base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      } else { setSaveMsg('❌ 无法读取图片'); setGeneratingDesc(false); return; }
+
+      const mime = imgPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      const r = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen3.5:9b', stream: false,
+          messages: [{ role: 'user', content: '请用中文详细描述这张图片的全部内容。要求：\n1. 提取图片中所有可见文字，逐条列出\n2. 描述图片中的界面元素、按钮、表格、图表\n3. 标注关键数字、日期、名称等\n4. 尽量详尽，不限字数',
+            images: ['data:' + mime + ';base64,' + base64] }],
+        }),
+      });
+      const d = await r.json();
+      const desc = d.message?.content || '无法识别图片内容';
+      setEditContent(desc);
+      setSaveMsg('✅ 描述已生成');
+    } catch (e) { setSaveMsg('❌ 生成失败: ' + (e instanceof Error ? e.message : String(e))); }
+    setGeneratingDesc(false);
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setSaveMsg('');
+    try {
+      let metaObj: Record<string, unknown> = {};
+      try { metaObj = JSON.parse(editMetadata); } catch { metaObj = item.metadata || {}; }
+      const r = await fetch('/api/search', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: item.id, title: editTitle, content: editContent, metadata: metaObj }),
+      });
+      const d = await r.json();
+      if (d.success) { setSaveMsg('✅ 保存成功'); if (onSaved) onSaved(); }
+      else { setSaveMsg('❌ ' + (d.error || '保存失败')); }
+    } catch (e) { setSaveMsg('❌ 网络错误'); }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+        {/* 标题栏 */}
+        <div className="p-2.5 border-b flex items-center justify-between shrink-0 gap-2">
+          <h3 className="font-semibold text-[13px] truncate whitespace-nowrap flex-1 min-w-0" title={item.title}>{truncateMiddle(item.title || '', 30)}</h3>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 shrink-0" onClick={onClose}>✕</Button>
+        </div>
+        {/* Tab 栏 */}
+        <div className="flex border-b shrink-0">
+          <button onClick={() => onTab('preview')} className={`flex-1 py-2 text-xs font-medium ${tab === 'preview' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-400'}`}>预览</button>
+          <button onClick={() => onTab('edit')}    className={`flex-1 py-2 text-xs font-medium ${tab === 'edit'   ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-400'}`}>编辑</button>
+          <button onClick={() => onTab('raw')}     className={`flex-1 py-2 text-xs font-medium ${tab === 'raw'     ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-400'}`}>原始</button>
+        </div>
+        {/* 内容 */}
+        <div className="flex-1 overflow-y-auto p-3">
+          {tab === 'preview' ? (
+            <div className="text-sm">
+              <div className="flex gap-1 text-[10px] text-slate-400 mb-2">
+                <span>{item.modality}</span><span>·</span><span>{item.source?.substring(0, 30) || '-'}</span>
+                {item.similarity !== undefined && <><span>·</span><span>{(item.similarity * 100).toFixed(0)}%</span></>}
+              </div>
+              {isImage && imgSrc ? (
+                <img src={imgSrc} alt={item.title} className="w-full rounded-lg border max-h-48 object-contain mb-2" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              ) : isImage && !imgSrc ? (
+                <div className="text-center text-slate-400 py-4 text-xs">📷 图片预览不可用<br/><span className="text-[10px]">无本地存储路径</span></div>
+              ) : (
+                <div className="whitespace-pre-wrap text-xs break-words bg-slate-50 p-2 rounded mb-2">{item.content?.substring(0, 1500) || '无内容'}</div>
+              )}
+            </div>
+          ) : tab === 'edit' ? (
+            <div className="flex flex-col" style={{ minHeight: 0 }}>
+              <div className="overflow-y-auto space-y-2" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+                {isImage && (imgSrc ? (
+                  <img src={imgSrc} alt={item.title} className="w-full rounded-lg border max-h-28 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="text-center text-slate-400 py-1.5 text-[10px] bg-slate-50 rounded">📷 无本地存储路径</div>
+                ))}
+                {/* 向量化状态 + 类型 */}
+                <div className="flex gap-3 text-[10px] text-slate-500 bg-slate-50 rounded px-2 py-1.5">
+                  <span>类型: {item.modality}</span>
+                  <span>向量化: {item.status === 'embedded' ? '✅ 已完成' : '⏳ 待处理'}</span>
+                </div>
+                {/* 来源文件 */}
+                <div>
+                  <label className="text-[10px] font-medium text-slate-500">来源文件</label>
+                  <Input value={item.source || ''} readOnly className="w-full text-[10px] h-7 mt-0.5 bg-slate-50 text-slate-500 truncate" style={{ maxWidth: '100%' }} />
+                </div>
+                {/* 标题 */}
+                <div>
+                  <label className="text-[10px] font-medium text-slate-500">标题</label>
+                  <Input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="text-xs h-8 mt-0.5" />
+                </div>
+                {/* 内容 + 语义识别按钮 */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-medium text-slate-500">内容</label>
+                    {isImage && (
+                      <Button size="sm" variant="outline" className="h-6 text-[10px] px-1.5" onClick={handleGenerateDescription} disabled={generatingDesc}>
+                        {generatingDesc ? <Loader2 className="w-3 h-3 mr-0.5 animate-spin" /> : null}🤖 语义识别
+                      </Button>
+                    )}
+                  </div>
+                  <Textarea value={editContent} onChange={e => setEditContent(e.target.value)} className="text-xs mt-0.5" rows={4} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-medium text-slate-500">元数据 (JSON)</label>
+                  <Textarea value={editMetadata} onChange={e => setEditMetadata(e.target.value)} className="text-[10px] font-mono mt-0.5" rows={3} />
+                </div>
+                {saveMsg && <div className={`text-[10px] ${saveMsg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{saveMsg}</div>}
+              </div>
+              <div className="flex gap-2 pt-2 mt-2 border-t shrink-0">
+                <Button size="sm" className="flex-1 h-8 text-xs" onClick={handleSave} disabled={saving}>
+                  {saving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}保存
+                </Button>
+                <Button size="sm" variant="outline" className="h-8 text-xs px-3" onClick={onClose}>关闭</Button>
+              </div>
+            </div>
+          ) : (
+            <pre className="text-[10px] whitespace-pre-wrap break-all bg-slate-50 p-2 rounded">{rawData.substring(0, 5000)}</pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 数据概览组件 ─────────────────────────────
+function OverviewPanel() {
+  const [data, setData] = useState<{ ports: any[]; routes: any[]; regs: any[] }>({ ports: [], routes: [], regs: [] });
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'port' | 'route' | 'regulation'>('port');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [pr, rr, gr] = await Promise.all([
+          fetch('/api/data-maintain?action=list&type=port&pageSize=5000'),
+          fetch('/api/data-maintain?action=list&type=route&pageSize=5000'),
+          fetch('/api/regulations?pageSize=200'),
+        ]);
+        const pd = await pr.json(), rd = await rr.json(), gd = await gr.json();
+        setData({ ports: pd.items || [], routes: rd.items || [], regs: gd.items || [] });
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  if (loading) return <div className="text-center text-slate-400 text-sm py-8">加载数据中...</div>;
+
+  const REGIONS = [
+    { key: 'global', name: '全球', range: null as null | { lonMin: number; lonMax: number; latMin: number; latMax: number } },
+    { key: 'asia_pacific', name: '亚太', range: { lonMin: 100, lonMax: 180, latMin: -50, latMax: 60 } },
+    { key: 'middle_east', name: '中东', range: { lonMin: 35, lonMax: 60, latMin: 12, latMax: 40 } },
+    { key: 'red_sea_east_africa', name: '红海东非', range: { lonMin: 30, lonMax: 55, latMin: -30, latMax: 30 } },
+    { key: 'west_africa', name: '西非', range: { lonMin: -20, lonMax: 20, latMin: -35, latMax: 20 } },
+    { key: 'europe', name: '欧洲', range: { lonMin: -10, lonMax: 40, latMin: 35, latMax: 70 } },
+    { key: 'north_america', name: '北美', range: { lonMin: -180, lonMax: -60, latMin: 25, latMax: 70 } },
+    { key: 'central_south_america', name: '中南美', range: { lonMin: -120, lonMax: -30, latMin: -60, latMax: 25 } },
+  ];
+  const getRegion = (lon: number, lat: number) => {
+    for (const r of REGIONS) { if (r.range && lon >= r.range.lonMin && lon <= r.range.lonMax && lat >= r.range.latMin && lat <= r.range.latMax) return r.key; }
+    return 'global';
+  };
+
+  // 港口按区域统计
+  const portCounts: Record<string, number> = {}; REGIONS.forEach(r => portCounts[r.key] = 0);
+  data.ports.forEach((p: any) => { if (!isNaN(p.lon) && !isNaN(p.lat)) portCounts[getRegion(p.lon, p.lat)]++; });
+  portCounts['global'] = data.ports.length;
+
+  // 航线按起点统计
+  const routeCounts: Record<string, number> = {}; REGIONS.forEach(r => routeCounts[r.key] = 0);
+  const portMap: Record<string, { lon: number; lat: number }> = {};
+  data.ports.forEach((p: any) => { portMap[p.port_code] = { lon: p.lon, lat: p.lat }; });
+  data.routes.forEach((r: any) => {
+    const pos = portMap[r.orig_port];
+    if (pos && !isNaN(pos.lon) && !isNaN(pos.lat)) routeCounts[getRegion(pos.lon, pos.lat)]++;
+    else routeCounts['global']++;
+  });
+  routeCounts['global'] = data.routes.length;
+
+  // 规章制度按分类统计
+  const CAT_LABELS: Record<string, string> = { maritime_rules: '海事规章制度', platform_ops: '平台运维规范', trajectory_annotation: '航迹标注准则', model_training: '模型训练管理办法', other: '其他资料' };
+  const regCatCounts: Record<string, number> = {};
+  data.regs.forEach((r: any) => {
+    const cats = r.categories && Array.isArray(r.categories) ? r.categories : ['other'];
+    cats.forEach((c: string) => regCatCounts[c] = (regCatCounts[c] || 0) + 1);
+  });
+
+  const current = tab === 'port'
+    ? REGIONS.map(r => ({ name: r.name, count: portCounts[r.key] || 0 }))
+    : tab === 'route'
+    ? REGIONS.map(r => ({ name: r.name, count: routeCounts[r.key] || 0 }))
+    : Object.entries(regCatCounts).map(([k, v]) => ({ name: CAT_LABELS[k] || k, count: v }));
+
+  const maxVal = Math.max(...current.map(c => c.count), 1);
+
+  return (
+    <Card><CardContent className="p-4">
+      <h2 className="font-bold text-sm mb-3">📊 数据概览</h2>
+      <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+        <div className="bg-blue-50 rounded-lg p-2">
+          <div className="text-lg font-bold text-blue-700">{data.ports.length}</div>
+          <div className="text-[10px] text-blue-500">港口</div>
+        </div>
+        <div className="bg-emerald-50 rounded-lg p-2">
+          <div className="text-lg font-bold text-emerald-700">{data.routes.length}</div>
+          <div className="text-[10px] text-emerald-500">航线</div>
+        </div>
+        <div className="bg-purple-50 rounded-lg p-2">
+          <div className="text-lg font-bold text-purple-700">{data.regs.length}</div>
+          <div className="text-[10px] text-purple-500">规章</div>
+        </div>
+      </div>
+      <div className="flex gap-1 mb-3">
+        <Button size="sm" variant={tab === 'port' ? 'default' : 'outline'} className="h-7 text-[10px] flex-1" onClick={() => setTab('port')}>港口</Button>
+        <Button size="sm" variant={tab === 'route' ? 'default' : 'outline'} className="h-7 text-[10px] flex-1" onClick={() => setTab('route')}>航线</Button>
+        <Button size="sm" variant={tab === 'regulation' ? 'default' : 'outline'} className="h-7 text-[10px] flex-1" onClick={() => setTab('regulation')}>规章</Button>
+      </div>
+      <div className="flex gap-1 mb-3">
+        <Button size="sm" variant={tab === 'port' ? 'default' : 'outline'} className="h-7 text-[10px] flex-1" onClick={() => setTab('port')}>港口分布</Button>
+        <Button size="sm" variant={tab === 'route' ? 'default' : 'outline'} className="h-7 text-[10px] flex-1" onClick={() => setTab('route')}>航线分布</Button>
+      </div>
+      <div className="space-y-1.5">
+        {current.filter(c => c.count > 0).map(c => (
+          <div key={c.name} className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 w-14 shrink-0">{c.name}</span>
+            <div className="flex-1 h-4 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: ((c.count / maxVal) * 100).toFixed(0) + '%' }} />
+            </div>
+            <span className="text-[10px] text-slate-600 font-medium w-10 text-right">{c.count}</span>
+          </div>
+        ))}
+      </div>
+    </CardContent></Card>
   );
 }
 
@@ -203,7 +534,26 @@ export default function RagPage() {
   const [sLoading, setSLoading] = useState(false);
   const [sPageNum, setSPageNum] = useState(1);
 
-  // RAG
+  // 知识库条目
+  const [kbItems, setKbItems] = useState<KnowItem[]>([]);
+  const [kbType, setKbType] = useState<'all' | 'embedded' | 'pending'>('all');
+  const [kbLoading, setKbLoading] = useState(false);
+  const [showKb, setShowKb] = useState(false);
+
+  // ── 加载知识库条目 ──
+  const loadKb = async (type: 'all' | 'embedded' | 'pending') => {
+    setKbLoading(true); setKbType(type); setShowKb(true);
+    try {
+      const r = await fetch('/api/search?type=' + type + '&limit=50');
+      const d = await r.json();
+      setKbItems(d.items || []);
+    } catch { setKbItems([]); }
+    setKbLoading(false);
+  };
+
+  // 预览（共用）
+  const [previewItem, setPreviewItem] = useState<KnowItem | null>(null);
+  const [previewTab, setPreviewTab] = useState<'preview' | 'raw' | 'edit'>('preview');
   const [rQuery, setRQuery] = useState('');
   const [rAnswer, setRAnswer] = useState('');
   const [rSources, setRSources] = useState<{ title?: string; content?: string }[]>([]);
@@ -357,21 +707,38 @@ export default function RagPage() {
               {sLoading && <div className="text-sm text-slate-400">搜索中...</div>}
               {sPage && <div className="text-xs text-slate-400">共 {sPage.totalCount} 条，第 {sPage.page}/{sPage.totalPages} 页</div>}
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {sResults.map((r, i) => (
-                  <div key={r.id || i} className="p-2 bg-slate-50 rounded hover:bg-slate-100 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1">
-                        <Badge variant="outline" className="text-[10px]">{r.modality}</Badge>
-                        <span className="font-medium truncate max-w-[200px]">{r.title?.substring(0, 40)}</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        {r.similarity !== undefined && <span className="text-green-600 font-bold">{(r.similarity * 100).toFixed(0)}%</span>}
-                        <Trash2 className="w-3 h-3 text-red-400 cursor-pointer hover:text-red-600" onClick={() => delItem(r.id, r.title)} />
-                      </span>
+                {sResults.map((r, i) => {
+                  const imgUrl = (r.metadata?.imageUrl as string) || (r.metadata?.localUrl as string) || (r.metadata?.localPath as string);
+                  const isImage = r.modality === 'image';
+                  return (
+                  <div key={r.id || i} className="p-2 bg-slate-50 rounded hover:bg-slate-100 text-xs cursor-pointer" onClick={() => { setPreviewItem(r); setPreviewTab('preview'); }}>
+                    <div className="flex gap-2">
+                      {isImage && (
+                        imgUrl ? (
+                          <img src={imgUrl.startsWith('/') ? imgUrl : '/api/search?action=preview-image&path=' + encodeURIComponent(imgUrl)}
+                            className="w-12 h-12 object-cover rounded shrink-0" alt={r.title}
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        ) : (
+                          <div className="w-12 h-12 bg-slate-200 rounded shrink-0 flex items-center justify-center text-slate-400 text-lg">🖼️</div>
+                        )
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="flex items-center gap-1">
+                            <Badge variant="outline" className="text-[10px]">{r.modality}</Badge>
+                            <span className="font-medium truncate whitespace-nowrap max-w-[200px]" title={r.title}>{truncateMiddle(r.title || '', 28)}</span>
+                          </span>
+                          <span className="flex items-center gap-1">
+                            {r.similarity !== undefined && <span className="text-green-600 font-bold">{(r.similarity * 100).toFixed(0)}%</span>}
+                            <Trash2 className="w-3 h-3 text-red-400 cursor-pointer hover:text-red-600" onClick={() => delItem(r.id, r.title)} />
+                          </span>
+                        </div>
+                        <p className="text-slate-500 truncate mt-1">{r.content?.substring(0, 80)}</p>
+                      </div>
                     </div>
-                    <p className="text-slate-500 truncate mt-1">{r.content?.substring(0, 80)}</p>
                   </div>
-                ))}
+                  );
+                })}
               </div>
               {sPage && sPage.totalPages > 1 && (
                 <div className="flex gap-1 justify-center">
@@ -404,10 +771,29 @@ export default function RagPage() {
                   </Button>
                 </div>
                 {embedStatus && (
+                  <div>
                   <div className="grid grid-cols-3 gap-2 mt-3">
-                    <div className="bg-slate-50 p-2 rounded text-center"><div className="font-bold text-lg">{embedStatus.total}</div><div className="text-[10px] text-slate-400">总条目</div></div>
-                    <div className="bg-green-50 p-2 rounded text-center"><div className="font-bold text-lg text-green-700">{embedStatus.embedded}</div><div className="text-[10px] text-green-600">已向量化</div></div>
-                    <div className="bg-yellow-50 p-2 rounded text-center"><div className="font-bold text-lg text-yellow-700">{embedStatus.pending}</div><div className="text-[10px] text-yellow-600">待处理</div></div>
+                    <button className="bg-slate-50 p-2 rounded text-center cursor-pointer hover:bg-slate-200" onClick={() => loadKb('all')}><div className="font-bold text-lg">{embedStatus.total}</div><div className="text-[10px] text-slate-400">总条目</div></button>
+                    <button className="bg-green-50 p-2 rounded text-center cursor-pointer hover:bg-green-200" onClick={() => loadKb('embedded')}><div className="font-bold text-lg text-green-700">{embedStatus.embedded}</div><div className="text-[10px] text-green-600">已向量化</div></button>
+                    <button className="bg-yellow-50 p-2 rounded text-center cursor-pointer hover:bg-yellow-200" onClick={() => loadKb('pending')}><div className="font-bold text-lg text-yellow-700">{embedStatus.pending}</div><div className="text-[10px] text-yellow-600">待处理</div></button>
+                  </div>
+                  {/* 知识库条目列表 */}
+                  {showKb && (
+                    <div className="mt-2 border rounded-lg max-h-64 overflow-y-auto">
+                      <div className="p-1.5 border-b bg-slate-50 flex items-center justify-between text-xs">
+                        <span>条目列表 ({kbType === 'all' ? '全部' : kbType === 'embedded' ? '已向量化' : '待处理'})</span>
+                        <Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-slate-400" onClick={() => setShowKb(false)}>✕</Button>
+                      </div>
+                      {kbLoading ? <div className="text-xs text-slate-400 text-center py-4">加载中...</div> :
+                       kbItems.length === 0 ? <div className="text-xs text-slate-400 text-center py-4">暂无数据</div> :
+                       kbItems.map((item, i) => (
+                        <div key={item.id || i} className="p-1.5 border-b text-xs hover:bg-slate-50 cursor-pointer flex items-center gap-2" onClick={() => { setPreviewItem(item); setPreviewTab('raw'); }}>
+                          <Badge variant="outline" className="text-[9px] shrink-0">{item.modality}</Badge>
+                          <span className="truncate whitespace-nowrap flex-1" title={item.title}>{truncateMiddle(item.title || '', 28)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   </div>
                 )}
                 {embedding && <Progress value={embedStatus ? (embedStatus.embedded / embedStatus.total) * 100 : 0} className="mt-2" />}
@@ -444,14 +830,22 @@ export default function RagPage() {
             </CardContent></Card>
           </div>
         );
+      // =================== 数据概览 ===================
+      case 'overview':
+        return (
+          <div className="space-y-4">
+            <BackBtn />
+            <OverviewPanel />
+          </div>
+        );
       // =================== 其他功能（跳转子页面） ===================
       case 'trajectory':  return <IframePanel title="航迹分析" src="/trajectory" back={() => setPanel('home')} />;
       case 'training':    return <IframePanel title="航迹训练" src="/trajectory-training" back={() => setPanel('home')} />;
       case 'inference':   return <IframePanel title="航迹推理" src="/trajectory-inference" back={() => setPanel('home')} />;
       case 'workflow':    return <IframePanel title="工作流" src="/workflow" back={() => setPanel('home')} />;
       case 'dashboard':   return <IframePanel title="仪表盘" src="/dashboard" back={() => setPanel('home')} />;
-      case 'settings':    return <IframePanel title="设置" src="/settings" back={() => setPanel('home')} />;
-      case 'label':        return <IframePanel title="标注" src="/segment-label" back={() => setPanel('home')} />;
+      case 'settings':    return <IframePanel title="系统设置" src="/settings" back={() => setPanel('home')} />;
+      case 'label':        return <IframePanel title="航迹标注" src="/segment-label" back={() => setPanel('home')} />;
       case 'autoresearch': return <IframePanel title="知识管理" src="/manage" back={() => setPanel('home')} />;
       // =================== 首页 ===================
       default:
@@ -503,6 +897,7 @@ export default function RagPage() {
   return (
     <main className="max-w-lg mx-auto p-4 min-h-screen bg-white">
       {renderPanel()}
+      {previewItem && <PreviewModal item={previewItem} tab={previewTab} onClose={() => setPreviewItem(null)} onTab={setPreviewTab} onSaved={() => { loadKb(kbType); loadStatus(); }} />}
     </main>
   );
 }

@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Plus, Edit2, Trash2, Eye, Database, Search, Upload, 
+import { truncateMiddle } from '@/lib/utils';
+import {
+  Plus, Edit2, Trash2, Eye, Database, Search, Upload,
   CheckCircle, XCircle, Clock, FileText, Route, Anchor, BookOpen, ExternalLink,
   Layers, Zap, Map as MapIcon, BarChart3
 } from 'lucide-react';
@@ -835,7 +836,7 @@ export function DataMaintainPanel() {
                           className="w-3 h-3"
                         />
                         <StatusIcon status={reg.vector_status === 'success' ? '向量化成功' : reg.vector_status === 'failed' ? '向量化失败' : '未向量化'} />
-                        <span className="text-xs truncate flex-1" title={reg.filename}>{reg.filename}</span>
+                        <span className="text-xs truncate whitespace-nowrap flex-1" title={reg.filename}>{truncateMiddle(reg.filename, 30)}</span>
                       </div>
                       <div className="flex gap-1 flex-shrink-0">
                         {reg.categories.slice(0, 2).map((cat, i) => (
