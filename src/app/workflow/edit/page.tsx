@@ -6,6 +6,7 @@ import ReactFlow, {
   Handle, Position, useNodesState, useEdgesState, addEdge, Connection, ReactFlowProvider
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { LangGraphViewer } from '@/components/langgraph-viewer';
 
 // ==================== 节点类型定义 ====================
 const NODE_TYPE_CONFIG: Record<string, {
@@ -420,12 +421,15 @@ function WorkflowEditor() {
   const [workflowName, setWorkflowName] = useState('新建工作流');
   const [saving, setSaving] = useState(false);
   const [dragType, setDragType] = useState<string | null>(null);
-  const [showNodePanel, setShowNodePanel] = useState(false); // 移动端节点面板展开状态
+  const [showNodePanel, setShowNodePanel] = useState(false);
+  const [readonly, setReadonly] = useState(false);
+  const [wfEngine, setWfEngine] = useState<string>('legacy');
   
   // 从 URL 加载工作流
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const id = params.get('id');
+    if (params.get('readonly') === '1') setReadonly(true);
     if (id) {
       setWorkflowId(id);
       loadWorkflow(id);
@@ -508,6 +512,7 @@ function WorkflowEditor() {
       setNodes(loadedNodes);
       setEdges(loadedEdges);
       setWorkflowName(data.name || '未命名工作流');
+      setWfEngine(data.engine || 'legacy');
     } catch (error) {
       console.error('加载工作流失败:', error);
       // 加载失败时使用默认节点
@@ -629,6 +634,20 @@ function WorkflowEditor() {
     setShowNodePanel(false); // 添加后关闭面板
   };
   
+  // LangGraph 只读图谱视图
+  if (readonly) {
+    return (
+      <LangGraphViewer
+        workflowName={workflowName}
+        workflowId={workflowId}
+        engine={wfEngine}
+        nodes={nodes}
+        edges={edges}
+        nodeTypeConfig={NODE_TYPE_CONFIG}
+      />
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* 顶部导航 */}
