@@ -109,6 +109,10 @@ export async function runWorkflow(input: WorkflowInput): Promise<WorkflowResult>
 
 /**
  * 执行工作流（流式，通过回调输出）
+ *
+ * 架构: LangGraph 走检索管线 (classify → rewrite → embed → retrieve → rerank)
+ *      然后用 ChatOllama.stream() 逐 token 输出生成阶段。
+ *      这样前端能逐字看到答案，而不是等全量生成完再一次性收到。
  */
 export async function runWorkflowStream(input: WorkflowInput, callbacks: StreamCallback): Promise<WorkflowResult> {
   const graph = getWorkflowGraph(input.workflow);
@@ -120,67 +124,125 @@ export async function runWorkflowStream(input: WorkflowInput, callbacks: StreamC
     modality: input.modality || '',
     topK: input.topK || 5,
     classifyResult: 'RAG',
-    searchResults: [],
-    rerankedResults: [],
-    sqlData: [],
-    finalAnswer: '',
-    errors: [],
-    nodeTimings: {},
+    searchResults: [], fusedResults: [], rerankedResults: [],
+    sqlData: [], finalAnswer: '', errors: [], nodeTimings: {},
   };
 
-  let lastAnswer = '';
-  let lastSQL = '';
-  let lastSearchResults: any[] = [];
+  // Step 1: 运行检索管线 (到 rerank 为止)
+  const retrievalState = await graph.invoke(initialState);
 
-  // 使用 stream 模式获取事件
-  const stream = await graph.stream(initialState, {
-    streamMode: 'updates' as any,
-  });
+  // 发送检索结果 + SQL
+  const searchRes = retrievalState.rerankedResults || retrievalState.fusedResults || retrievalState.searchResults || [];
+  if (searchRes.length > 0) {
+    callbacks.onSearchResults?.(searchRes);
+  }
+  if (retrievalState.generatedSQL) {
+    callbacks.onSQL?.(retrievalState.generatedSQL);
+  }
+  callbacks.onNode?.('retrieval_done');
 
-  for await (const chunk of stream) {
-    const updates = chunk as Record<string, Partial<RAGState>>;
+  // Step 2: 流式 LLM 生成 (绕过 LangGraph, 直接 .stream())
+  const classifyResult = retrievalState.classifyResult || 'RAG';
+  let finalAnswer = '';
 
-    for (const [nodeName, nodeState] of Object.entries(updates)) {
-      callbacks.onNode?.(nodeName);
+  try {
+    const { ChatOllama } = await import('@langchain/ollama');
+    const { OllamaConfig } = await import('@/lib/ollama/config');
+    const cfg = new OllamaConfig();
 
-      // 检索结果更新
-      if (nodeState.searchResults && nodeState.searchResults.length > lastSearchResults.length) {
-        lastSearchResults = nodeState.searchResults;
-        callbacks.onSearchResults?.(nodeState.searchResults);
+    if (classifyResult === 'CHAT') {
+      const llm = new ChatOllama({ model: cfg.defaultModel, temperature: 0.3 });
+      const stream = await llm.stream(input.query);
+      for await (const chunk of stream) {
+        const text = typeof chunk.content === 'string' ? chunk.content : '';
+        finalAnswer += text;
+        callbacks.onContent?.(text);
       }
-
-      if (nodeState.rerankedResults && nodeState.rerankedResults.length > lastSearchResults.length) {
-        lastSearchResults = nodeState.rerankedResults;
-        callbacks.onSearchResults?.(nodeState.rerankedResults);
+    } else if (classifyResult === 'SQL' || classifyResult === 'LIST') {
+      finalAnswer = retrievalState.polishedSQLResult || retrievalState.finalAnswer || `查询到 ${(retrievalState.sqlData || []).length} 条记录`;
+      // SQL 结果一次性发送（每10字分块模拟流式）
+      for (let i = 0; i < finalAnswer.length; i += 10) {
+        callbacks.onContent?.(finalAnswer.slice(i, i + 10));
       }
+    } else {
+      // RAG / ALL: 用检索到的资料生成
+      const llm = new ChatOllama({ model: cfg.defaultModel, temperature: 0.3 });
+      const ctx = searchRes.length > 0
+        ? searchRes.map((r, i) => `【资料${i + 1}】(来源: ${r.title}) ${(r.content || '').substring(0, 800)}`).join('\n\n')
+        : '（未检索到相关资料）';
 
-      // SQL 更新
-      if (nodeState.generatedSQL && nodeState.generatedSQL !== lastSQL) {
-        lastSQL = nodeState.generatedSQL;
-        callbacks.onSQL?.(lastSQL);
-      }
+      const hist = (input.history || []).slice(-4)
+        .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n');
 
-      // 答案流式
-      if (nodeState.finalAnswer && nodeState.finalAnswer !== lastAnswer) {
-        const newChunk = nodeState.finalAnswer.slice(lastAnswer.length);
-        if (newChunk) {
-          callbacks.onContent?.(newChunk);
-        }
-        lastAnswer = nodeState.finalAnswer;
+      const prompt = `你是海事领域知识助手。根据以下参考资料回答用户问题，并用【资料N】标注每条信息的来源。
+
+引用规则：
+- 每引用一个资料，在句末标注【资料1】【资料2】等编号
+- 如果是自身知识而非参考资料，标注【据我所知】
+- 如果资料不足以回答问题，请诚实说明
+
+${hist ? `对话历史:\n${hist}\n` : ''}
+参考资料:
+${ctx}
+
+用户问题: ${input.query}
+
+请用中文回答：`;
+
+      const stream = await llm.stream(prompt);
+      for await (const chunk of stream) {
+        const text = typeof chunk.content === 'string' ? chunk.content : '';
+        finalAnswer += text;
+        callbacks.onContent?.(text);
       }
     }
+  } catch (e: any) {
+    finalAnswer = finalAnswer || `生成失败: ${e.message}`;
+    callbacks.onContent?.(finalAnswer);
+  }
+
+  callbacks.onNode?.('llm_done');
+
+  // Step 3: 幻觉检测 (post-hoc)
+  let withCheck = finalAnswer;
+  if (classifyResult !== 'CHAT' && classifyResult !== 'SQL' && classifyResult !== 'LIST' && searchRes.length > 0) {
+    try {
+      const { ChatOllama } = await import('@langchain/ollama');
+      const { OllamaConfig } = await import('@/lib/ollama/config');
+      const cfg = new OllamaConfig();
+      const checker = new ChatOllama({ model: cfg.fallbackModel, temperature: 0 });
+
+      const checkPrompt = `你是一个事实核查器。检查答案中的事实是否能在参考资料中找到支撑。
+如果全部能找到支撑 → "PASS"
+如果有无法验证的断言 → "MILD_HALLUCINATION: 描述"
+如果答案是明显编造的 → "HALLUCINATION: 描述"
+
+答案: ${finalAnswer.substring(0, 1500)}
+参考资料: ${searchRes.slice(0, 3).map((r, i) => `[${i + 1}] ${r.content?.substring(0, 300)}`).join('\n')}
+判定:`;
+
+      const checkResp = await checker.invoke(checkPrompt, { timeout: 15000 } as any);
+      const verdict = (checkResp.content as string).trim();
+      if (verdict.includes('HALLUCINATION') || verdict.includes('MILD_HALLUCINATION')) {
+        const warning = verdict.includes('HALLUCINATION')
+          ? `\n\n⚠️【幻觉警告】以上回答可能包含无法核实的信息，请查证。`
+          : `\n\n💡【注意】部分信息在参考资料中未找到直接支撑。`;
+        withCheck = finalAnswer + warning;
+        callbacks.onContent?.(warning);
+      }
+    } catch { /* harmless */ }
   }
 
   callbacks.onDone?.();
 
   return {
     success: true,
-    answer: lastAnswer || '',
-    sql: lastSQL || '',
-    route: 'RAG',
-    searchResults: lastSearchResults,
-    nodeTimings: {},
-    errors: [],
+    answer: withCheck || finalAnswer,
+    sql: retrievalState.generatedSQL || '',
+    route: classifyResult,
+    searchResults: searchRes,
+    nodeTimings: retrievalState.nodeTimings || {},
+    errors: retrievalState.errors || [],
   };
 }
 
