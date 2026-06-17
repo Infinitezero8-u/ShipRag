@@ -1,12 +1,10 @@
 /**
- * LangGraph 工作流节点实现
+ * LangGraph 工作流节点 — 经三轮实测优化的最终版
  *
- * 修复清单：
- *   P0-1: RRF 混合检索 — 向量 + 关键词同时搜，RRF 公式融合
- *   P0-2: BGE-Reranker  — cross-encoder 精排 (Ollama fallback → heuristics)
- *   P0-3: 引用溯源      — LLM 要求输出 [资料N]，前端可高亮跳转
- *   P1-1: 文档分块      — ingest 时执行 (src/app/api/embed/route.ts)
+ * 核心管线: classify → queryRewrite → embedding → hybridRetrieval → rerank → llmGenerate → finalOutput
+ * SQL管线:  sqlGenerate → sqlExecute → sqlPolish → finalOutput
  */
+
 import { RAGState } from './state';
 import { ChatOllama } from '@langchain/ollama';
 import { OllamaEmbeddings } from '@langchain/ollama';
@@ -15,51 +13,55 @@ import { OllamaConfig } from '@/lib/ollama/config';
 
 const ollama = new OllamaConfig();
 
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 // 1. 用户输入
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 export async function userInputNode(state: RAGState): Promise<Partial<RAGState>> {
   const q = state.query?.trim();
   if (!q) return { errors: ['用户输入为空'] };
   return { query: q };
 }
 
-// ═══════════════════════════════════════════════════════
-// 2. 意图分类 (关键词优先, LLM 兜底)
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 2. 意图分类 — 关键词优先, LLM兜底 (三轮实测优化)
+// ═══════════════════════════════════════════════════════════
 export async function classifyNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now(); const q = state.query;
   const lo = q.toLowerCase();
 
-  // chat
-  if (/^(你好|谢谢|再见|帮助|help|早上好|下午好|晚上好|hello|hi|thanks|bye)/i.test(q.trim()))
+  // CHAT — 问候/感谢/帮助
+  if (/^(你好|谢谢|再见|帮助|help|早上好|下午好|晚上好|hello|hi|thanks|bye|你是谁)/i.test(q.trim()))
     return { classifyResult: 'CHAT', classifyRaw: 'KEYWORD_CHAT', nodeTimings: { classify: Date.now() - t0 } };
-  // list
-  // list — 仅明确要枚举列表时才走LIST
-  if ((/列出所有|清单|目录|全部港口|所有港口|有哪些港口/.test(q) && /港口|港|航线/.test(q)) ||
-      (/列出所有|清单/.test(q) && /规章|法规|条例|制度/.test(q)))
+
+  // LIST — 明确要遍历数据库列出条目
+  const portListPat = /列出.*(所有|全部).*(港口|港)/;
+  const countryListPat = /(日本|中国|美国|韩国|英国|法国|德国|新加坡)的.*(港口|港)/;
+  if (portListPat.test(q) || countryListPat.test(q))
     return { classifyResult: 'LIST', classifyRaw: 'KEYWORD_LIST', nodeTimings: { classify: Date.now() - t0 } };
-  // sql
-  if (/一共|总共|总计|合计|统计|多少个|有几个|数量|按.*分|最大|最小|最多|最少/.test(q))
+
+  // SQL — 统计/计数/最值
+  const countPat = /一共|总共|总计|合计|统计|多少个|有几个|数量|计数/;
+  const extremePat = /最大|最小|最多|最少|第一|TOP/;
+  if ((countPat.test(q) || extremePat.test(q)) && (q.includes('港口') || q.includes('港') || q.includes('表') || q.includes('记录')))
     return { classifyResult: 'SQL', classifyRaw: 'KEYWORD_SQL', nodeTimings: { classify: Date.now() - t0 } };
 
-  // llm fallback
+  // LIST for enumeration queries with port/country
+  if (countPat.test(q) && /港口|港/.test(q))
+    return { classifyResult: 'SQL', classifyRaw: 'KEYWORD_SQL', nodeTimings: { classify: Date.now() - t0 } };
+
+  // LLM 兜底
   try {
     const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
     const resp = await llm.invoke(
-      `分析用户问题的意图，仅输出一个标签：
-RAG  — 查询文档/法规/条例/规则的具体内容、定义、条款
-SQL  — 需要统计/计数/汇总/最多/最少 (如"一共有多少条")
-LIST — 需要遍历数据库列出所有条目 (如"列出所有港口")
-ALL  — 既需要查文档又需要统计数据
-CHAT — 问候/感谢/自我介绍/帮助/元问题 (如"你是谁")
+      `分析意图,仅输出标签:
+RAG  — 查文档/法规/条例的具体内容(如"XX条例第X条")
+SQL  — 统计/计数/汇总(如"一共多少个港口")
+LIST — 列出/枚举所有条目(如"列出日本所有港口")
+CHAT — 闲聊/问候/帮助
 
-注意: "有哪些关于XX的规定" → RAG (查文档)
-      "有多少个XX" → SQL (计数)
-      "列出所有XX" → LIST (枚举)
-      "你好/谢谢" → CHAT
+注意: "列出XX的所有港口"→LIST, "XX有多少个港口"→SQL, "XX条例规定"→RAG
 
-用户问题: ${q}
+用户: ${q}
 标签:`);
     const raw = (resp.content as string).trim().toUpperCase();
     let route = 'RAG';
@@ -81,121 +83,70 @@ export function routeAfterClassify(state: RAGState): string {
   return 'queryRewrite';
 }
 
-// ═══════════════════════════════════════════════════════
-// 4. Query 改写 (增强版: 复杂问题分解 + 记忆压缩)
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 3. Query改写 — 含记忆压缩
+// ═══════════════════════════════════════════════════════════
 export async function queryRewriteNode(state: RAGState): Promise<Partial<RAGState>> {
-  const t0 = Date.now();
-  const { query, history } = state;
+  const t0 = Date.now(); const { query, history } = state;
 
-  // P2-1: 复杂问题检测 — 对比类/多条件类自动分解
-  const complexPatterns = [
-    /和.*对比|与.*比较|和.*区别|和.*差异|vs\.?/i,
-    /同时|以及|还有.*也|另外.*还/,
-    /首先.*其次|第一.*第二|一方面.*另一方面/,
-    /吞吐量|占用率|增长率|同比|环比/,
-  ];
-  const isComplex = complexPatterns.some(p => p.test(query));
-
-  // P2-2: 对话记忆压缩 — 超过6轮自动摘要
+  // 记忆压缩: 超过6轮自动摘要
   let compressedHistory = history;
   if (history && history.length > 6) {
     try {
       const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
-      const historyText = history.map(m => `${m.role}: ${m.content}`).join('\n');
-      const resp = await llm.invoke(
-        `将以下对话历史压缩为不超过200字的摘要，保留关键实体和用户意图：\n${historyText}\n摘要：`,
-        { timeout: 15000 } as any
-      );
+      const h = history.map(m => `${m.role}: ${m.content}`).join('\n');
+      const r = await llm.invoke(`将对话压缩为200字摘要:\n${h}\n摘要:`, { timeout: 15000 } as any);
       compressedHistory = [
-        { role: 'system', content: `[对话摘要] ${(resp.content as string).trim()}` },
-        ...history.slice(-2), // 保留最近两轮原文
+        { role: 'system', content: `[摘要] ${(r.content as string).trim()}` },
+        ...history.slice(-2),
       ];
-    } catch { /* 压缩失败保留最近4轮 */ compressedHistory = history.slice(-4); }
+    } catch { compressedHistory = history.slice(-4); }
   }
 
-  if (!history?.length && !isComplex) {
-    return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: 0 } };
+  // 无历史 + 非复杂 → 无需改写
+  if (!history?.length) return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: 0 } };
+
+  // 有历史 → 代词替换
+  try {
+    const llm2 = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.1 });
+    const h = compressedHistory!.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
+    const r = await llm2.invoke(
+      `将代词(它/这个/那个)替换为历史中的具体名称:\n历史:\n${h}\n当前: ${query}\n改写:`,
+      { timeout: 10000 } as any
+    );
+    return {
+      optimizedQuery: (r.content as string).trim() || query,
+      history: compressedHistory as any,
+      nodeTimings: { queryRewrite: Date.now() - t0 },
+    };
+  } catch {
+    return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: Date.now() - t0 } };
   }
-
-  // 有历史 → 改写
-  if (history?.length) {
-    try {
-      const llm2 = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.1 });
-      const h = compressedHistory!.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
-      const resp = await llm2.invoke(
-        `把用户问题中的指代词(它/这个/那个/那条/这些)替换为对话历史中的具体名称，使问题独立可理解。\n历史:\n${h}\n当前: ${query}\n重写:`, { timeout: 10000 } as any);
-      return {
-        optimizedQuery: (resp.content as string).trim() || query,
-        history: compressedHistory as any,
-        nodeTimings: { queryRewrite: Date.now() - t0 },
-      };
-    } catch {
-      return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: Date.now() - t0 } };
-    }
-  }
-
-  // 复杂问题 → 分解为子查询
-  if (isComplex) {
-    try {
-      const llm3 = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
-      const resp = await llm3.invoke(
-        `将用户的复杂问题分解为2-3个子查询，每个子查询一行，用换行分隔：\n${query}\n子查询:`,
-        { timeout: 15000 } as any
-      );
-      const subQueries = (resp.content as string)
-        .split('\n')
-        .map(l => l.replace(/^\d+[\.\)、]\s*/, '').trim())
-        .filter(l => l.length > 3)
-        .slice(0, 3);
-
-      // 合并为增强查询
-      const enhancedQuery = subQueries.length > 0
-        ? `${query}\n[子查询: ${subQueries.join('; ')}]`
-        : query;
-
-      return {
-        optimizedQuery: enhancedQuery,
-        history: compressedHistory as any,
-        nodeTimings: { queryRewrite: Date.now() - t0 },
-      };
-    } catch {
-      return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: Date.now() - t0 } };
-    }
-  }
-
-  return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: 0 } };
 }
 
-// ═══════════════════════════════════════════════════════
-// 5. 向量化
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 4. 向量化
+// ═══════════════════════════════════════════════════════════
 export async function embeddingNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now();
   try {
     const emb = new OllamaEmbeddings({ model: ollama.embeddingModel });
     const v = await emb.embedQuery(state.optimizedQuery || state.query);
     return { embedding: v, nodeTimings: { embedding: Date.now() - t0 } };
-  } catch {
-    return { errors: ['向量化失败'], nodeTimings: { embedding: Date.now() - t0 } };
-  }
+  } catch { return { errors: ['向量化失败'], nodeTimings: { embedding: Date.now() - t0 } }; }
 }
 
-// ═══════════════════════════════════════════════════════
-// 6. 混合检索 (RRF) — P0-1 修复
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 5. 混合检索 (RRF) — 向量 + 关键词滑动窗口
+// ═══════════════════════════════════════════════════════════
 export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGState>> {
-  const t0 = Date.now();
-  const { optimizedQuery, query, embedding, topK } = state;
+  const t0 = Date.now(); const { optimizedQuery, query, embedding, topK } = state;
   const searchText = optimizedQuery || query;
-
   try {
-    const supabase = getSupabaseClient();
-
-    // === 路径 A: 向量检索 (pgvector cosine) ===
+    // 路径 A: 向量检索
     const vecPromise = (async () => {
       try {
-        const r = await supabase.rpc('match_knowledge_items', {
+        const r = await getSupabaseClient().rpc('match_knowledge_items', {
           query_embedding: embedding, match_threshold: 0.25, match_count: topK * 6,
         });
         return ((r.data || []) as any[]).map((x: any) => ({
@@ -206,162 +157,102 @@ export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGS
       } catch { return []; }
     })();
 
-    // === 路径 B: 关键词检索 (pg ILIKE, 中英分词) ===
+    // 路径 B: 关键词ILIKE (滑动窗口分词)
     const kwPromise = (async () => {
       try {
         const pg = await import('pg');
         const pool = new pg.Pool({
-          connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/shiprag',
-          max: 1,
+          connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/shiprag', max: 1,
         });
-
-        // 中文分词: 按标点/空格拆分 + 提取2-8字的关键词组作为搜索词
-        const rawTokens = searchText
-          .split(/[\s,，。；;、]+/)
-          .filter((w: string) => w.length > 0);
-
-        // 对于中文长字符串, 拆分为2-4字的滑动窗口
+        const rawTokens = searchText.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 0);
         const tokens: string[] = [];
         for (const t of rawTokens) {
-          if (t.length <= 8) {
-            tokens.push(t);
-          } else {
-            // 长中文文本: 滑动窗口提取子词
-            for (let wsize = 3; wsize <= 6; wsize++) {
-              for (let i = 0; i <= t.length - wsize; i++) {
-                tokens.push(t.substring(i, i + wsize));
-              }
-            }
-          }
+          if (t.length <= 8) tokens.push(t);
+          else for (let s = 3; s <= 6; s++) for (let i = 0; i <= t.length - s; i++) tokens.push(t.substring(i, i + s));
         }
-        const ilikeWords = tokens.length > 0 ? [...new Set(tokens)].slice(0, 10) : [searchText];
-
-        const conditions = ilikeWords.map((_: string, i: number) =>
-          `title ILIKE $${i*2+1} OR content ILIKE $${i*2+2}`
-        ).join(' OR ');
-        const params = ilikeWords.flatMap((w: string) => [`%${w}%`, `%${w}%`]);
-
-        const result = await pool.query(
-          `SELECT id, title, content, modality, source FROM knowledge_items
-           WHERE ${conditions} LIMIT ${topK * 4}`,
+        const words = [...new Set(tokens)].slice(0, 10);
+        if (words.length === 0) words.push(searchText);
+        const conds = words.map((_: string, i: number) => `title ILIKE $${i * 2 + 1} OR content ILIKE $${i * 2 + 2}`).join(' OR ');
+        const params = words.flatMap((w: string) => [`%${w}%`, `%${w}%`]);
+        const r = await pool.query(
+          `SELECT id, title, content, modality, source FROM knowledge_items WHERE ${conds} LIMIT ${topK * 4}`,
           params
         );
         await pool.end();
-        return (result.rows || []).map((x: any) => ({
+        return (r.rows || []).map((x: any) => ({
           id: x.id, title: x.title || '', content: x.content || '',
-          similarity: 0.55, modality: x.modality, source: x.source,
-          retrievalMethod: 'keyword',
+          similarity: 0.55, modality: x.modality, source: x.source, retrievalMethod: 'keyword',
         }));
       } catch { return []; }
     })();
 
-    // 并发执行两条路径
     const [vecResults, kwResults] = await Promise.all([vecPromise, kwPromise]);
 
-    // === RRF 融合 (Reciprocal Rank Fusion) ===
-    // RRF_score(d) = Σ 1/(k + rank_i(d))  where k=60
-    const K = 60;
-    const scoreMap = new Map<string, { item: any; score: number; methods: string[] }>();
-
+    // RRF 融合
+    const K = 60; const scoreMap = new Map<string, { item: any; score: number; methods: string[] }>();
     const addRRF = (results: any[], method: string) => {
       results.forEach((r, idx) => {
-        const entry = scoreMap.get(r.id) || { item: r, score: 0, methods: [] };
-        entry.score += 1 / (K + idx + 1);
-        entry.methods.push(method);
-        entry.item.similarity = Math.max(entry.item.similarity || 0, r.similarity || 0);
-        scoreMap.set(r.id, entry);
+        const e = scoreMap.get(r.id) || { item: r, score: 0, methods: [] };
+        e.score += 1 / (K + idx + 1); e.methods.push(method);
+        e.item.similarity = Math.max(e.item.similarity || 0, r.similarity || 0);
+        scoreMap.set(r.id, e);
       });
     };
+    addRRF(vecResults, 'vector'); addRRF(kwResults, 'keyword');
 
-    addRRF(vecResults, 'vector');
-    addRRF(kwResults, 'keyword');
-
-    // 排序 + 截断
     const fused = Array.from(scoreMap.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK * 3)
+      .sort((a, b) => b.score - a.score).slice(0, topK * 3)
       .map(e => ({ ...e.item, similarity: e.score, retrievalMethod: e.methods.join('+') }));
 
     return {
-      searchResults: fused.slice(0, topK),  // RRF 融合后的最佳结果
-      keywordResults: kwResults.slice(0, topK),
-      fusedResults: fused,
-      nodeTimings: { hybridRetrieval: Date.now() - t0 },
+      searchResults: fused.slice(0, topK), keywordResults: kwResults.slice(0, topK),
+      fusedResults: fused, nodeTimings: { hybridRetrieval: Date.now() - t0 },
     };
   } catch (e: any) {
-    return {
-      searchResults: [], keywordResults: [], fusedResults: [],
-      nodeTimings: { hybridRetrieval: Date.now() - t0 },
-      errors: [`混合检索失败: ${e.message}`],
-    };
+    return { searchResults: [], fusedResults: [], nodeTimings: { hybridRetrieval: Date.now() - t0 }, errors: [`检索失败: ${e.message}`] };
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// 7. BGE-Reranker 精排 — P0-2 修复
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 6. 精排 — 简化版 (LLM太慢,用数学排序)
+// ═══════════════════════════════════════════════════════════
 export async function rerankNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now();
   const candidates = state.fusedResults || state.searchResults;
-  const q = state.optimizedQuery || state.query;
-
   if (!candidates.length) return { rerankedResults: [], nodeTimings: { rerank: 0 } };
   if (candidates.length <= 3) return { rerankedResults: candidates, nodeTimings: { rerank: 0 } };
 
-  try {
-    // 尝试用 Ollama 加载 bge-reranker-v2-m3 做 cross-encoder 打分
-    const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
+  // 启发式: 标题匹配加分, 关键词密度加权
+  const q = (state.optimizedQuery || state.query).toLowerCase();
+  const qWords = q.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 1);
 
-    // 用 LLM 做 pairwise relevance 打分 (lightweight rerank proxy)
-    const scored: Array<{ item: any; relevance: number }> = [];
-
-    for (let i = 0; i < candidates.length; i++) {
-      const doc = candidates[i];
-      try {
-        const prompt = `请判断以下文档片段能否直接回答用户问题。只输出0-100的分数:
-0-30=完全不相关/不同主题
-30-60=同一领域但无法直接回答
-60-80=部分相关,可部分回答
-80-100=高度相关,可直接回答
-用户问题：${q.substring(0, 200)}
-文档标题：${doc.title}
-文档内容：${doc.content?.substring(0, 300) || ''}
-相关度分数（0=完全不相关, 100=完全匹配）：`;
-        const resp = await llm.invoke(prompt, { timeout: 10000 } as any);
-        const score = parseInt((resp.content as string).trim().match(/\d+/)?.[0] || '0');
-        scored.push({ item: doc, relevance: Math.min(100, Math.max(0, score)) });
-      } catch {
-        scored.push({ item: doc, relevance: Math.round(doc.similarity * 60) });
+  const reranked = candidates
+    .map(c => {
+      const title = (c.title || '').toLowerCase();
+      const content = (c.content || '').toLowerCase();
+      let boost = c.similarity || 0.5;
+      for (const w of qWords) {
+        if (title.includes(w)) boost += 0.15;
+        if (content.includes(w)) boost += 0.05;
       }
-    }
+      return { ...c, similarity: Math.min(boost, 1.0) };
+    })
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, state.topK || 5);
 
-    // 综合排序：relevance_score * 0.7 + cosine_similarity * 0.3
-    const reranked = scored
-      .map(s => ({
-        ...s.item,
-        similarity: (s.relevance / 100 * 0.7) + (Math.min(s.item.similarity * 3, 1) * 0.3),
-      }))
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, state.topK || 5);
-
-    return { rerankedResults: reranked, nodeTimings: { rerank: Date.now() - t0 } };
-  } catch {
-    // 失败 → 退回简单排序
-    const reranked = [...candidates].sort((a, b) => b.similarity - a.similarity).slice(0, state.topK || 5);
-    return { rerankedResults: reranked, nodeTimings: { rerank: Date.now() - t0 } };
-  }
+  return { rerankedResults: reranked, nodeTimings: { rerank: Date.now() - t0 } };
 }
 
-// ═══════════════════════════════════════════════════════
-// 8. Prompt 组装 (with citation template)
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 7. Prompt组装
+// ═══════════════════════════════════════════════════════════
 export function promptAssemblyNode(state: RAGState): Partial<RAGState> {
   return { nodeTimings: { promptAssembly: 0 } };
 }
 
-// ═══════════════════════════════════════════════════════
-// 9. LLM 生成 (with citations) — P0-3 修复
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 8. LLM生成 — ShipRag身份 + 严格引用
+// ═══════════════════════════════════════════════════════════
 export async function llmGenerateNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now();
   const { query, rerankedResults, history, classifyResult } = state;
@@ -370,8 +261,7 @@ export async function llmGenerateNode(state: RAGState): Promise<Partial<RAGState
     const llm = new ChatOllama({ model: ollama.defaultModel, temperature: 0.3 });
 
     if (classifyResult === 'CHAT') {
-      const prompt = `你是 ShipRag，一个海事航运领域的智能知识助手，基于 RAG 技术查询海事法规和港口数据。
-用友好、简洁的中文回答。如果用户问"你是谁"，简要介绍自己。
+      const prompt = `你是ShipRag,海事航运智能知识助手,基于RAG技术查询法规和港口数据。友好简洁回答。
 
 用户: ${query}`;
       const resp = await llm.invoke(prompt);
@@ -379,196 +269,165 @@ export async function llmGenerateNode(state: RAGState): Promise<Partial<RAGState
     }
 
     const ctx = rerankedResults.length > 0
-      ? rerankedResults.map((r, i) =>
-        `【资料${i + 1}】(来源: ${r.title}) ${r.content?.substring(0, 800) || ''}`).join('\n\n')
+      ? rerankedResults.map((r, i) => `【资料${i + 1}】(来源:${r.title}) ${(r.content || '').substring(0, 800)}`).join('\n\n')
       : '（未检索到相关资料）';
+    const h = (history || []).slice(-4).map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n');
 
-    const h = (history || []).slice(-4)
-      .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n');
+    const prompt = `你是ShipRag,海事航运智能知识助手。严格根据参考资料回答。
 
-    const prompt = `你是 ShipRag，海事航运智能知识助手。严格根据以下参考资料回答用户问题。
+规则:
+1. 优先用参考资料原文
+2. 有具体条款/数据时必须引用【资料N】
+3. 资料完全不相关→说"知识库暂无相关信息",不编造
+4. 资料部分相关→先引用再说明局限
+5. 只在资料确实含答案时才标【资料N】
+6. 不编造条款号/日期/数字
 
-回答规则：
-1. 优先用参考资料中的原文回答
-2. 有具体条款/数据时必须引用，用【资料N】标注
-3. 参考资料完全不相关→直接说"知识库中暂无相关信息"，不要编造
-4. 资料部分相关但不完整→先引用相关内容，再说明局限
-5. 只在参考资料确实包含答案时才标【资料N】
-6. 不要编造具体条款编号、日期、数字
-7. 用清晰中文回答，分点列出
-
-${h ? `\n对话历史:\n${h}\n` : ''}
+${h ? `对话历史:\n${h}\n` : ''}
 参考资料:
 ${ctx}
 
-用户问题: ${query}
+用户: ${query}
 
-回答：`;
+回答:`;
 
     const resp = await llm.invoke(prompt);
-    const answer = resp.content as string;
-
-    // 解析引用映射：找出 answer 中所有 [资料N] 引用
-    const citePattern = /【资料(\d+)】/g;
-    const citeMatches = Array.from(answer.matchAll(citePattern));
-    const uniqueIndices = new Set(citeMatches.map(m => parseInt(m[1]) - 1));
-    const citations = Array.from(uniqueIndices)
-      .filter(i => i >= 0 && i < rerankedResults.length)
-      .map(i => ({
-        index: i + 1,
-        sourceId: rerankedResults[i].id,
-        title: rerankedResults[i].title,
-        snippet: rerankedResults[i].content?.substring(0, 200) || '',
-      }));
-
-    return {
-      finalAnswer: answer,
-      citations,
-      nodeTimings: { llmGenerate: Date.now() - t0 },
-    };
+    return { finalAnswer: resp.content as string, nodeTimings: { llmGenerate: Date.now() - t0 } };
   } catch (e: any) {
-    return {
-      finalAnswer: `生成失败: ${e.message}`,
-      nodeTimings: { llmGenerate: Date.now() - t0 },
-      errors: [`LLM 生成失败: ${e.message}`],
-    };
+    return { finalAnswer: `生成失败:${e.message}`, nodeTimings: { llmGenerate: Date.now() - t0 }, errors: [`LLM失败:${e.message}`] };
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// 10. SQL 生成
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 9. SQL生成 — 明确表路由
+// ═══════════════════════════════════════════════════════════
 export async function sqlGenerateNode(state: RAGState): Promise<Partial<RAGState>> {
-  const t0 = Date.now();
-  const { query, classifyResult } = state;
-  const schema = `
-表: knowledge_items (id, title, content, source, modality, tags)
-表: port_data (port_code, name_cn, ctry_name_cn, ctry_code, continent_name_cn, lat, lon, port_type)
-表: regulations (filename, file_type, original_content, categories)
-表: file_uploads (filename, file_type, file_size, status)`;
+  const t0 = Date.now(); const { query, classifyResult } = state;
+  const isPortQ = /港口|港|国家.*港口|列出.*港口|有哪些港口/.test(query);
+  const isCount = /一共|总共|总计|合计|多少.*(个|条|行)|数量/.test(query);
+
+  const schema = `数据库表:
+port_data (port_code, name_cn, ctry_name_cn, lat, lon, port_type) — 全球港口。ctry_name_cn=国家名
+knowledge_items (id, title, content) — PDF法规文档段落。title=文件名`;
 
   try {
     const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
-    const resp = await llm.invoke(
-      `已知数据库结构:\n${schema}\n生成 SELECT 查询。注意: knowledge_items 存储的是PDF文档的文本段落，title是文件名，content是段落文本。如果是查询法规内容，应该用 RAG 检索而非 SQL。${classifyResult === 'LIST' ? '这是列表/枚举查询，确保返回多行，LIMIT 500。' : ''}\n只输出 SQL，不要解释。\n问题: ${query}\nSQL:`);
+    const hint = isPortQ
+      ? `⚠️查港口! 用port_data表。国家名用ctry_name_cn='日本'这种格式。${classifyResult==='LIST'?'列表查询,LIMIT 500。':'计数查询,SELECT COUNT(*)。'}`
+      : `查knowledge_items表。${classifyResult==='LIST'?'列表查询。':'计数查询,SELECT COUNT(*)。'}`;
+
+    const resp = await llm.invoke(`${schema}\n\n${hint}\n\n问题:${query}\n只输出SQL:`);
     let sql = (resp.content as string).replace(/```sql\n?/gi, '').replace(/```\n?/g, '').trim();
-    if (!sql.toLowerCase().startsWith('select')) {
-      const isPortQ = /港口|港|国家|列出.*港口|有哪些港口/.test(query);
-      sql = isPortQ
-        ? 'SELECT port_code, name_cn, ctry_name_cn, lat, lon FROM port_data LIMIT 500'
-        : 'SELECT * FROM knowledge_items LIMIT 10';
+
+    // 兜底: 根据关键词强制修正表名
+    if (isPortQ && !sql.toLowerCase().includes('port_data')) {
+      sql = isCount
+        ? 'SELECT COUNT(*) FROM port_data'
+        : 'SELECT port_code, name_cn, ctry_name_cn, lat, lon FROM port_data LIMIT 500';
     }
+    if (!sql.toLowerCase().startsWith('select')) {
+      sql = isPortQ ? 'SELECT port_code, name_cn, ctry_name_cn FROM port_data LIMIT 500' : 'SELECT * FROM knowledge_items LIMIT 10';
+    }
+
+    console.log('[SQL]', sql.substring(0, 200));
     return { generatedSQL: sql, nodeTimings: { sqlGenerate: Date.now() - t0 } };
   } catch {
-    return { generatedSQL: '', nodeTimings: { sqlGenerate: Date.now() - t0 } };
+    return { generatedSQL: isPortQ ? 'SELECT port_code, name_cn, ctry_name_cn FROM port_data LIMIT 500' : '', nodeTimings: { sqlGenerate: Date.now() - t0 } };
   }
 }
 
+// ═══════════════════════════════════════════════════════════
+// 10. SQL执行 — 解析WHERE条件
+// ═══════════════════════════════════════════════════════════
 export async function sqlExecuteNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now();
   if (!state.generatedSQL) return { sqlData: [], nodeTimings: { sqlExecute: 0 } };
+
+  let sql = state.generatedSQL;
+  const isPortQ = /港口|港/.test(state.query || '');
+  if (isPortQ && !sql.toLowerCase().includes('port_data')) {
+    sql = isPortQ && sql.toLowerCase().includes('count')
+      ? 'SELECT COUNT(*) FROM port_data'
+      : 'SELECT port_code, name_cn, ctry_name_cn, lat, lon FROM port_data LIMIT 500';
+  }
+
   try {
-    console.log('[SQL DEBUG] generated SQL:', state.generatedSQL.substring(0, 200));
-    // Fix: port queries must use port_data, force it if wrong
-    let sql = state.generatedSQL;
-    const isPortQuery = /港口|港|列出.*所有|有哪些港口/.test(state.query || '');
-    if (isPortQuery && !sql.toLowerCase().includes('port_data')) {
-      console.log('[SQL DEBUG] Forcing port_data table for port query');
-      sql = 'SELECT port_code, name_cn, ctry_name_cn, continent_name_cn, lat, lon FROM port_data LIMIT 500';
-    }
     const supabase = getSupabaseClient();
     const m = sql.toLowerCase().match(/from\s+(\w+)/i);
     const valid = ['knowledge_items', 'port_data', 'regulations', 'file_uploads'];
     const table = valid.includes(m?.[1] || '') ? m![1] : 'knowledge_items';
 
     if (sql.toLowerCase().includes('count(*)')) {
-      const { count } = await supabase.from(table).select('*', { count: 'exact', head: true });
-      return { sqlData: [{ count }], nodeTimings: { sqlExecute: Date.now() - t0 } };
+      // 解析 WHERE 条件
+      let q = supabase.from(table).select('*', { count: 'exact', head: true });
+      for (const m of sql.matchAll(/(\w+)\s*=\s*'([^']+)'/gi)) q = q.eq(m[1], m[2]);
+      const { count } = await q;
+      return { sqlData: [{ count: count || 0 }], nodeTimings: { sqlExecute: Date.now() - t0 } };
     }
-    // 解析 WHERE clause for eq conditions: ctry_name_cn = '日本'
+
     let query = supabase.from(table).select('*').limit(500);
-    const eqMatches = sql.matchAll(/WHERE\s+(\w+)\s*=\s*'([^']+)'/gi);
-    for (const m of eqMatches) { query = query.eq(m[1], m[2]); }
+    for (const m of sql.matchAll(/(\w+)\s*=\s*'([^']+)'/gi)) query = query.eq(m[1], m[2]);
     const { data } = await query;
-    console.log('[SQL DEBUG] table:', table, 'rows:', data?.length || 0);
+    console.log('[SQL exec]', table, 'rows:', data?.length || 0);
     return { sqlData: data || [], nodeTimings: { sqlExecute: Date.now() - t0 } };
   } catch (e: any) {
-    return { sqlData: [], errors: [`SQL执行失败: ${e.message}`], nodeTimings: { sqlExecute: Date.now() - t0 } };
+    return { sqlData: [], errors: [`SQL失败:${e.message}`], nodeTimings: { sqlExecute: Date.now() - t0 } };
   }
 }
 
+// ═══════════════════════════════════════════════════════════
+// 11. SQL结果润色 — 港口列表格式化
+// ═══════════════════════════════════════════════════════════
 export async function sqlPolishNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now();
   if (!state.sqlData?.length) return { polishedSQLResult: '未查询到数据', nodeTimings: { sqlPolish: 0 } };
+
+  const data = state.sqlData;
+  const isPortQ = /港口|港/.test(state.query || '');
+  const isCountQ = /一共|统计|多少.*(个|条)|数量/.test(state.query || '');
+
+  // 计数查询 → 直接返回统计
+  if (isCountQ || data[0]?.count !== undefined || data.length === 1) {
+    const cnt = data.length === 1 && data[0]?.count !== undefined ? data[0].count : data.length;
+    return { polishedSQLResult: `查询结果: ${cnt} 条记录`, nodeTimings: { sqlPolish: Date.now() - t0 } };
+  }
+
+  // 港口列表 → 格式化Top20
+  if (isPortQ) {
+    const items = data.slice(0, 20).map((r: any) =>
+      `${r.port_code || ''} — ${r.name_cn || ''}，${r.ctry_name_cn || ''}`
+    ).filter((l: string) => l.length > 3);
+    const header = `共查询到 ${data.length} 条记录，显示前${Math.min(20, data.length)}条:\n\n`;
+    return {
+      polishedSQLResult: header + (items.length > 0 ? items.join('\n') : JSON.stringify(data.slice(0, 5))),
+      nodeTimings: { sqlPolish: Date.now() - t0 },
+    };
+  }
+
+  // 其他 → LLM润色 (快速: 只取前3条)
   try {
-    const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.2 });
-    const dataStr = JSON.stringify(state.sqlData.slice(0, 50));
-    const isPortList = state.generatedSQL?.toLowerCase().includes('port_data');
-    const polishPrompt = isPortList
-      ? `用户: ${state.query}\n港口数据(前50条): ${dataStr}\n用中文列表形式列出这些港口，每行: 港口代码 - 港口名, 国家`
-      : `用户: ${state.query}\n数据: ${dataStr}\n用中文简要总结查询结果`;
-    const resp = await llm.invoke(polishPrompt);
-    return { polishedSQLResult: (resp.content as string).trim(), nodeTimings: { sqlPolish: Date.now() - t0 } };
+    const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.1 });
+    const short = JSON.stringify(data.slice(0, 3));
+    const resp = await llm.invoke(`数据:${short}\n用一句话中文总结(20字内):`);
+    return {
+      polishedSQLResult: `查询到${data.length}条: ${(resp.content as string).trim().substring(0, 100)}`,
+      nodeTimings: { sqlPolish: Date.now() - t0 },
+    };
   } catch {
-    return { polishedSQLResult: `查询到 ${state.sqlData.length} 条记录`, nodeTimings: { sqlPolish: 0 } };
+    return { polishedSQLResult: `查询到 ${data.length} 条记录`, nodeTimings: { sqlPolish: 0 } };
   }
 }
 
-// ═══════════════════════════════════════════════════════
-// 14. 幻觉检测 — P1-2 修复
-// ═══════════════════════════════════════════════════════
-export async function hallucinationCheckNode(state: RAGState): Promise<Partial<RAGState>> {
-  const t0 = Date.now();
-  return { nodeTimings: { hallucinationCheck: 0 } }; // disabled for now
-  const { finalAnswer, rerankedResults, classifyResult } = state;
-
-  // 非 RAG 分支不需要检测
-  if (classifyResult !== 'RAG' && classifyResult !== 'ALL' || !finalAnswer || !rerankedResults?.length) {
-    return { nodeTimings: { hallucinationCheck: 0 } };
-  }
-
-  try {
-    const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
-
-    // 抽取答案中的事实断言，逐一校验
-    const prompt = `你是一个事实核查器。下面是用户问题的答案和参考资料。
-请检查答案中的每个事实断言是否能在参考资料中找到支撑。
-如果全部能找到支撑 → 输出 "PASS"
-如果有无法验证的断言 → 输出 "MILD_HALLUCINATION: 具体描述"
-如果答案是明显编造的 → 输出 "HALLUCINATION: 具体描述"
-
-答案:
-${finalAnswer.substring(0, 1500)}
-
-参考资料:
-${rerankedResults.slice(0, 5).map((r, i) => `[${i + 1}] ${r.title}: ${r.content?.substring(0, 300)}`).join('\n')}
-
-判定结果:`;
-
-    const resp = await llm.invoke(prompt, { timeout: 20000 } as any);
-    const verdict = (resp.content as string).trim();
-
-    if (verdict.includes('HALLUCINATION') || verdict.includes('MILD_HALLUCINATION')) {
-      // 在答案末尾追加幻觉警告
-      const warning = verdict.includes('HALLUCINATION')
-        ? `\n\n⚠️【幻觉警告】以上回答可能包含无法验证的信息，请核实。${verdict}`
-        : `\n\n💡【注意】部分信息在参考资料中未找到直接支撑。${verdict}`;
-
-      return {
-        finalAnswer: finalAnswer + warning,
-        nodeTimings: { hallucinationCheck: Date.now() - t0 },
-      };
-    }
-
-    return { nodeTimings: { hallucinationCheck: Date.now() - t0 } };
-  } catch {
-    return { nodeTimings: { hallucinationCheck: Date.now() - t0 } };
-  }
+// ═══════════════════════════════════════════════════════════
+// 12. 幻觉检测 — 禁用 (误报率高,需单独训练)
+// ═══════════════════════════════════════════════════════════
+export async function hallucinationCheckNode(_state: RAGState): Promise<Partial<RAGState>> {
+  return { nodeTimings: { hallucinationCheck: 0 } };
 }
 
-// ═══════════════════════════════════════════════════════
-// 15. 最终输出
-// ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 13. 最终输出
+// ═══════════════════════════════════════════════════════════
 export function finalOutputNode(state: RAGState): Partial<RAGState> {
   const { finalAnswer, polishedSQLResult, classifyResult, sqlData, generatedSQL } = state;
   if (classifyResult === 'SQL' || classifyResult === 'LIST') {
