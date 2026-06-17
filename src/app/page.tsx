@@ -10,7 +10,6 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { DataMaintainPanel } from '@/components/data-maintain-panel';
-// HistoryPanel inlined below
 import {
   Upload, Search, MessageSquare, FileText, Image, FileSpreadsheet,
   Loader2, Send, Play, Pause, X, ChevronLeft, ChevronRight, Eye, Trash2,
@@ -56,26 +55,20 @@ const CATEGORIES = [
   ]},
 ];
 
-
-// ── 历史记录弹窗（内联）──────────────────
-function HistoryModal({ type, onClose, onLoad }: {
-  type: 'rag' | 'search';
-  onClose: () => void;
-  onLoad: (query: string) => void;
-}) {
+// ── 历史记录弹窗 ──────────────────────────────
+function HistoryModal({ type, onClose, onLoad }: { type: 'rag' | 'search'; onClose: () => void; onLoad: (q: string) => void }) {
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const pageSize = 15;
+  const ps = 15;
 
   useEffect(() => {
     setLoading(true);
-    fetch('/api/history?type=' + type + '&page=' + page + '&pageSize=' + pageSize)
+    fetch('/api/history?type=' + type + '&page=' + page + '&pageSize=' + ps)
       .then(r => r.json())
       .then(d => { if (d.success) { setList(d.history || []); setTotal(d.pagination?.totalCount || 0); }})
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch(() => {}).finally(() => setLoading(false));
   }, [page, type]);
 
   const doExport = async () => {
@@ -84,85 +77,54 @@ function HistoryModal({ type, onClose, onLoad }: {
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = '历史记录_' + type + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
+    a.download = '历史_'+type+'_' + new Date().toISOString().slice(0,10) + '.xlsx';
     a.click();
   };
 
-  const doDelete = async (id: string) => {
-    if (!confirm('删除此条记录？')) return;
-    await fetch('/api/history?id=' + id, { method: 'DELETE' });
-    setList(list.filter((item: any) => item.id !== id));
+  const doDelete = (id: string) => {
+    if (!confirm('确定删除？')) return;
+    fetch('/api/history?id='+id, { method: 'DELETE' }).then(() => setList(list.filter((i: any) => i.id !== id)));
   };
 
-  const doClear = async () => {
-    if (!confirm('确认清空所有记录？此操作不可恢复。')) return;
-    await fetch('/api/history?action=clear&type=' + type, { method: 'DELETE' });
-    setList([]); setTotal(0);
+  const doClear = () => {
+    if (!confirm('确认清空所有记录？')) return;
+    fetch('/api/history?action=clear&type='+type, { method: 'DELETE' }).then(() => { setList([]); setTotal(0); });
   };
 
-  const totalPages = Math.ceil(total / pageSize);
-
+  const totalPages = Math.ceil(total / ps);
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
-        onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between p-3 border-b shrink-0">
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-3 border-b">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-bold">{type === 'rag' ? '💬 智能问答' : '🔍 智能检索'}</span>
-            <span className="text-xs text-slate-400">共 {total} 条记录</span>
+            <span className="text-sm font-bold">{type === 'rag' ? '💬 智能问答历史' : '🔍 智能检索历史'}</span>
+            <span className="text-xs text-slate-400">共 {total} 条</span>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={doExport} disabled={total === 0}
-              className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-30">
-              导出Excel
-            </button>
-            <button onClick={doClear} disabled={total === 0}
-              className="px-3 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 disabled:opacity-30">
-              清空
-            </button>
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-lg">✕</button>
+          <div className="flex gap-2">
+            <button onClick={doExport} disabled={total === 0} className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-30">导出Excel</button>
+            <button onClick={doClear} disabled={total === 0} className="px-3 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 disabled:opacity-30">清空</button>
+            <button onClick={onClose} className="text-slate-400 ml-1">✕</button>
           </div>
         </div>
-        {/* List */}
         <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="text-center py-8 text-slate-400 text-sm">加载中...</div>
-          ) : list.length === 0 ? (
-            <div className="text-center py-8 text-slate-400 text-sm">暂无记录</div>
-          ) : (
-            list.map((item: any) => (
-              <div key={item.id} className="p-3 border-b hover:bg-slate-50 cursor-pointer group"
-                onClick={() => onLoad(item.query)}>
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-xs font-medium text-slate-700 flex-1 line-clamp-2">{item.query}</p>
-                  <button onClick={(e) => { e.stopPropagation(); doDelete(item.id); }}
-                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs shrink-0">
-                    🗑
-                  </button>
-                </div>
-                {item.answer && (
-                  <p className="text-[11px] text-slate-400 line-clamp-1 mt-1">{item.answer?.substring(0, 100)}</p>
-                )}
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] text-slate-400">
-                    {item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}
-                  </span>
-                  {item.result_count > 0 && <span className="text-[10px] text-slate-400">{item.result_count}条结果</span>}
-                </div>
+          {loading ? <div className="text-center py-8 text-sm text-slate-400">加载中...</div>
+          : list.length === 0 ? <div className="text-center py-8 text-sm text-slate-400">暂无记录</div>
+          : list.map((item: any) => (
+            <div key={item.id} className="p-3 border-b hover:bg-slate-50 cursor-pointer group" onClick={() => onLoad(item.query)}>
+              <div className="flex items-start justify-between"><p className="text-xs font-medium flex-1 line-clamp-2">{item.query}</p>
+                <button onClick={e => { e.stopPropagation(); doDelete(item.id); }} className="opacity-0 group-hover:opacity-100 text-red-400 text-xs ml-2">🗑</button>
               </div>
-            ))
-          )}
+              {item.answer && <p className="text-[11px] text-slate-400 line-clamp-1 mt-1">{item.answer?.substring(0, 100)}</p>}
+              <div className="flex items-center gap-2 mt-1"><span className="text-[10px] text-slate-400">{item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}</span></div>
+            </div>
+          ))}
         </div>
-        {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 py-2 border-t shrink-0">
-            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-              className="px-2 py-1 text-xs border rounded disabled:opacity-30">上一页</button>
-            <span className="text-xs text-slate-500">{page} / {totalPages}</span>
-            <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-              className="px-2 py-1 text-xs border rounded disabled:opacity-30">下一页</button>
+          <div className="flex justify-center gap-2 py-2 border-t">
+            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="px-2 py-1 text-xs border rounded disabled:opacity-30">上一页</button>
+            <span className="text-xs text-slate-500">{page}/{totalPages}</span>
+            <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} className="px-2 py-1 text-xs border rounded disabled:opacity-30">下一页</button>
           </div>
         )}
       </div>
@@ -172,13 +134,13 @@ function HistoryModal({ type, onClose, onLoad }: {
 
 // ── 微信风格对话面板 ──────────────────────────
 function RagPanel({ back }: { back: () => void }) {
+  const [showHistory, setShowHistory] = useState(false);
   const [q, setQ] = useState('');
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; time: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [sid, setSid] = useState(() => 'rag-' + Date.now());
   const [convList, setConvList] = useState<{ session_id: string; title: string; time: string }[]>([]);
   const [showSidebar, setShowSidebar] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
   // 加载对话列表
@@ -287,18 +249,9 @@ function RagPanel({ back }: { back: () => void }) {
               <ChevronLeft className="w-4 h-4 mr-1" />返回
             </Button>
             <h2 className="font-bold text-sm">💬 智能问答</h2>
+              <button onClick={() => setShowHistory(true)} className="text-xs text-indigo-500 hover:text-indigo-700 px-2 py-0.5 border border-indigo-200 rounded">📜 历史</button>
           </div>
-          {!showSidebar && <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => { setShowSidebar(true); loadConvList(); }}>📋 对话</Button>}
-          <Button size="sm" variant="outline" className="h-7 text-[10px] text-indigo-600" onClick={async () => {
-      const r = await fetch('/api/history?type=rag&page=1&pageSize=20');
-      const d = await r.json();
-      const items = d.history || [];
-      if (items.length === 0) { alert('暂无智能问答历史记录'); return; }
-      const text = items.slice(0, 20).map((h: any, i: number) =>
-        `${i+1}. [${new Date(h.created_at).toLocaleString('zh-CN')}] ${h.query?.substring(0,80)}`
-      ).join('\n\n');
-      alert('智能问答历史 (最近20条):\n\n' + text);
-    }}>📜 历史</Button>
+          {!showSidebar && <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => { setShowSidebar(true); loadConvList(); }}>📋 历史</Button>}
           <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={newChat}>➕ 新建</Button>
         </div>
 
@@ -351,10 +304,7 @@ function RagPanel({ back }: { back: () => void }) {
           </Button>
         </div>
       </div>
-
-      {/* ── 历史记录浮窗 ── */}
-      {showHistory && <HistoryModal type="rag" onClose={() => setShowHistory(false)}
-        onLoad={(query) => { setQ(query); setShowHistory(false); }} />}
+      {showHistory && <HistoryModal type="rag" onClose={() => setShowHistory(false)} onLoad={(q: any) => { setQ(q); setShowHistory(false); }} />}
     </div>
   );
 }
@@ -662,8 +612,8 @@ export default function RagPage() {
   const [sResults, setSResults] = useState<KnowItem[]>([]);
   const [sPage, setSPage] = useState<PagInfo | null>(null);
   const [sLoading, setSLoading] = useState(false);
-  const [sPageNum, setSPageNum] = useState(1);
   const [showSearchHistory, setShowSearchHistory] = useState(false);
+  const [sPageNum, setSPageNum] = useState(1);
 
   // 知识库条目
   const [kbItems, setKbItems] = useState<KnowItem[]>([]);
@@ -829,16 +779,7 @@ export default function RagPage() {
             <Card><CardContent className="p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="font-bold text-lg">🔍 知识检索</h2>
-                <Button size="sm" variant="outline" className="h-7 text-[10px] text-indigo-600" onClick={async () => {
-      const r = await fetch('/api/history?type=search&page=1&pageSize=20');
-      const d = await r.json();
-      const items = d.history || [];
-      if (items.length === 0) { alert('暂无智能检索历史记录'); return; }
-      const text = items.slice(0, 20).map((h: any, i: number) =>
-        `${i+1}. [${new Date(h.created_at).toLocaleString('zh-CN')}] ${h.query?.substring(0,80)}`
-      ).join('\n\n');
-      alert('智能检索历史 (最近20条):\n\n' + text);
-    }}>📜 历史</Button>
+                <button onClick={() => setShowSearchHistory(true)} className="text-xs text-indigo-500 hover:text-indigo-700 px-2 py-0.5 border border-indigo-200 rounded">📜 历史</button>
               </div>
               <div className="flex gap-2">
                 <Input value={sq} onChange={e => setSq(e.target.value)} placeholder="搜索知识库..." className="text-sm" onKeyDown={e => e.key === 'Enter' && doSearch()} />
@@ -891,10 +832,7 @@ export default function RagPage() {
                 </div>
               )}
             </CardContent></Card>
-
-            {/* ── 搜索历史浮窗 ── */}
-            {showSearchHistory && <HistoryModal type="search" onClose={() => setShowSearchHistory(false)}
-              onLoad={(query) => { setSq(query); setShowSearchHistory(false); doSearch(1); }} />}
+            {showSearchHistory && <HistoryModal type="search" onClose={() => setShowSearchHistory(false)} onLoad={(q: any) => { setSq(q); setShowSearchHistory(false); }} />}
           </div>
         );
       // =================== 文件上传 ===================
