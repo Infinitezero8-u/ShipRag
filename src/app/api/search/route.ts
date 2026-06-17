@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     if (searchError) {
       // 如果 RPC 不存在，使用备用方法
       if (searchError.message.includes('function') || searchError.message.includes('does not exist')) {
-        return await fallbackSearch(supabase, queryEmbedding, modality, topK, threshold, filter);
+        return await fallbackSearch(supabase, queryEmbedding, query, modality, topK, threshold, filter);
       }
       return NextResponse.json({ error: `搜索失败: ${searchError.message}` }, { status: 500 });
     }
@@ -270,7 +270,12 @@ export async function PATCH(request: NextRequest) {
       
       const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if (title !== undefined) updateData.title = title;
-      if (content !== undefined) updateData.content = content;
+      if (content !== undefined) {
+        updateData.content = content;
+        // 内容变更后清除旧向量，迫使下次embed时重新计算
+        // 否则旧向量与新内容不匹配，导致语义检索命中率极低
+        updateData.embedding = null;
+      }
       if (metadata !== undefined) updateData.metadata = metadata;
       if (tags !== undefined) updateData.tags = tags;
 
@@ -294,23 +299,24 @@ export async function PATCH(request: NextRequest) {
 async function fallbackSearch(
   supabase: ReturnType<typeof getSupabaseClient>,
   queryEmbedding: number[],
+  queryText: string,
   modality: string | undefined,
   topK: number,
   threshold: number,
   filter?: { [key: string]: string }
 ) {
   // 查询所有已向量化的条目
-  let query = supabase
+  let dbQuery = supabase
     .from('knowledge_items')
     .select('id, modality, title, content, source, metadata, embedding, tags')
     .not('embedding', 'is', null);
 
   if (modality) {
-    query = query.eq('modality', modality);
+    dbQuery = dbQuery.eq('modality', modality);
   }
 
-  const poolSize = Math.max(topK * 3, 50);
-  const { data: items, error: queryError } = await query.limit(poolSize);
+  const poolSize = Math.max(topK * 10, 300);
+  const { data: items, error: queryError } = await dbQuery.limit(poolSize);
 
   if (queryError) {
     return NextResponse.json({ error: `查询失败: ${queryError.message}` }, { status: 500 });
@@ -396,6 +402,35 @@ async function fallbackSearch(
     }
   } catch (e) {
     console.error('搜索港口数据失败:', e);
+  }
+
+  // 关键词兜底（ILIKE）— 向量没命中时自动补充精确匹配
+  if (filteredResults.length < topK && queryText) {
+    try {
+      const words = queryText.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 1);
+      const ilikeWords = words.length > 0 ? words : [queryText];
+      const ilikeClause = ilikeWords.map((w: string) =>
+        `title.ilike.%${w}%,content.ilike.%${w}%`).join(',');
+
+      let kwQuery = getSupabaseClient()
+        .from('knowledge_items')
+        .select('id, modality, title, content, source, tags')
+        .or(ilikeClause)
+        .limit(Math.max(topK, 50));
+
+      if (modality) kwQuery = kwQuery.eq('modality', modality);
+
+      const { data: kwItems } = await kwQuery;
+      if (kwItems?.length) {
+        const existingIds = new Set(filteredResults.map((r: any) => r.id));
+        for (const item of kwItems) {
+          if (!existingIds.has(item.id)) {
+            filteredResults.push({ ...item, similarity: 0.55 } as any);
+          }
+        }
+        filteredResults.sort((a: any, b: any) => (b.similarity || 0) - (a.similarity || 0));
+      }
+    } catch (_) { /* 关键词兜底失败不影响主逻辑 */ }
   }
 
   return NextResponse.json({
