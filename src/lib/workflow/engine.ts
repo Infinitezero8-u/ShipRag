@@ -152,7 +152,12 @@ export async function runWorkflowStream(input: WorkflowInput, callbacks: StreamC
 
     if (classifyResult === 'CHAT') {
       const llm = new ChatOllama({ model: cfg.defaultModel, temperature: 0.3 });
-      const stream = await llm.stream(input.query);
+      const prompt = `你是 ShipRag，一个海事航运领域的智能知识助手。你运行在本地，基于 RAG 检索增强生成技术，可以查询海事法规、船舶数据、港口信息等专业知识。
+
+用友好、简洁的中文回答用户的问题。如果用户问"你是谁"，简要介绍自己。
+
+用户: ${input.query}`;
+      const stream = await llm.stream(prompt);
       for await (const chunk of stream) {
         const text = typeof chunk.content === 'string' ? chunk.content : '';
         finalAnswer += text;
@@ -174,20 +179,24 @@ export async function runWorkflowStream(input: WorkflowInput, callbacks: StreamC
       const hist = (input.history || []).slice(-4)
         .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n');
 
-      const prompt = `你是海事领域知识助手。根据以下参考资料回答用户问题，并用【资料N】标注每条信息的来源。
+      const prompt = `你是 ShipRag，海事航运领域智能知识助手。请严格根据以下参考资料回答用户问题。
 
-引用规则：
-- 每引用一个资料，在句末标注【资料1】【资料2】等编号
-- 如果是自身知识而非参考资料，标注【据我所知】
-- 如果资料不足以回答问题，请诚实说明
+回答规则：
+1. 优先使用参考资料中的原文或直接相关的段落来回答
+2. 如果参考资料中有具体条款/数据/定义——必须引用，用【资料N】标注(如"根据【资料1】…")
+3. 如果参考资料完全不相关——直接说"知识库中暂无相关信息"，不要编造
+4. 如果参考资料部分相关但不完整——先引用相关内容，再说明局限
+5. 只在参考资料确实包含答案时才标注【资料N】，不要乱标注
+6. 不要编造具体的条款编号、日期、数字——如果资料里没有就别说
+7. 用清晰的中文回答，分点列出时用数字编号
 
-${hist ? `对话历史:\n${hist}\n` : ''}
+${hist ? `\n对话历史:\n${hist}\n` : ''}
 参考资料:
 ${ctx}
 
 用户问题: ${input.query}
 
-请用中文回答：`;
+回答：`;
 
       const stream = await llm.stream(prompt);
       for await (const chunk of stream) {
@@ -212,14 +221,15 @@ ${ctx}
       const cfg = new OllamaConfig();
       const checker = new ChatOllama({ model: cfg.fallbackModel, temperature: 0 });
 
-      const checkPrompt = `你是一个事实核查器。检查答案中的事实是否能在参考资料中找到支撑。
-如果全部能找到支撑 → "PASS"
-如果有无法验证的断言 → "MILD_HALLUCINATION: 描述"
-如果答案是明显编造的 → "HALLUCINATION: 描述"
+      const checkPrompt = `严格核查：答案中的具体事实(法规条款号/日期/数字/人名/地名)是否能在参考资料中找到？
+如果答案只是常识概述(如"违反规定可能被处罚")→ PASS
+如果答案引用了参考资料中确实存在的具体信息→ PASS
+如果答案编造了参考资料中不存在的具体条款号/数字/事实→ HALLUCINATION
+如果答案标注了【据我所知】但内容其实是通用常识→ PASS
 
 答案: ${finalAnswer.substring(0, 1500)}
 参考资料: ${searchRes.slice(0, 3).map((r, i) => `[${i + 1}] ${r.content?.substring(0, 300)}`).join('\n')}
-判定:`;
+判定(PASS/HALLUCINATION/MILD_HALLUCINATION):`;
 
       const checkResp = await checker.invoke(checkPrompt, { timeout: 15000 } as any);
       const verdict = (checkResp.content as string).trim();

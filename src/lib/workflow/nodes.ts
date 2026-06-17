@@ -35,7 +35,9 @@ export async function classifyNode(state: RAGState): Promise<Partial<RAGState>> 
   if (/^(你好|谢谢|再见|帮助|help|早上好|下午好|晚上好|hello|hi|thanks|bye)/i.test(q.trim()))
     return { classifyResult: 'CHAT', classifyRaw: 'KEYWORD_CHAT', nodeTimings: { classify: Date.now() - t0 } };
   // list
-  if (/有哪些|哪些|列出|清单|目录|列表|全部|一览|所有|多少个|有几个/.test(q) && /港口|港|规章|法规|条例|制度|航线/.test(q))
+  // list — 仅明确要枚举列表时才走LIST
+  if ((/列出所有|清单|目录|全部港口|所有港口|有哪些港口/.test(q) && /港口|港|航线/.test(q)) ||
+      (/列出所有|清单/.test(q) && /规章|法规|条例|制度/.test(q)))
     return { classifyResult: 'LIST', classifyRaw: 'KEYWORD_LIST', nodeTimings: { classify: Date.now() - t0 } };
   // sql
   if (/一共|总共|总计|合计|统计|多少个|有几个|数量|按.*分|最大|最小|最多|最少/.test(q))
@@ -45,12 +47,18 @@ export async function classifyNode(state: RAGState): Promise<Partial<RAGState>> 
   try {
     const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
     const resp = await llm.invoke(
-      `你是意图判断专家，分析用户问题，仅输出一个标签：
-LIST — 需要完整列表/清单/所有
-SQL  — 需要统计/计数/汇总
-ALL  — 同时需要文档+统计
-RAG  — 需要文档/规则/说明
-CHAT — 纯闲聊/帮助
+      `分析用户问题的意图，仅输出一个标签：
+RAG  — 查询文档/法规/条例/规则的具体内容、定义、条款
+SQL  — 需要统计/计数/汇总/最多/最少 (如"一共有多少条")
+LIST — 需要遍历数据库列出所有条目 (如"列出所有港口")
+ALL  — 既需要查文档又需要统计数据
+CHAT — 问候/感谢/自我介绍/帮助/元问题 (如"你是谁")
+
+注意: "有哪些关于XX的规定" → RAG (查文档)
+      "有多少个XX" → SQL (计数)
+      "列出所有XX" → LIST (枚举)
+      "你好/谢谢" → CHAT
+
 用户问题: ${q}
 标签:`);
     const raw = (resp.content as string).trim().toUpperCase();
@@ -116,7 +124,7 @@ export async function queryRewriteNode(state: RAGState): Promise<Partial<RAGStat
       const llm2 = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.1 });
       const h = compressedHistory!.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
       const resp = await llm2.invoke(
-        `根据对话历史重写用户问题，使其独立可理解。\n历史:\n${h}\n当前: ${query}\n重写:`, { timeout: 10000 } as any);
+        `把用户问题中的指代词(它/这个/那个/那条/这些)替换为对话历史中的具体名称，使问题独立可理解。\n历史:\n${h}\n当前: ${query}\n重写:`, { timeout: 10000 } as any);
       return {
         optimizedQuery: (resp.content as string).trim() || query,
         history: compressedHistory as any,
@@ -198,20 +206,29 @@ export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGS
       } catch { return []; }
     })();
 
-    // === 路径 B: 关键词检索 (ILIKE, 拆词提升召回) ===
+    // === 路径 B: 关键词检索 (用 pg 直连避开 PostgREST or() bug) ===
     const kwPromise = (async () => {
       try {
+        const pg = await import('pg');
+        const pool = new pg.Pool({
+          connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/shiprag',
+          max: 1,
+        });
         const words = searchText.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 1);
         const ilikeWords = words.length > 0 ? words : [searchText];
-        const ilikeClause = ilikeWords.map((w: string) =>
-          `title.ilike.%${w}%,content.ilike.%${w}%`).join(',');
+        // Build ILIKE WHERE clause: title ILIKE '%word%' OR content ILIKE '%word%'
+        const conditions = ilikeWords.map((_: string, i: number) =>
+          `title ILIKE $${i*2+1} OR content ILIKE $${i*2+2}`
+        ).join(' OR ');
+        const params = ilikeWords.flatMap((w: string) => [`%${w}%`, `%${w}%`]);
 
-        const r = await supabase
-          .from('knowledge_items')
-          .select('id, title, content, modality, source')
-          .or(ilikeClause)
-          .limit(topK * 4);
-        return ((r.data || []) as any[]).map((x: any) => ({
+        const result = await pool.query(
+          `SELECT id, title, content, modality, source FROM knowledge_items
+           WHERE ${conditions} LIMIT ${topK * 4}`,
+          params
+        );
+        await pool.end();
+        return result.rows.map((x: any) => ({
           id: x.id, title: x.title || '', content: x.content || '',
           similarity: 0.55, modality: x.modality, source: x.source,
           retrievalMethod: 'keyword',
@@ -247,7 +264,7 @@ export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGS
       .map(e => ({ ...e.item, similarity: e.score, retrievalMethod: e.methods.join('+') }));
 
     return {
-      searchResults: vecResults.slice(0, topK),
+      searchResults: fused.slice(0, topK),  // RRF 融合后的最佳结果
       keywordResults: kwResults.slice(0, topK),
       fusedResults: fused,
       nodeTimings: { hybridRetrieval: Date.now() - t0 },
@@ -282,7 +299,11 @@ export async function rerankNode(state: RAGState): Promise<Partial<RAGState>> {
     for (let i = 0; i < candidates.length; i++) {
       const doc = candidates[i];
       try {
-        const prompt = `请评估以下文档片段与用户问题的相关度，只输出0-100的分数。
+        const prompt = `请判断以下文档片段能否直接回答用户问题。只输出0-100的分数:
+0-30=完全不相关/不同主题
+30-60=同一领域但无法直接回答
+60-80=部分相关,可部分回答
+80-100=高度相关,可直接回答
 用户问题：${q.substring(0, 200)}
 文档标题：${doc.title}
 文档内容：${doc.content?.substring(0, 300) || ''}
@@ -330,7 +351,11 @@ export async function llmGenerateNode(state: RAGState): Promise<Partial<RAGState
     const llm = new ChatOllama({ model: ollama.defaultModel, temperature: 0.3 });
 
     if (classifyResult === 'CHAT') {
-      const resp = await llm.invoke(query);
+      const prompt = `你是 ShipRag，一个海事航运领域的智能知识助手，基于 RAG 技术查询海事法规和港口数据。
+用友好、简洁的中文回答。如果用户问"你是谁"，简要介绍自己。
+
+用户: ${query}`;
+      const resp = await llm.invoke(prompt);
       return { finalAnswer: resp.content as string, nodeTimings: { llmGenerate: Date.now() - t0 } };
     }
 
@@ -342,12 +367,16 @@ export async function llmGenerateNode(state: RAGState): Promise<Partial<RAGState
     const h = (history || []).slice(-4)
       .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n');
 
-    const prompt = `你是海事领域知识助手。根据以下参考资料回答用户问题，并在答案中用【资料N】标注每条信息的来源。
+    const prompt = `你是 ShipRag，海事航运智能知识助手。严格根据以下参考资料回答用户问题。
 
-引用规则：
-- 每引用一个资料片段，在句末或段末标注【资料1】【资料2】等编号
-- 如果你的回答来自自身知识而非参考资料，标注【据我所知】
-- 如果资料不足以回答问题，请诚实说明
+回答规则：
+1. 优先用参考资料中的原文回答
+2. 有具体条款/数据时必须引用，用【资料N】标注
+3. 参考资料完全不相关→直接说"知识库中暂无相关信息"，不要编造
+4. 资料部分相关但不完整→先引用相关内容，再说明局限
+5. 只在参考资料确实包含答案时才标【资料N】
+6. 不要编造具体条款编号、日期、数字
+7. 用清晰中文回答，分点列出
 
 ${h ? `\n对话历史:\n${h}\n` : ''}
 参考资料:
@@ -355,7 +384,7 @@ ${ctx}
 
 用户问题: ${query}
 
-请用中文回答，引用标注不可省略。`;
+回答：`;
 
     const resp = await llm.invoke(prompt);
     const answer = resp.content as string;
@@ -402,7 +431,7 @@ export async function sqlGenerateNode(state: RAGState): Promise<Partial<RAGState
   try {
     const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
     const resp = await llm.invoke(
-      `已知数据库结构:\n${schema}\n生成 SELECT 查询。${classifyResult === 'LIST' ? '这是列表查询，确保返回多行 LIMIT 500。' : ''}\n只输出 SQL，不要解释。\n问题: ${query}\nSQL:`);
+      `已知数据库结构:\n${schema}\n生成 SELECT 查询。注意: knowledge_items 存储的是PDF文档的文本段落，title是文件名，content是段落文本。如果是查询法规内容，应该用 RAG 检索而非 SQL。${classifyResult === 'LIST' ? '这是列表/枚举查询，确保返回多行，LIMIT 500。' : ''}\n只输出 SQL，不要解释。\n问题: ${query}\nSQL:`);
     let sql = (resp.content as string).replace(/```sql\n?/gi, '').replace(/```\n?/g, '').trim();
     if (!sql.toLowerCase().startsWith('select')) sql = `SELECT * FROM knowledge_items LIMIT 10`;
     return { generatedSQL: sql, nodeTimings: { sqlGenerate: Date.now() - t0 } };
