@@ -77,9 +77,10 @@ export async function runWorkflow(input: WorkflowInput): Promise<WorkflowResult>
     nodeTimings: {},
   };
 
+  const tStart = Date.now();
   const finalState = await graph.invoke(initialState);
 
-  return {
+  const result: WorkflowResult = {
     success: !finalState.errors?.length || finalState.errors.length === 0,
     answer: finalState.finalAnswer || '',
     sql: finalState.finalSQL || '',
@@ -88,6 +89,22 @@ export async function runWorkflow(input: WorkflowInput): Promise<WorkflowResult>
     nodeTimings: finalState.nodeTimings || {},
     errors: finalState.errors || [],
   };
+
+  // P2-3: 可观测性 — 结构化 trace 日志
+  const trace = {
+    timestamp: new Date().toISOString(),
+    workflow: input.workflow || 'rag-sql-dual',
+    query: input.query.substring(0, 200),
+    route: result.route,
+    totalMs: Date.now() - tStart,
+    nodeTimings: result.nodeTimings,
+    resultCount: result.searchResults.length,
+    answerLen: result.answer.length,
+    hasErrors: result.errors.length > 0,
+  };
+  console.log('[LangGraph trace]', JSON.stringify(trace));
+
+  return result;
 }
 
 /**

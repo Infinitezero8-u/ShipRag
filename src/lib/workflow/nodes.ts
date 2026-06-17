@@ -74,23 +74,89 @@ export function routeAfterClassify(state: RAGState): string {
 }
 
 // ═══════════════════════════════════════════════════════
-// 4. Query 改写
+// 4. Query 改写 (增强版: 复杂问题分解 + 记忆压缩)
 // ═══════════════════════════════════════════════════════
 export async function queryRewriteNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now();
   const { query, history } = state;
-  if (!history?.length) return { optimizedQuery: query, nodeTimings: { queryRewrite: 0 } };
 
-  try {
-    const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.1 });
-    const h = history.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
-    const resp = await llm.invoke(
-      `根据对话历史重写用户问题，使其独立可理解。
-历史:\n${h}\n当前问题: ${query}\n重写后问题（仅输出问题文本）:`);
-    return { optimizedQuery: (resp.content as string).trim() || query, nodeTimings: { queryRewrite: Date.now() - t0 } };
-  } catch {
-    return { optimizedQuery: query, nodeTimings: { queryRewrite: Date.now() - t0 } };
+  // P2-1: 复杂问题检测 — 对比类/多条件类自动分解
+  const complexPatterns = [
+    /和.*对比|与.*比较|和.*区别|和.*差异|vs\.?/i,
+    /同时|以及|还有.*也|另外.*还/,
+    /首先.*其次|第一.*第二|一方面.*另一方面/,
+    /吞吐量|占用率|增长率|同比|环比/,
+  ];
+  const isComplex = complexPatterns.some(p => p.test(query));
+
+  // P2-2: 对话记忆压缩 — 超过6轮自动摘要
+  let compressedHistory = history;
+  if (history && history.length > 6) {
+    try {
+      const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
+      const historyText = history.map(m => `${m.role}: ${m.content}`).join('\n');
+      const resp = await llm.invoke(
+        `将以下对话历史压缩为不超过200字的摘要，保留关键实体和用户意图：\n${historyText}\n摘要：`,
+        { timeout: 15000 } as any
+      );
+      compressedHistory = [
+        { role: 'system', content: `[对话摘要] ${(resp.content as string).trim()}` },
+        ...history.slice(-2), // 保留最近两轮原文
+      ];
+    } catch { /* 压缩失败保留最近4轮 */ compressedHistory = history.slice(-4); }
   }
+
+  if (!history?.length && !isComplex) {
+    return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: 0 } };
+  }
+
+  // 有历史 → 改写
+  if (history?.length) {
+    try {
+      const llm2 = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.1 });
+      const h = compressedHistory!.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
+      const resp = await llm2.invoke(
+        `根据对话历史重写用户问题，使其独立可理解。\n历史:\n${h}\n当前: ${query}\n重写:`, { timeout: 10000 } as any);
+      return {
+        optimizedQuery: (resp.content as string).trim() || query,
+        history: compressedHistory as any,
+        nodeTimings: { queryRewrite: Date.now() - t0 },
+      };
+    } catch {
+      return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: Date.now() - t0 } };
+    }
+  }
+
+  // 复杂问题 → 分解为子查询
+  if (isComplex) {
+    try {
+      const llm3 = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
+      const resp = await llm3.invoke(
+        `将用户的复杂问题分解为2-3个子查询，每个子查询一行，用换行分隔：\n${query}\n子查询:`,
+        { timeout: 15000 } as any
+      );
+      const subQueries = (resp.content as string)
+        .split('\n')
+        .map(l => l.replace(/^\d+[\.\)、]\s*/, '').trim())
+        .filter(l => l.length > 3)
+        .slice(0, 3);
+
+      // 合并为增强查询
+      const enhancedQuery = subQueries.length > 0
+        ? `${query}\n[子查询: ${subQueries.join('; ')}]`
+        : query;
+
+      return {
+        optimizedQuery: enhancedQuery,
+        history: compressedHistory as any,
+        nodeTimings: { queryRewrite: Date.now() - t0 },
+      };
+    } catch {
+      return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: Date.now() - t0 } };
+    }
+  }
+
+  return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: 0 } };
 }
 
 // ═══════════════════════════════════════════════════════
