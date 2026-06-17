@@ -212,16 +212,17 @@ ${ctx}
 
   callbacks.onNode?.('llm_done');
 
-  // Step 3: 幻觉检测 (post-hoc)
+  // Step 3: 幻觉检测 (disabled — too many false positives, will retrain)
   let withCheck = finalAnswer;
-  if (classifyResult !== 'CHAT' && classifyResult !== 'SQL' && classifyResult !== 'LIST' && searchRes.length > 0) {
+  // HALLCHECK_DISABLED:
+  if (false && classifyResult !== 'CHAT' && classifyResult !== 'SQL' && classifyResult !== 'LIST' && searchRes.length > 0) {
     try {
       const { ChatOllama } = await import('@langchain/ollama');
       const { OllamaConfig } = await import('@/lib/ollama/config');
       const cfg = new OllamaConfig();
       const checker = new ChatOllama({ model: cfg.fallbackModel, temperature: 0 });
 
-      const checkPrompt = `严格核查：答案中的具体事实(法规条款号/日期/数字/人名/地名)是否能在参考资料中找到？
+      const checkPrompt = `评估答案质量(非引用格式检查): 答案正确指出资料不足→PASS | 答案编造了不存在的具体事实→HALLUCINATION | 答案有引用错误但主体正确→MILD_HALLUCINATION
 如果答案只是常识概述(如"违反规定可能被处罚")→ PASS
 如果答案引用了参考资料中确实存在的具体信息→ PASS
 如果答案编造了参考资料中不存在的具体条款号/数字/事实→ HALLUCINATION

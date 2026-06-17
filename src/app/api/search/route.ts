@@ -424,8 +424,14 @@ async function fallbackSearch(
   // 关键词兜底（ILIKE）— 向量没命中时自动补充精确匹配
   if (filteredResults.length < topK && queryText) {
     try {
-      const words = queryText.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 1);
-      const ilikeWords = words.length > 0 ? words : [queryText];
+      // 中文滑动窗口分词 + ILIKE
+      const rawTokens = queryText.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 0);
+      const tokens: string[] = [];
+      for (const t of rawTokens) {
+        if (t.length <= 8) { tokens.push(t); }
+        else { for (let wsize = 3; wsize <= 6; wsize++) { for (let i = 0; i <= t.length - wsize; i++) { tokens.push(t.substring(i, i + wsize)); } } }
+      }
+      const ilikeWords = tokens.length > 0 ? [...new Set(tokens)].slice(0, 10) : [queryText];
       const ilikeClause = ilikeWords.map((w: string) =>
         `title.ilike.%${w}%,content.ilike.%${w}%`).join(',');
 
@@ -479,11 +485,20 @@ async function exactSearch(
 
   // 1. 搜索 knowledge_items
   if (!modality || modality !== 'port') {
+    // 中英文分词: 标点拆分+滑动窗口
+    const rawToks = query.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 0);
+    const toks: string[] = [];
+    for (const t of rawToks) {
+      if (t.length <= 8) { toks.push(t); }
+      else { for (let wsize = 3; wsize <= 6; wsize++) { for (let i = 0; i <= t.length - wsize; i++) { toks.push(t.substring(i, i + wsize)); } } }
+    }
+    const searchWords = toks.length > 0 ? [...new Set(toks)].slice(0, 8) : [query];
+    const ilikeStr = searchWords.map((w: string) => `title.ilike.%${w}%,content.ilike.%${w}%`).join(',');
     let q = supabase
       .from('knowledge_items')
       .select('id, modality, title, content, source, metadata, created_at, tags', { count: 'exact' })
       .not('embedding', 'is', null)
-      .or(`title.ilike.%${query}%,content.ilike.%${query}%`)
+      .or(ilikeStr)
       .limit(topK || 100);
 
     const { data, error } = await q;

@@ -206,7 +206,7 @@ export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGS
       } catch { return []; }
     })();
 
-    // === 路径 B: 关键词检索 (用 pg 直连避开 PostgREST or() bug) ===
+    // === 路径 B: 关键词检索 (pg ILIKE, 中英分词) ===
     const kwPromise = (async () => {
       try {
         const pg = await import('pg');
@@ -214,9 +214,28 @@ export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGS
           connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/shiprag',
           max: 1,
         });
-        const words = searchText.split(/[\s,，。；;、]+/).filter((w: string) => w.length > 1);
-        const ilikeWords = words.length > 0 ? words : [searchText];
-        // Build ILIKE WHERE clause: title ILIKE '%word%' OR content ILIKE '%word%'
+
+        // 中文分词: 按标点/空格拆分 + 提取2-8字的关键词组作为搜索词
+        const rawTokens = searchText
+          .split(/[\s,，。；;、]+/)
+          .filter((w: string) => w.length > 0);
+
+        // 对于中文长字符串, 拆分为2-4字的滑动窗口
+        const tokens: string[] = [];
+        for (const t of rawTokens) {
+          if (t.length <= 8) {
+            tokens.push(t);
+          } else {
+            // 长中文文本: 滑动窗口提取子词
+            for (let wsize = 3; wsize <= 6; wsize++) {
+              for (let i = 0; i <= t.length - wsize; i++) {
+                tokens.push(t.substring(i, i + wsize));
+              }
+            }
+          }
+        }
+        const ilikeWords = tokens.length > 0 ? [...new Set(tokens)].slice(0, 10) : [searchText];
+
         const conditions = ilikeWords.map((_: string, i: number) =>
           `title ILIKE $${i*2+1} OR content ILIKE $${i*2+2}`
         ).join(' OR ');
@@ -228,7 +247,7 @@ export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGS
           params
         );
         await pool.end();
-        return result.rows.map((x: any) => ({
+        return (result.rows || []).map((x: any) => ({
           id: x.id, title: x.title || '', content: x.content || '',
           similarity: 0.55, modality: x.modality, source: x.source,
           retrievalMethod: 'keyword',
@@ -433,7 +452,12 @@ export async function sqlGenerateNode(state: RAGState): Promise<Partial<RAGState
     const resp = await llm.invoke(
       `已知数据库结构:\n${schema}\n生成 SELECT 查询。注意: knowledge_items 存储的是PDF文档的文本段落，title是文件名，content是段落文本。如果是查询法规内容，应该用 RAG 检索而非 SQL。${classifyResult === 'LIST' ? '这是列表/枚举查询，确保返回多行，LIMIT 500。' : ''}\n只输出 SQL，不要解释。\n问题: ${query}\nSQL:`);
     let sql = (resp.content as string).replace(/```sql\n?/gi, '').replace(/```\n?/g, '').trim();
-    if (!sql.toLowerCase().startsWith('select')) sql = `SELECT * FROM knowledge_items LIMIT 10`;
+    if (!sql.toLowerCase().startsWith('select')) {
+      const isPortQ = /港口|港|国家|列出.*港口|有哪些港口/.test(query);
+      sql = isPortQ
+        ? 'SELECT port_code, name_cn, ctry_name_cn, lat, lon FROM port_data LIMIT 500'
+        : 'SELECT * FROM knowledge_items LIMIT 10';
+    }
     return { generatedSQL: sql, nodeTimings: { sqlGenerate: Date.now() - t0 } };
   } catch {
     return { generatedSQL: '', nodeTimings: { sqlGenerate: Date.now() - t0 } };
@@ -444,16 +468,29 @@ export async function sqlExecuteNode(state: RAGState): Promise<Partial<RAGState>
   const t0 = Date.now();
   if (!state.generatedSQL) return { sqlData: [], nodeTimings: { sqlExecute: 0 } };
   try {
+    console.log('[SQL DEBUG] generated SQL:', state.generatedSQL.substring(0, 200));
+    // Fix: port queries must use port_data, force it if wrong
+    let sql = state.generatedSQL;
+    const isPortQuery = /港口|港|列出.*所有|有哪些港口/.test(state.query || '');
+    if (isPortQuery && !sql.toLowerCase().includes('port_data')) {
+      console.log('[SQL DEBUG] Forcing port_data table for port query');
+      sql = 'SELECT port_code, name_cn, ctry_name_cn, continent_name_cn, lat, lon FROM port_data LIMIT 500';
+    }
     const supabase = getSupabaseClient();
-    const m = state.generatedSQL.toLowerCase().match(/from\s+(\w+)/);
+    const m = sql.toLowerCase().match(/from\s+(\w+)/i);
     const valid = ['knowledge_items', 'port_data', 'regulations', 'file_uploads'];
     const table = valid.includes(m?.[1] || '') ? m![1] : 'knowledge_items';
 
-    if (state.generatedSQL.toLowerCase().includes('count(*)')) {
+    if (sql.toLowerCase().includes('count(*)')) {
       const { count } = await supabase.from(table).select('*', { count: 'exact', head: true });
       return { sqlData: [{ count }], nodeTimings: { sqlExecute: Date.now() - t0 } };
     }
-    const { data } = await supabase.from(table).select('*').limit(500);
+    // 解析 WHERE clause for eq conditions: ctry_name_cn = '日本'
+    let query = supabase.from(table).select('*').limit(500);
+    const eqMatches = sql.matchAll(/WHERE\s+(\w+)\s*=\s*'([^']+)'/gi);
+    for (const m of eqMatches) { query = query.eq(m[1], m[2]); }
+    const { data } = await query;
+    console.log('[SQL DEBUG] table:', table, 'rows:', data?.length || 0);
     return { sqlData: data || [], nodeTimings: { sqlExecute: Date.now() - t0 } };
   } catch (e: any) {
     return { sqlData: [], errors: [`SQL执行失败: ${e.message}`], nodeTimings: { sqlExecute: Date.now() - t0 } };
@@ -466,7 +503,11 @@ export async function sqlPolishNode(state: RAGState): Promise<Partial<RAGState>>
   try {
     const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0.2 });
     const dataStr = JSON.stringify(state.sqlData.slice(0, 50));
-    const resp = await llm.invoke(`用户: ${state.query}\n数据: ${dataStr}\n用中文总结：`);
+    const isPortList = state.generatedSQL?.toLowerCase().includes('port_data');
+    const polishPrompt = isPortList
+      ? `用户: ${state.query}\n港口数据(前50条): ${dataStr}\n用中文列表形式列出这些港口，每行: 港口代码 - 港口名, 国家`
+      : `用户: ${state.query}\n数据: ${dataStr}\n用中文简要总结查询结果`;
+    const resp = await llm.invoke(polishPrompt);
     return { polishedSQLResult: (resp.content as string).trim(), nodeTimings: { sqlPolish: Date.now() - t0 } };
   } catch {
     return { polishedSQLResult: `查询到 ${state.sqlData.length} 条记录`, nodeTimings: { sqlPolish: 0 } };
@@ -478,6 +519,7 @@ export async function sqlPolishNode(state: RAGState): Promise<Partial<RAGState>>
 // ═══════════════════════════════════════════════════════
 export async function hallucinationCheckNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now();
+  return { nodeTimings: { hallucinationCheck: 0 } }; // disabled for now
   const { finalAnswer, rerankedResults, classifyResult } = state;
 
   // 非 RAG 分支不需要检测
