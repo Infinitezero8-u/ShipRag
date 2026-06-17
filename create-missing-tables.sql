@@ -324,3 +324,34 @@ CREATE INDEX IF NOT EXISTS idx_history_created ON search_history(created_at);
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO eonl;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO anon;
+
+-- 22. Vector indexes (pgvector IVFFlat)
+CREATE INDEX IF NOT EXISTS knowledge_items_embedding_idx 
+  ON knowledge_items USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS port_data_embedding_idx 
+  ON port_data USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- 23. Vector search RPC function
+CREATE OR REPLACE FUNCTION match_knowledge_items(
+  query_embedding vector(1024),
+  match_threshold float DEFAULT 0.3,
+  match_count int DEFAULT 10
+)
+RETURNS TABLE(
+  id varchar, title text, content text, modality text, source text, similarity float
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    ki.id::varchar, ki.title::text, ki.content::text,
+    ki.modality::text, ki.source::text,
+    (1 - (ki.embedding <=> query_embedding))::float as similarity
+  FROM knowledge_items ki
+  WHERE ki.embedding IS NOT NULL
+    AND 1 - (ki.embedding <=> query_embedding) > match_threshold
+  ORDER BY ki.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
