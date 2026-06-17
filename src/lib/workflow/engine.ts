@@ -114,11 +114,11 @@ export async function runWorkflowStream(input: WorkflowInput, callbacks: StreamC
 export function getAvailableWorkflows() {
   return [
     { id: 'rag-sql-dual', name: '双分支RAG+SQL智能问答', description: '意图分类→条件分支→RAG/SQL→输出', nodes: [
-      { type: 'chatInput', name: '用户输入' },{ type: 'classifyLLM', name: '意图分类' },{ type: 'branchCondition', name: '条件分支' },
-      { type: 'queryRewrite', name: 'Query优化' },{ type: 'embedding', name: '向量化' },{ type: 'vectorRetrieval', name: '混合检索(RRF)' },
-      { type: 'rerank', name: '结果精排' },{ type: 'promptAssembly', name: 'Prompt组装' },{ type: 'llm', name: 'LLM生成(ShipRag身份+引用)' },
-      { type: 'sqlGenerate', name: 'SQL生成(表路由)' },{ type: 'sqlExecute', name: 'SQL执行(WHERE解析)' },
-      { type: 'sqlPolish', name: '结果润色(港口格式化)' },{ type: 'chatOutput', name: '输出汇总' },
+      { type: 'chatInput', name: '用户输入' },{ type: 'classifyLLM', name: '意图分类(含空间查询检测)' },{ type: 'branchCondition', name: '条件分支' },
+      { type: 'queryRewrite', name: 'Query优化(语义扩展+记忆压缩)' },{ type: 'embedding', name: '向量化' },{ type: 'vectorRetrieval', name: '混合检索(RRF+实体提取)' },
+      { type: 'rerank', name: '结果精排(启发式加分)' },{ type: 'promptAssembly', name: 'Prompt组装' },{ type: 'llm', name: 'LLM生成(ShipRag+引用)' },
+      { type: 'sqlGenerate', name: 'SQL生成(表路由+空间查询Skill)' },{ type: 'sqlExecute', name: 'SQL执行(WHERE解析)' },
+      { type: 'sqlPolish', name: '结果润色(按类型分流)' },{ type: 'chatOutput', name: '输出汇总' },
     ], is_locked: true, is_active: true },
     { id: 'rag-only', name: '纯RAG检索增强生成', description: 'Query优化→向量化→混合检索→精排→生成', nodes: [
       { type: 'chatInput', name: '用户输入' },{ type: 'queryRewrite', name: 'Query优化' },{ type: 'embedding', name: '向量化' },

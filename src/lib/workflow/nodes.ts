@@ -11,6 +11,11 @@ import { OllamaEmbeddings } from '@langchain/ollama';
 import { getSupabaseClient } from '@/storage/database/local-db';
 import { OllamaConfig } from '@/lib/ollama/config';
 
+// Skills (v4 new)
+import { shouldUseSpatial, findNearbyPorts } from './skills/spatial';
+import { expandQuery, shouldUseSemanticExpansion } from './skills/semantic-expansion';
+import { extractEntities } from './skills/entity-extraction';
+
 const ollama = new OllamaConfig();
 
 // ═══════════════════════════════════════════════════════════
@@ -29,15 +34,20 @@ export async function classifyNode(state: RAGState): Promise<Partial<RAGState>> 
   const t0 = Date.now(); const q = state.query;
   const lo = q.toLowerCase();
 
-  // CHAT — 问候/感谢/帮助
-  if (/^(你好|谢谢|再见|帮助|help|早上好|下午好|晚上好|hello|hi|thanks|bye|你是谁)/i.test(q.trim()))
+  // CHAT — 纯闲聊(不命中semantic expansion的才进CHAT)
+  if (/^(你好|谢谢|再见|帮助|help|早上好|下午好|晚上好|hello|hi|thanks|bye|你是谁)/i.test(q.trim())
+      && !shouldUseSemanticExpansion(q))
     return { classifyResult: 'CHAT', classifyRaw: 'KEYWORD_CHAT', nodeTimings: { classify: Date.now() - t0 } };
 
   // LIST — 明确要遍历数据库列出条目
   const portListPat = /列出.*(所有|全部).*(港口|港)/;
   const countryListPat = /(日本|中国|美国|韩国|英国|法国|德国|新加坡)的.*(港口|港)/;
+  // Skill: 空间查询 (距离XX最近的N个 → LIST)
+  const spatialCheck = shouldUseSpatial(q);
   if (portListPat.test(q) || countryListPat.test(q))
     return { classifyResult: 'LIST', classifyRaw: 'KEYWORD_LIST', nodeTimings: { classify: Date.now() - t0 } };
+  if (spatialCheck.use)
+    return { classifyResult: 'LIST', classifyRaw: 'KEYWORD_SPATIAL', nodeTimings: { classify: Date.now() - t0 } };
 
   // SQL — 统计/计数/最值
   const countPat = /一共|总共|总计|合计|统计|多少个|有几个|数量|计数/;
@@ -48,6 +58,11 @@ export async function classifyNode(state: RAGState): Promise<Partial<RAGState>> 
   // LIST for enumeration queries with port/country
   if (countPat.test(q) && /港口|港/.test(q))
     return { classifyResult: 'SQL', classifyRaw: 'KEYWORD_SQL', nodeTimings: { classify: Date.now() - t0 } };
+
+  // Skill: 语义扩展检测 — 口语匹配→强制RAG (绕过CHAT误分类)
+  if (shouldUseSemanticExpansion(q)) {
+    return { classifyResult: 'RAG', classifyRaw: 'KEYWORD_SEMANTIC', nodeTimings: { classify: Date.now() - t0 } };
+  }
 
   // LLM 兜底
   try {
@@ -103,8 +118,12 @@ export async function queryRewriteNode(state: RAGState): Promise<Partial<RAGStat
     } catch { compressedHistory = history.slice(-4); }
   }
 
-  // 无历史 + 非复杂 → 无需改写
-  if (!history?.length) return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: 0 } };
+  // Skill: 语义扩展 — 口语→法律术语
+  const semExp = shouldUseSemanticExpansion(query) ? expandQuery(query) : null;
+  const baseQuery = semExp ? semExp.expanded : query;
+
+  // 无历史 + 非复杂 → 不需要改写,但语义扩展已应用
+  if (!history?.length) return { optimizedQuery: baseQuery, history: compressedHistory as any, nodeTimings: { queryRewrite: 0 } };
 
   // 有历史 → 代词替换
   try {
@@ -115,12 +134,12 @@ export async function queryRewriteNode(state: RAGState): Promise<Partial<RAGStat
       { timeout: 10000 } as any
     );
     return {
-      optimizedQuery: (r.content as string).trim() || query,
+      optimizedQuery: (r.content as string).trim() || baseQuery,
       history: compressedHistory as any,
       nodeTimings: { queryRewrite: Date.now() - t0 },
     };
   } catch {
-    return { optimizedQuery: query, history: compressedHistory as any, nodeTimings: { queryRewrite: Date.now() - t0 } };
+    return { optimizedQuery: baseQuery, history: compressedHistory as any, nodeTimings: { queryRewrite: Date.now() - t0 } };
   }
 }
 
@@ -142,6 +161,9 @@ export async function embeddingNode(state: RAGState): Promise<Partial<RAGState>>
 export async function hybridRetrievalNode(state: RAGState): Promise<Partial<RAGState>> {
   const t0 = Date.now(); const { optimizedQuery, query, embedding, topK } = state;
   const searchText = optimizedQuery || query;
+  // Skill: 语义扩展过的查询额外添加原始查询的关键词检测
+  // 检测到有空格间隔的长文本(说明是语义扩展后的),同时用原始query和split后各词检索
+  const isExpanded = searchText !== query && searchText.length > query.length * 1.5;
   try {
     // 路径 A: 向量检索
     const vecPromise = (async () => {
@@ -319,6 +341,14 @@ knowledge_items (id, title, content) — PDF法规文档段落。title=文件名
     const resp = await llm.invoke(`${schema}\n\n${hint}\n\n问题:${query}\n只输出SQL:`);
     let sql = (resp.content as string).replace(/```sql\n?/gi, '').replace(/```\n?/g, '').trim();
 
+    // Skill: 空间查询 — "距离XX最近的港口"生成排序SQL
+    const spatialCheck = shouldUseSpatial(query);
+    if (spatialCheck.use && spatialCheck.portName) {
+      // Spatial skill: 获取所有带坐标的港口(Haversine排序在sqlPolish中完成)
+      sql = 'SELECT port_code, name_cn, ctry_name_cn, lat, lon FROM port_data WHERE lat IS NOT NULL';
+      console.log('[Skill:spatial] Haversine query for:', spatialCheck.portName);
+    }
+
     // 兜底: 根据关键词强制修正表名
     if (isPortQ && !sql.toLowerCase().includes('port_data')) {
       sql = isCount
@@ -392,12 +422,42 @@ export async function sqlPolishNode(state: RAGState): Promise<Partial<RAGState>>
     return { polishedSQLResult: `查询结果: ${cnt} 条记录`, nodeTimings: { sqlPolish: Date.now() - t0 } };
   }
 
-  // 港口列表 → 格式化Top20
+  // 港口列表 → 格式化Top20 (+空间距离Skill)
   if (isPortQ) {
-    const items = data.slice(0, 20).map((r: any) =>
-      `${r.port_code || ''} — ${r.name_cn || ''}，${r.ctry_name_cn || ''}`
-    ).filter((l: string) => l.length > 3);
-    const header = `共查询到 ${data.length} 条记录，显示前${Math.min(20, data.length)}条:\n\n`;
+    // Skill: 空间距离计算 (如果SQL中包含lat/lon字段)
+    const spatialCheck = shouldUseSpatial(state.query || '');
+    const refName = spatialCheck.portName;
+
+    let items: string[];
+    if (refName && data.length > 0 && data[0].lat !== undefined) {
+      // 单独查询参考港坐标(避免LIMIT 500截断)
+      let refLat = 0, refLon = 0;
+      try {
+        const supabase = getSupabaseClient();
+        const { data: refRow } = await supabase.from('port_data')
+          .select('lat, lon').or(`name_cn.eq.${refName},port_code.eq.${refName}`).limit(1).single();
+        if (refRow?.lat != null) { refLat = refRow.lat; refLon = refRow.lon; }
+      } catch {}
+      // 回退到数据集第一个
+      if (refLat === 0 && refLon === 0) {
+        refLat = data[0].lat; refLon = data[0].lon;
+      }
+      const withDist = (data as any[]).map((r: any) => {
+        const dLat = (r.lat - refLat) * Math.PI / 180;
+        const dLon = (r.lon - refLon) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(refLat*Math.PI/180)*Math.cos(r.lat*Math.PI/180)*Math.sin(dLon/2)**2;
+        const km = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        return { ...r, dist_km: km };
+      }).filter((r: any) => r.name_cn !== refName && r.port_code !== refName)
+        .sort((a: any, b: any) => a.dist_km - b.dist_km)
+        .slice(0, 20);
+      items = withDist.map((r: any) => `${r.port_code} — ${r.name_cn}，${r.ctry_name_cn || ''} (${r.dist_km.toFixed(0)}km)`);
+    } else {
+      items = data.slice(0, 20).map((r: any) =>
+        `${r.port_code || ''} — ${r.name_cn || ''}，${r.ctry_name_cn || ''}`
+      ).filter((l: string) => l.length > 3);
+    }
+    const header = `共查询到 ${data.length} 条记录，显示前${Math.min(20, items.length)}条:\n\n`;
     return {
       polishedSQLResult: header + (items.length > 0 ? items.join('\n') : JSON.stringify(data.slice(0, 5))),
       nodeTimings: { sqlPolish: Date.now() - t0 },
