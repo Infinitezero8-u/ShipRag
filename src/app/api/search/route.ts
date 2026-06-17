@@ -4,16 +4,22 @@ import { EmbeddingClient } from '@/lib/ollama/embedding';
 // HeaderUtils stub (local dev)
 function extractHeaders() { return {}; }
 
-// 异步保存搜索历史（不阻塞响应）
-async function saveSearchHistory(query: string, modality: string, resultCount: number) {
+// 异步保存搜索历史（不阻塞响应 — 使用原生 pg 直连避免 PostgREST schema cache 问题）
+async function saveSearchHistory(query: string, modality: string, resultCount: number, results?: any[]) {
   try {
-    const supabase = getSupabaseClient();
-    await supabase.from('search_history').insert({
-      history_type: 'search',
-      query: query?.substring(0, 500) || '',
-      modality: modality || '',
-      result_count: resultCount || 0,
-    });
+    const pg = await import('pg');
+    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/shiprag', max: 1 });
+    const summary = results?.length
+      ? results.slice(0, 10).map((r: any, i: number) =>
+          `${i+1}. ${r.title || '无标题'} [${r.modality || '?'}]${r.similarity !== undefined && r.similarity < 1 ? ` ${Math.round(r.similarity*100)}%` : ''}`
+        ).join('\n')
+      : '';
+    await pool.query(
+      `INSERT INTO search_history (history_type, query, answer, modality, result_count)
+       VALUES ($1, $2, $3, $4, $5)`,
+      ['search', query?.substring(0, 500) || '', summary?.substring(0, 5000) || '', modality || '', resultCount || 0]
+    );
+    await pool.end();
   } catch { /* 保存失败不影响搜索 */ }
 }
 
@@ -164,7 +170,7 @@ export async function POST(request: NextRequest) {
     });
 
     // 异步保存搜索历史 (不阻塞响应)
-    saveSearchHistory(query, modality || '', paginatedResults.length).catch(() => {});
+    saveSearchHistory(query, modality || '', paginatedResults.length, paginatedResults).catch(() => {});
 
     return response;
   } catch (error) {
@@ -548,7 +554,7 @@ async function exactSearch(
   const paginatedResults = uniqueResults.slice(startIndex, startIndex + pageSize);
 
   // 异步保存搜索历史
-  saveSearchHistory(query, modality || '', paginatedResults.length).catch(() => {});
+  saveSearchHistory(query, modality || '', paginatedResults.length, paginatedResults).catch(() => {});
 
   return NextResponse.json({
     success: true, query, mode: 'exact',

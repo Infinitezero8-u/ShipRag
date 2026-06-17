@@ -115,8 +115,15 @@ function HistoryModal({ type, onClose, onLoad }: { type: 'rag' | 'search'; onClo
               <div className="flex items-start justify-between"><p className="text-xs font-medium flex-1 line-clamp-2">{item.query}</p>
                 <button onClick={e => { e.stopPropagation(); doDelete(item.id); }} className="opacity-0 group-hover:opacity-100 text-red-400 text-xs ml-2">🗑</button>
               </div>
-              {item.answer && <p className="text-[11px] text-slate-400 line-clamp-1 mt-1">{item.answer?.substring(0, 100)}</p>}
-              <div className="flex items-center gap-2 mt-1"><span className="text-[10px] text-slate-400">{item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}</span></div>
+              {item.answer && (
+                <p className={`text-[11px] text-slate-500 mt-1 ${item.history_type === 'search' ? 'line-clamp-3 whitespace-pre-line' : 'line-clamp-1'}`}>
+                  {item.history_type === 'search' ? '▸ ' : ''}{item.answer}
+                </p>
+              )}
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10px] text-slate-400">{item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}</span>
+                {item.history_type === 'search' && item.result_count > 0 && <span className="text-[10px] text-slate-400">{item.result_count} 条结果</span>}
+              </div>
             </div>
           ))}
         </div>
