@@ -378,6 +378,60 @@ export async function sqlPolishNode(state: RAGState): Promise<Partial<RAGState>>
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// 14. 幻觉检测 — P1-2 修复
+// ═══════════════════════════════════════════════════════
+export async function hallucinationCheckNode(state: RAGState): Promise<Partial<RAGState>> {
+  const t0 = Date.now();
+  const { finalAnswer, rerankedResults, classifyResult } = state;
+
+  // 非 RAG 分支不需要检测
+  if (classifyResult !== 'RAG' && classifyResult !== 'ALL' || !finalAnswer || !rerankedResults?.length) {
+    return { nodeTimings: { hallucinationCheck: 0 } };
+  }
+
+  try {
+    const llm = new ChatOllama({ model: ollama.fallbackModel, temperature: 0 });
+
+    // 抽取答案中的事实断言，逐一校验
+    const prompt = `你是一个事实核查器。下面是用户问题的答案和参考资料。
+请检查答案中的每个事实断言是否能在参考资料中找到支撑。
+如果全部能找到支撑 → 输出 "PASS"
+如果有无法验证的断言 → 输出 "MILD_HALLUCINATION: 具体描述"
+如果答案是明显编造的 → 输出 "HALLUCINATION: 具体描述"
+
+答案:
+${finalAnswer.substring(0, 1500)}
+
+参考资料:
+${rerankedResults.slice(0, 5).map((r, i) => `[${i + 1}] ${r.title}: ${r.content?.substring(0, 300)}`).join('\n')}
+
+判定结果:`;
+
+    const resp = await llm.invoke(prompt, { timeout: 20000 } as any);
+    const verdict = (resp.content as string).trim();
+
+    if (verdict.includes('HALLUCINATION') || verdict.includes('MILD_HALLUCINATION')) {
+      // 在答案末尾追加幻觉警告
+      const warning = verdict.includes('HALLUCINATION')
+        ? `\n\n⚠️【幻觉警告】以上回答可能包含无法验证的信息，请核实。${verdict}`
+        : `\n\n💡【注意】部分信息在参考资料中未找到直接支撑。${verdict}`;
+
+      return {
+        finalAnswer: finalAnswer + warning,
+        nodeTimings: { hallucinationCheck: Date.now() - t0 },
+      };
+    }
+
+    return { nodeTimings: { hallucinationCheck: Date.now() - t0 } };
+  } catch {
+    return { nodeTimings: { hallucinationCheck: Date.now() - t0 } };
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// 15. 最终输出
+// ═══════════════════════════════════════════════════════
 export function finalOutputNode(state: RAGState): Partial<RAGState> {
   const { finalAnswer, polishedSQLResult, classifyResult, sqlData, generatedSQL } = state;
   if (classifyResult === 'SQL' || classifyResult === 'LIST') {

@@ -12,8 +12,8 @@ import {
   queryRewriteNode, embeddingNode,
   hybridRetrievalNode, rerankNode, // ← P0-1/P0-2 替换
   promptAssemblyNode, llmGenerateNode,
-  sqlGenerateNode, sqlExecuteNode, sqlPolishNode,
-  finalOutputNode,
+  hallucinationCheckNode, sqlGenerateNode, sqlExecuteNode,
+  sqlPolishNode, finalOutputNode,
 } from './nodes';
 
 export function buildRagSqlDualGraph() {
@@ -26,6 +26,7 @@ export function buildRagSqlDualGraph() {
     .addNode('node_rerank', rerankNode)                     // P0-2: BGE-Reranker
     .addNode('node_promptAssembly', promptAssemblyNode)
     .addNode('node_llmGenerate', llmGenerateNode)           // P0-3: citations
+    .addNode('node_hallucinationCheck', hallucinationCheckNode)  // P1-2: hallucination check
     .addNode('node_sqlGenerate', sqlGenerateNode)
     .addNode('node_sqlExecute', sqlExecuteNode)
     .addNode('node_sqlPolish', sqlPolishNode)
@@ -45,7 +46,8 @@ export function buildRagSqlDualGraph() {
     .addEdge('node_hybridRetrieval', 'node_rerank')          // BGE cross-encoder
     .addEdge('node_rerank', 'node_promptAssembly')
     .addEdge('node_promptAssembly', 'node_llmGenerate')      // citations in answer
-    .addEdge('node_llmGenerate', 'node_finalOutput')
+    .addEdge('node_llmGenerate', 'node_hallucinationCheck')   // P1-2: fact-check answer
+    .addEdge('node_hallucinationCheck', 'node_finalOutput')
     // SQL 管线
     .addEdge('node_sqlGenerate', 'node_sqlExecute')
     .addEdge('node_sqlExecute', 'node_sqlPolish')
@@ -63,13 +65,15 @@ export function buildRagOnlyGraph() {
     .addNode('node_hybridRetrieval', hybridRetrievalNode)
     .addNode('node_rerank', rerankNode)
     .addNode('node_llmGenerate', llmGenerateNode)
+    .addNode('node_hallucinationCheck', hallucinationCheckNode)
     .addEdge(START, 'node_userInput')
     .addEdge('node_userInput', 'node_queryRewrite')
     .addEdge('node_queryRewrite', 'node_embedding')
     .addEdge('node_embedding', 'node_hybridRetrieval')
     .addEdge('node_hybridRetrieval', 'node_rerank')
     .addEdge('node_rerank', 'node_llmGenerate')
-    .addEdge('node_llmGenerate', END);
+    .addEdge('node_llmGenerate', 'node_hallucinationCheck')
+    .addEdge('node_hallucinationCheck', END);
   return g.compile();
 }
 
