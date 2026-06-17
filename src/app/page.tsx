@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { DataMaintainPanel } from '@/components/data-maintain-panel';
+import { HistoryPanel } from '@/components/history-panel';
 import {
   Upload, Search, MessageSquare, FileText, Image, FileSpreadsheet,
   Loader2, Send, Play, Pause, X, ChevronLeft, ChevronRight, Eye, Trash2,
@@ -63,6 +64,7 @@ function RagPanel({ back }: { back: () => void }) {
   const [sid, setSid] = useState(() => 'rag-' + Date.now());
   const [convList, setConvList] = useState<{ session_id: string; title: string; time: string }[]>([]);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
   // 加载对话列表
@@ -172,7 +174,8 @@ function RagPanel({ back }: { back: () => void }) {
             </Button>
             <h2 className="font-bold text-sm">💬 智能问答</h2>
           </div>
-          {!showSidebar && <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => { setShowSidebar(true); loadConvList(); }}>📋 历史</Button>}
+          {!showSidebar && <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => { setShowSidebar(true); loadConvList(); }}>📋 对话</Button>}
+          <Button size="sm" variant="outline" className="h-7 text-[10px] text-indigo-600" onClick={() => setShowHistory(true)}>📜 历史</Button>
           <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={newChat}>➕ 新建</Button>
         </div>
 
@@ -225,6 +228,20 @@ function RagPanel({ back }: { back: () => void }) {
           </Button>
         </div>
       </div>
+
+      {/* ── 历史记录浮窗 ── */}
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowHistory(false); }}>
+          <div className="w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <HistoryPanel type="rag" onClose={() => setShowHistory(false)}
+              onLoadItem={(item) => {
+                setQ(item.query);
+                setShowHistory(false);
+              }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -533,6 +550,7 @@ export default function RagPage() {
   const [sPage, setSPage] = useState<PagInfo | null>(null);
   const [sLoading, setSLoading] = useState(false);
   const [sPageNum, setSPageNum] = useState(1);
+  const [showSearchHistory, setShowSearchHistory] = useState(false);
 
   // 知识库条目
   const [kbItems, setKbItems] = useState<KnowItem[]>([]);
@@ -696,7 +714,10 @@ export default function RagPage() {
           <div className="space-y-4">
             <BackBtn />
             <Card><CardContent className="p-4 space-y-3">
-              <h2 className="font-bold text-lg">🔍 知识检索</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="font-bold text-lg">🔍 知识检索</h2>
+                <Button size="sm" variant="outline" className="h-7 text-[10px] text-indigo-600" onClick={() => setShowSearchHistory(true)}>📜 历史</Button>
+              </div>
               <div className="flex gap-2">
                 <Input value={sq} onChange={e => setSq(e.target.value)} placeholder="搜索知识库..." className="text-sm" onKeyDown={e => e.key === 'Enter' && doSearch()} />
                 <select value={sMode} onChange={e => setSMode(e.target.value as any)} className="text-xs border rounded px-2">
@@ -748,6 +769,21 @@ export default function RagPage() {
                 </div>
               )}
             </CardContent></Card>
+
+            {/* ── 搜索历史浮窗 ── */}
+            {showSearchHistory && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+                onClick={(e) => { if (e.target === e.currentTarget) setShowSearchHistory(false); }}>
+                <div className="w-full max-w-3xl max-h-[85vh] flex flex-col">
+                  <HistoryPanel type="search" onClose={() => setShowSearchHistory(false)}
+                    onLoadItem={(item) => {
+                      setSq(item.query);
+                      setShowSearchHistory(false);
+                      doSearch(1);
+                    }} />
+                </div>
+              </div>
+            )}
           </div>
         );
       // =================== 文件上传 ===================

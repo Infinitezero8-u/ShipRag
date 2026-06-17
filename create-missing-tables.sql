@@ -307,6 +307,20 @@ CREATE TABLE IF NOT EXISTS workflows (
   updated_at timestamptz
 );
 
+-- 21. search_history (搜索历史)
+CREATE TABLE IF NOT EXISTS search_history (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  history_type varchar(20) NOT NULL DEFAULT 'rag',
+  query text,
+  answer text,
+  modality varchar(20),
+  source varchar(255),
+  result_count int DEFAULT 0,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_history_type ON search_history(history_type);
+CREATE INDEX IF NOT EXISTS idx_history_created ON search_history(created_at);
+
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO eonl;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO anon;

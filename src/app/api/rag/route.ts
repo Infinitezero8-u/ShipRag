@@ -129,6 +129,16 @@ async function handleStreamResponse(input: Parameters<typeof runWorkflow>[0]) {
         input.sessionId, input.query,
         `${result.answer}${result.sql ? `\n[SQL: ${result.sql}]` : ''}`
       );
+      // 保存历史记录
+      await fetch(`http://localhost:5000/api/history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'rag', query: input.query,
+          answer: result.answer?.substring(0, 5000),
+          modality: input.modality, resultCount: result.searchResults?.length || 0,
+        }),
+      }).catch(() => {});
     },
   });
 
@@ -154,6 +164,16 @@ async function handleNonStreamResponse(
     input.sessionId, input.query,
     `${result.answer}${result.sql ? `\n[SQL: ${result.sql}]` : ''}`
   );
+  // 保存历史记录
+  fetch('http://localhost:5000/api/history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'rag', query: input.query,
+      answer: result.answer?.substring(0, 5000),
+      modality: input.modality, resultCount: result.searchResults?.length || 0,
+    }),
+  }).catch(() => {});
 
   const resp: Record<string, any> = {
     success: result.success,

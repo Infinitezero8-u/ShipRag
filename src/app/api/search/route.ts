@@ -4,6 +4,19 @@ import { EmbeddingClient } from '@/lib/ollama/embedding';
 // HeaderUtils stub (local dev)
 function extractHeaders() { return {}; }
 
+// 异步保存搜索历史（不阻塞响应）
+async function saveSearchHistory(query: string, modality: string, resultCount: number) {
+  try {
+    const supabase = getSupabaseClient();
+    await supabase.from('search_history').insert({
+      history_type: 'search',
+      query: query?.substring(0, 500) || '',
+      modality: modality || '',
+      result_count: resultCount || 0,
+    });
+  } catch { /* 保存失败不影响搜索 */ }
+}
+
 interface SearchParams {
   query: string;
   modality?: string; // 可选：限定模态类型
@@ -143,23 +156,21 @@ export async function POST(request: NextRequest) {
     const startIndex = (page - 1) * pageSize;
     const paginatedResults = filteredResults.slice(startIndex, startIndex + pageSize);
 
-    return NextResponse.json({
-      success: true,
-      query,
+    const response = NextResponse.json({
+      success: true, query,
       results: paginatedResults,
       count: paginatedResults.length,
-      pagination: {
-        page,
-        pageSize,
-        totalCount,
-        totalPages,
-        hasMore: page < totalPages,
-      },
+      pagination: { page, pageSize, totalCount, totalPages, hasMore: page < totalPages },
     });
+
+    // 异步保存搜索历史 (不阻塞响应)
+    saveSearchHistory(query, modality || '', paginatedResults.length).catch(() => {});
+
+    return response;
   } catch (error) {
     console.error('检索失败:', error);
-    return NextResponse.json({ 
-      error: `检索失败: ${error instanceof Error ? error.message : String(error)}` 
+    return NextResponse.json({
+      error: `检索失败: ${error instanceof Error ? error.message : String(error)}`
     }, { status: 500 });
   }
 }
@@ -536,10 +547,11 @@ async function exactSearch(
   const startIndex = (page - 1) * pageSize;
   const paginatedResults = uniqueResults.slice(startIndex, startIndex + pageSize);
 
+  // 异步保存搜索历史
+  saveSearchHistory(query, modality || '', paginatedResults.length).catch(() => {});
+
   return NextResponse.json({
-    success: true,
-    query,
-    mode: 'exact',
+    success: true, query, mode: 'exact',
     results: paginatedResults,
     count: paginatedResults.length,
     pagination: { page, pageSize, totalCount, totalPages, hasMore: page < totalPages },
