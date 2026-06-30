@@ -56,6 +56,20 @@ async function updateContextAfterResponse(
 }
 
 // ═══════════════════════════════════════════════════════
+// 加载对话历史（多轮对话上下文）
+// ═══════════════════════════════════════════════════════
+async function loadContextFromDB(sessionId: string): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+  const supabase = getSupabaseClient();
+  try {
+    const { data } = await supabase
+      .from('conversation_contexts')
+      .select('context_data').eq('session_id', sessionId).single();
+    const messages = (data?.context_data as any)?.messages || [];
+    return messages.slice(-6); // 最近3轮
+  } catch { return []; }
+}
+
+// ═══════════════════════════════════════════════════════
 // POST /api/rag
 // ═══════════════════════════════════════════════════════
 export async function POST(request: NextRequest) {
@@ -72,7 +86,10 @@ export async function POST(request: NextRequest) {
     await supabase.from('conversation_contexts').delete().eq('session_id', sessionId);
   }
 
-  const input = { query, sessionId, history, topK: topK || 5, modality };
+  // 从 DB 加载历史（如果前端未传入且 sessionId 存在）
+  const mergedHistory = history?.length ? history : sessionId ? await loadContextFromDB(sessionId) : [];
+
+  const input = { query, sessionId, history: mergedHistory, topK: topK || 5, modality };
 
   if (stream) {
     return handleStreamResponse(input);

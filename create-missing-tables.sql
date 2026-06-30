@@ -355,3 +355,210 @@ BEGIN
   LIMIT match_count;
 END;
 $$;
+
+-- ═══════════════════════════════════════════════════════════
+-- Data Center tables (2026-06-17)
+-- ═══════════════════════════════════════════════════════════
+
+-- 1. IHO Sea Areas
+CREATE TABLE IF NOT EXISTS sea_areas (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  name varchar(255) NOT NULL,
+  sea_type varchar(100),
+  bounds jsonb DEFAULT '{}'::jsonb,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  knowledge_item_id varchar(36),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sea_areas_name_idx ON sea_areas(name);
+CREATE INDEX IF NOT EXISTS sea_areas_type_idx ON sea_areas(sea_type);
+
+-- 2. EEZ Boundaries
+CREATE TABLE IF NOT EXISTS eez_boundaries (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  country varchar(255) NOT NULL,
+  area_sqkm varchar(50),
+  bounds jsonb DEFAULT '{}'::jsonb,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  knowledge_item_id varchar(36),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS eez_country_idx ON eez_boundaries(country);
+
+-- 3. Bridge Inventory (FHWA NBI 2025)
+CREATE TABLE IF NOT EXISTS bridge_inventory (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  state_code varchar(3),
+  structure_number varchar(25),
+  route_prefix varchar(10),
+  route_number varchar(20),
+  facility_carried text,
+  location text,
+  lat varchar(20),
+  lon varchar(20),
+  year_built varchar(4),
+  year_reconstructed varchar(4),
+  structure_length_m varchar(20),
+  max_span_length_m varchar(20),
+  deck_width_m varchar(20),
+  raw_fields jsonb NOT NULL DEFAULT '{}'::jsonb,
+  knowledge_item_id varchar(36),
+  import_source varchar(100),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bridge_state_idx ON bridge_inventory(state_code);
+CREATE INDEX IF NOT EXISTS bridge_location_idx ON bridge_inventory(lat, lon);
+
+-- 4. Safety Incidents (MAIB + ParisMOU + TokyoMOU + Anti-Shipping)
+CREATE TABLE IF NOT EXISTS safety_incidents (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  occurrence_id varchar(100),
+  source varchar(50) NOT NULL DEFAULT 'maib',
+  local_date varchar(50),
+  severity varchar(50),
+  main_event_l1 varchar(200),
+  main_event_l2 varchar(200),
+  short_description text,
+  description text,
+  lat varchar(50),
+  lon varchar(50),
+  vessel_name varchar(255),
+  vessel_type varchar(100),
+  port_accident varchar(255),
+  coastal_state varchar(100),
+  state_reporting varchar(100),
+  raw_fields jsonb NOT NULL DEFAULT '{}'::jsonb,
+  knowledge_item_id varchar(36),
+  import_source varchar(100),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS safety_severity_idx ON safety_incidents(severity);
+CREATE INDEX IF NOT EXISTS safety_date_idx ON safety_incidents(local_date);
+CREATE INDEX IF NOT EXISTS safety_source_idx ON safety_incidents(source);
+
+-- 5. IMDG Dangerous Goods
+CREATE TABLE IF NOT EXISTS imdg_goods (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  un_class varchar(5),
+  goods_name varchar(100),
+  division varchar(20),
+  classification text,
+  knowledge_item_id varchar(36),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- 6. Freight Indices (consolidated JSON)
+CREATE TABLE IF NOT EXISTS freight_indices (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  index_name varchar(100) NOT NULL,
+  collection_time varchar(50),
+  source varchar(255),
+  data jsonb NOT NULL DEFAULT '{}'::jsonb,
+  knowledge_item_id varchar(36),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS freight_idx_name_idx ON freight_indices(index_name);
+
+-- 7. AIS Vessel Synopses
+CREATE TABLE IF NOT EXISTS ais_synopses (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  vessel_id_hash varchar(100) NOT NULL,
+  timestamp_unix_ms varchar(20),
+  lon varchar(20),
+  lat varchar(20),
+  heading varchar(20),
+  speed varchar(20),
+  annotations jsonb DEFAULT '[]'::jsonb,
+  transport_trail jsonb DEFAULT '[]'::jsonb,
+  source_file varchar(500),
+  knowledge_item_id varchar(36),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ais_syn_vessel_idx ON ais_synopses(vessel_id_hash);
+CREATE INDEX IF NOT EXISTS ais_syn_source_idx ON ais_synopses(source_file);
+
+-- 8. Ship Images
+CREATE TABLE IF NOT EXISTS ship_images (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  filename varchar(500) NOT NULL,
+  timestamp_str varchar(50),
+  lon varchar(20),
+  lat varchar(20),
+  local_path varchar(1000) NOT NULL,
+  knowledge_item_id varchar(36),
+  import_source varchar(100),
+  embedding_status varchar(20) NOT NULL DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ship_img_location_idx ON ship_images(lon, lat);
+
+-- 9. Import Progress Tracker
+CREATE TABLE IF NOT EXISTS import_progress (
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid(),
+  module varchar(50) NOT NULL,
+  source_file varchar(500) NOT NULL,
+  total_rows varchar(20),
+  processed_rows varchar(20) NOT NULL DEFAULT '0',
+  status varchar(20) NOT NULL DEFAULT 'pending',
+  error_message text,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone
+);
+CREATE INDEX IF NOT EXISTS import_progress_module_idx ON import_progress(module);
+CREATE INDEX IF NOT EXISTS import_progress_status_idx ON import_progress(status);
+
+-- Extended match_knowledge_items to include new tables
+CREATE OR REPLACE FUNCTION public.match_knowledge_items(
+    match_count integer DEFAULT 10,
+    match_threshold double precision DEFAULT 0.3,
+    query_embedding vector DEFAULT NULL
+)
+RETURNS TABLE(
+    id character varying,
+    title text,
+    content text,
+    modality text,
+    source text,
+    similarity double precision
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM (
+        -- knowledge_items
+        SELECT
+            ki.id::varchar,
+            ki.title::text,
+            ki.content::text,
+            ki.modality::text,
+            ki.source::text,
+            (1 - (ki.embedding <=> query_embedding))::float as similarity
+        FROM knowledge_items ki
+        WHERE ki.embedding IS NOT NULL
+          AND 1 - (ki.embedding <=> query_embedding) > match_threshold
+        UNION ALL
+        -- regulation_chunks
+        SELECT
+            rc.id::varchar,
+            COALESCE(rc.title, '法规片段')::text,
+            rc.content::text,
+            'regulation'::text as modality,
+            r.filename::text as source,
+            (1 - (rc.embedding <=> query_embedding))::float as similarity
+        FROM regulation_chunks rc
+        JOIN regulations r ON rc.regulation_id = r.id
+        WHERE rc.embedding IS NOT NULL
+          AND 1 - (rc.embedding <=> query_embedding) > match_threshold
+    ) combined
+    ORDER BY similarity DESC
+    LIMIT match_count;
+END;
+$$;

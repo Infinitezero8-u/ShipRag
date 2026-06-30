@@ -29,11 +29,19 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 export async function findNearbyPorts(portName: string, n: number = 5, maxKm?: number): Promise<NearbyPort[]> {
   const pool = new pg.Pool({ connectionString: DB, max: 1 });
   try {
-    // 1. 获取参考港口坐标
-    const { rows: [ref] } = await pool.query(
+    // 1. 获取参考港口坐标 — 精确匹配优先，失败则模糊匹配
+    let { rows: [ref] } = await pool.query(
       `SELECT port_code, name_cn, lat, lon FROM port_data
        WHERE name_cn = $1 OR port_code = $1 LIMIT 1`, [portName]
     );
+    // 模糊回退：ILike + name_cn 前缀匹配（处理"东京"匹配"东京港"/"东京"）
+    if (!ref) {
+      ({ rows: [ref] } = await pool.query(
+        `SELECT port_code, name_cn, lat, lon FROM port_data
+         WHERE name_cn ILIKE $1 OR port_code ILIKE $1 LIMIT 1`,
+        [`%${portName}%`]
+      ));
+    }
     if (!ref || ref.lat == null || ref.lon == null) return [];
 
     // 2. 获取所有港口(排除自身)并计算距离
@@ -77,7 +85,7 @@ export async function distanceBetweenPorts(a: string, b: string): Promise<number
  */
 export function shouldUseSpatial(query: string): { use: boolean; portName?: string; topN?: number } {
   const patterns = [
-    /距离(.{1,8})最[近进]/,
+    /距离([^最]{1,12})最[近进]/,   // "距离XX最近" — 非贪婪，排除"最"避免误捕获
     /(.{1,8})附近的港口/,
     /靠近(.{1,8})的港口/,
     /(.{1,8})周围/,
@@ -85,11 +93,18 @@ export function shouldUseSpatial(query: string): { use: boolean; portName?: stri
   ];
   for (const p of patterns) {
     const m = query.match(p);
-    if (m) return { use: true, portName: m[1].replace(/的|港口|港/g, ''), topN: 5 };
+    if (m) {
+      const rawName = m[1].replace(/的|港口|港|最|近/g, '').trim();
+      if (rawName.length > 0) return { use: true, portName: rawName, topN: 5 };
+    }
   }
 
   const topN = /最近的?(\d+)个/.exec(query);
-  if (topN) return { use: true, portName: '上海', topN: parseInt(topN[1]) };
+  if (topN) {
+    // 尝试从上下文中提取地名（通用兜底，避免硬编码"上海"）
+    const ctxMatch = /(?:距离|离|靠近)([^最近\d]{1,8})/.exec(query);
+    return { use: true, portName: ctxMatch?.[1]?.replace(/的|港口|港/g, '').trim() || '', topN: parseInt(topN[1]) };
+  }
 
   return { use: false };
 }

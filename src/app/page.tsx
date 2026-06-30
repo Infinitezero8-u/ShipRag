@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { DataMaintainPanel } from '@/components/data-maintain-panel';
+import { DataCenterPanel } from '@/components/data-center-panel';
 import {
   Upload, Search, MessageSquare, FileText, Image, FileSpreadsheet,
   Loader2, Send, Play, Pause, X, ChevronLeft, ChevronRight, Eye, Trash2,
@@ -25,7 +26,7 @@ const SeaMapComponent = dynamic(() => import('@/app/sea-chart/SeaMap'), {
 
 // ── 类型定义 ──────────────────────────────────
 type Modality = 'text' | 'image' | 'excel' | 'doc' | 'md' | 'json';
-type Panel = 'home' | 'rag' | 'search' | 'upload' | 'maintain' | 'chart' | 'trajectory' | 'training' | 'inference' | 'workflow' | 'dashboard' | 'settings' | 'label' | 'autoresearch' | 'overview';
+type Panel = 'home' | 'rag' | 'search' | 'upload' | 'maintain' | 'chart' | 'trajectory' | 'training' | 'inference' | 'workflow' | 'dashboard' | 'settings' | 'label' | 'autoresearch' | 'overview' | 'datacenter';
 interface KnowItem { id: string; modality: string; title: string; content: string; source: string; similarity?: number; status?: string; metadata?: Record<string, unknown>; }
 interface PagInfo { page: number; pageSize: number; totalCount: number; totalPages: number; hasMore: boolean; }
 
@@ -48,6 +49,7 @@ const CATEGORIES = [
     { id: 'overview' as Panel,  label: '数据概览', icon: '📊', color: '#14b8a6' },
     { id: 'chart' as Panel,     label: '海图',     icon: '🗺️', color: '#f43f5e' },
     { id: 'dashboard' as Panel, label: '仪表盘',   icon: '📉', color: '#8b5cf6' },
+    { id: 'datacenter' as Panel,label: '数据中台', icon: '🏢', color: '#dc2626' },
   ]},
   { title: '系统管理', items: [
     { id: 'workflow' as Panel,  label: '工作流',   icon: '⚙️', color: '#64748b' },
@@ -899,6 +901,14 @@ export default function RagPage() {
           <div className="space-y-4">
             <BackBtn />
             <DataMaintainPanel />
+          </div>
+        );
+      // =================== 数据中台 ===================
+      case 'datacenter':
+        return (
+          <div className="space-y-4">
+            <BackBtn />
+            <DataCenterPanel />
           </div>
         );
       // =================== 海图 ===================

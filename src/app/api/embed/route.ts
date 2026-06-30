@@ -132,6 +132,9 @@ export async function POST(request: NextRequest) {
     let failed = 0;
     const errors: string[] = [];
 
+    // ── 第一遍：处理图片 & 收集文本 ──
+    const textItems: { item: any; truncatedContent: string }[] = [];
+
     for (const item of items) {
       // 处理图片类型
       if (item.modality === 'image') {
@@ -211,31 +214,50 @@ export async function POST(request: NextRequest) {
         contentHashCache.add(contentHash);
       }
 
-      try {
-        // 截断内容防止超过 token 限制（最大 8000 字符约 2000 tokens）
-        const maxContentLength = 8000;
-        const truncatedContent = item.content.length > maxContentLength 
-          ? item.content.substring(0, maxContentLength) + '...'
-          : item.content;
-        
-        // 调用 Embedding SDK 生成向量
-        const embedding = await embeddingClient.embedText(truncatedContent);
-        
-        // 使用原生 SQL 更新向量（绕过 Drizzle schema 验证）
-        const { error: updateError } = await supabase.rpc('update_embedding', {
-          item_id: item.id,
-          embedding_vector: embedding,
-        });
+      // 截断内容防止超过 token 限制（最大 8000 字符约 2000 tokens）
+      const maxContentLength = 8000;
+      const truncatedContent = item.content.length > maxContentLength
+        ? item.content.substring(0, maxContentLength) + '...'
+        : item.content;
 
-        if (updateError) {
-          failed++;
-          errors.push(`更新 ${item.id} 失败: ${updateError.message}`);
-        } else {
-          processed++;
+      textItems.push({ item, truncatedContent });
+    }
+
+    // ── 批量嵌入：一次 HTTP 请求发送所有文本 ──
+    if (textItems.length > 0) {
+      try {
+        const texts = textItems.map(t => t.truncatedContent);
+        const allEmbeddings = await embeddingClient.embedTexts(texts);
+
+        // 逐条写回 DB（受 Supabase RPC 限制，向量无法批量 UPDATE）
+        for (let i = 0; i < textItems.length; i++) {
+          const { item } = textItems[i];
+          const embedding = allEmbeddings[i];
+          if (!embedding || embedding.length === 0) {
+            failed++;
+            errors.push(`嵌入 ${item.id} 返回空向量`);
+            continue;
+          }
+          try {
+            const { error: updateError } = await supabase.rpc('update_embedding', {
+              item_id: item.id,
+              embedding_vector: embedding,
+            });
+            if (updateError) {
+              failed++;
+              errors.push(`更新 ${item.id} 失败: ${updateError.message}`);
+            } else {
+              processed++;
+            }
+          } catch (e) {
+            failed++;
+            errors.push(`更新 ${item.id} 失败: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
-      } catch (embedError) {
-        failed++;
-        errors.push(`向量化 ${item.id} 失败: ${embedError instanceof Error ? embedError.message : String(embedError)}`);
+      } catch (batchError) {
+        // 批量嵌入整体失败 → 全部算失败
+        failed += textItems.length;
+        errors.push(`批量嵌入失败: ${batchError instanceof Error ? batchError.message : String(batchError)}`);
       }
     }
 
